@@ -16,8 +16,9 @@
     insertEmptyLine,
     cloneContainer, removeOuterContainer,
     addTitle, addEpigraph, addAnnotation, addTextAuthor,
-    insertCite, insertPoem,
+    insertCite, insertPoem, insertTableCmd,
   } from "./commands";
+  import TableDialog from "./TableDialog.svelte";
   import type { FictionBook } from "../fb2/types";
 
   export let fb: FictionBook | null = null;
@@ -153,6 +154,16 @@
     view.focus();
   }
 
+  let tableDialogOpen = false;
+  export function openTableDialog(): void {
+    tableDialogOpen = true;
+  }
+  function onTableInsert(e: CustomEvent<{ rows: number; cols: number; header: boolean }>) {
+    if (!view) return;
+    insertTableCmd(e.detail.rows, e.detail.cols, e.detail.header)(view.state, view.dispatch);
+    view.focus();
+  }
+
   // Re-export commands so App.svelte can import-and-bind from the same place.
   export {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
@@ -167,6 +178,7 @@
 </script>
 
 <div bind:this={container} class="editor" />
+<TableDialog bind:open={tableDialogOpen} on:insert={onTableInsert} />
 
 <style>
   .editor {
