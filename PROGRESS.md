@@ -6,6 +6,51 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 20 — 2026-04-21 — Robust Open (panic recovery + graceful schema fallback) [dev]
+
+Version: **0.0.20**
+
+### Symptom
+
+Opening a real-world FB2 from `~/Documents/books` caused the `.app` to
+"crash without logs". Go-side `parser.Parse` succeeded on all three test
+books via the CLI, so the failure was downstream — either a Go panic
+during Wails JSON marshaling or a ProseMirror schema violation during
+`fb2ToPMDoc`.
+
+### Fix
+
+- **Go `App.OpenFile` recover.** Named return values + `defer recover()`
+  convert any panic (from parser / encoding / Wails marshaling) into a
+  normal error returned to the frontend, instead of crashing the webview.
+- **Frontend `toPMDoc` guard.** `Editor.svelte` wraps `fb2ToPMDoc(fb)` in
+  a try/catch. On schema failure, renders a placeholder doc
+  ("Could not render this document" + the error message + a note that
+  the original FB2 is preserved for Save As) so the app stays alive and
+  lets the user at least re-export the raw file.
+- **Better openFile diagnostics.** `App.svelte::openFile` now:
+  - logs `[fbe] opening …` / `[fbe] parsed: N bodies, N binaries, title "…"`
+    / `[fbe] openFile failed: …` with stack trace.
+  - shows a progress status in the header ("Opening X…") that yields to
+    the event loop before mounting a potentially huge PM doc.
+  - surfaces the error message prominently instead of silently falling
+    back to the sample book.
+
+### How to debug a future hang
+
+Launch the app from the terminal so stderr is visible:
+
+```
+/Users/dmitry.gordiyevsky/fbe-go/build/bin/fbe-go.app/Contents/MacOS/fbe
+```
+
+Go panics print there; frontend logs go to the webview's devtools (which
+Wails enables in dev builds — for release, use `wails dev`).
+
+Versions bumped 0.0.19 → 0.0.20.
+
+---
+
 ## Rev 19 — 2026-04-21 — Fix native dialogs (Wails v2 exposes them Go-only) [dev]
 
 Version: **0.0.19**

@@ -84,14 +84,22 @@ func (a *App) PickHTMLToSave(suggested string) (string, error) {
 // --- File operations exposed to the frontend ---
 
 // OpenFile reads an FB2 (or FB2.zip) file and returns the parsed document as JSON.
-func (a *App) OpenFile(path string) (*doc.FictionBook, error) {
+// Panics are recovered so a bad document surfaces as a normal JS-side error
+// instead of killing the webview.
+func (a *App) OpenFile(path string) (fb *doc.FictionBook, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fb = nil
+			err = fmt.Errorf("OpenFile panic: %v", r)
+		}
+	}()
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	fb, err := parser.Parse(f)
+	fb, err = parser.Parse(f)
 	if err != nil {
 		return nil, err
 	}

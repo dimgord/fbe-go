@@ -139,6 +139,32 @@
     });
   }
 
+  /**
+   * Build a PM doc from the FictionBook; on schema failure, fall back to a
+   * "parse error" placeholder doc so the app stays alive instead of blank
+   * white-screening when a real book trips an unexpected content rule.
+   */
+  function toPMDoc(src: FictionBook | null): PMNode {
+    if (!src) return fb2Schema.topNodeType.createAndFill()!;
+    try {
+      return fb2ToPMDoc(src);
+    } catch (err) {
+      console.error("[fbe] fb2ToPMDoc failed:", err, src);
+      const msg = (err as Error).message || String(err);
+      const N = fb2Schema.nodes;
+      const body = N.body.create(null, [
+        N.section.create(null, [
+          N.title.create(null, [
+            N.paragraph.create(null, fb2Schema.text("Could not render this document")),
+          ]),
+          N.paragraph.create(null, fb2Schema.text(msg)),
+          N.paragraph.create(null, fb2Schema.text("The raw FB2 is still loaded — Save As will write it back unchanged.")),
+        ]),
+      ]);
+      return N.doc.create(null, [body]);
+    }
+  }
+
   // Re-render attrs when language changes so the webview re-evaluates spellcheck
   // against the new dictionary.
   $: if (view) {
@@ -147,16 +173,12 @@
     });
   }
 
-  onMount(() => {
-    const initial = fb ? fb2ToPMDoc(fb) : fb2Schema.topNodeType.createAndFill()!;
-    mount(initial);
-  });
+  onMount(() => mount(toPMDoc(fb)));
 
   onDestroy(() => view?.destroy());
 
   $: if (view && fb) {
-    const next = fb2ToPMDoc(fb);
-    mount(next);
+    mount(toPMDoc(fb));
   }
 
   export function exec(cmd: (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean): void {
