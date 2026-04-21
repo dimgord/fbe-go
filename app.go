@@ -14,12 +14,13 @@ import (
 
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
-	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
+	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
+	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App holds per-session state.
@@ -35,6 +36,49 @@ func NewApp() *App { return &App{} }
 // OnStartup is called by Wails once the webview is ready.
 func (a *App) OnStartup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+// --- Native dialogs (Wails' runtime.OpenFileDialog / SaveFileDialog are Go-only;
+// expose wrappers so the frontend can open dialogs without a direct window.runtime
+// dependency, which in Wails v2 doesn't ship dialog helpers to JS). ---
+
+// PickFB2ToOpen shows a native "open file" dialog filtered for .fb2 and .fb2.zip.
+// Returns an empty string if the user cancels.
+func (a *App) PickFB2ToOpen() (string, error) {
+	return wailsrt.OpenFileDialog(a.ctx, wailsrt.OpenDialogOptions{
+		Title: "Open FB2 file",
+		Filters: []wailsrt.FileFilter{
+			{DisplayName: "FictionBook (*.fb2;*.fb2.zip)", Pattern: "*.fb2;*.fb2.zip"},
+		},
+	})
+}
+
+// PickFB2ToSave shows a native "save file" dialog defaulted to a .fb2 extension.
+func (a *App) PickFB2ToSave(suggested string) (string, error) {
+	if suggested == "" {
+		suggested = "untitled.fb2"
+	}
+	return wailsrt.SaveFileDialog(a.ctx, wailsrt.SaveDialogOptions{
+		Title:           "Save FB2",
+		DefaultFilename: suggested,
+		Filters: []wailsrt.FileFilter{
+			{DisplayName: "FictionBook (*.fb2)", Pattern: "*.fb2"},
+		},
+	})
+}
+
+// PickHTMLToSave shows a native "save file" dialog for the HTML exporter.
+func (a *App) PickHTMLToSave(suggested string) (string, error) {
+	if suggested == "" {
+		suggested = "untitled.html"
+	}
+	return wailsrt.SaveFileDialog(a.ctx, wailsrt.SaveDialogOptions{
+		Title:           "Export HTML",
+		DefaultFilename: suggested,
+		Filters: []wailsrt.FileFilter{
+			{DisplayName: "HTML (*.html)", Pattern: "*.html"},
+		},
+	})
 }
 
 // --- File operations exposed to the frontend ---

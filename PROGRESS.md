@@ -6,6 +6,52 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 19 — 2026-04-21 — Fix native dialogs (Wails v2 exposes them Go-only) [dev]
+
+Version: **0.0.19**
+
+### Bug
+
+Save / Save As / Export HTML failed with
+`TypeError: w.runtime.SaveFileDialog is not a function`.
+
+### Root cause
+
+In Wails v2, the generated `wailsjs/runtime/runtime.js` exports window/log/
+event helpers but **not** file-dialog helpers. `OpenFileDialog` and
+`SaveFileDialog` are part of `github.com/wailsapp/wails/v2/pkg/runtime`
+and can only be called from Go. The frontend had to route through a
+Go-side wrapper. My earlier App.svelte code called them directly on the
+JS-side runtime import, which was undefined.
+
+### Fix
+
+Added three Go methods on `App`:
+
+```go
+PickFB2ToOpen()           (path, error)
+PickFB2ToSave(suggested)  (path, error)
+PickHTMLToSave(suggested) (path, error)
+```
+
+Each invokes `wailsrt.OpenFileDialog` / `SaveFileDialog` with the right
+title + filters and returns the chosen path (empty string on cancel).
+
+`App.svelte` now calls these generated bindings directly; dropped the
+`wails()` helper that imported `../wailsjs/runtime/runtime` for dialogs,
+since it no longer needs the runtime module at all.
+
+### Verified
+
+- `wails build -tags xsd` regenerates bindings; `PickFB2ToOpen` /
+  `PickFB2ToSave` / `PickHTMLToSave` appear in
+  `wailsjs/go/main/App.d.ts`.
+- Production build completes with zero warnings in 10.7 s.
+
+Versions bumped 0.0.18 → 0.0.19.
+
+---
+
 ## Rev 18 — 2026-04-21 — A11y + unused CSS cleanup [dev]
 
 Version: **0.0.18**
