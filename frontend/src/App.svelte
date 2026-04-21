@@ -3,8 +3,12 @@
   import DocumentTree from "./tree/DocumentTree.svelte";
   import Editor from "./editor/Editor.svelte";
   import Toolbar from "./editor/Toolbar.svelte";
+  import DescriptionPanel from "./description/DescriptionPanel.svelte";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
+
+  type View = "body" | "description";
+  let view: View = "body";
 
   let fb: FictionBook | null = null;
   let filename = "(untitled)";
@@ -114,19 +118,37 @@
     <button on:click={() => save(false)} disabled={!editor}>Save</button>
     <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
     <button on:click={validate} disabled={!currentPath}>Validate</button>
+    <div class="view-toggle" role="tablist" aria-label="View">
+      <button
+        class:active={view === "body"}
+        on:click={() => (view = "body")}
+        role="tab"
+        aria-selected={view === "body"}>Body</button>
+      <button
+        class:active={view === "description"}
+        on:click={() => (view = "description")}
+        role="tab"
+        aria-selected={view === "description"}>Description</button>
+    </div>
     <span class="title">FictionBook Editor · <em>{filename}</em></span>
     {#if status}<span class="status">{status}</span>{/if}
     {#if error}<span class="err">{error}</span>{/if}
   </header>
 
-  <Toolbar {editor} />
-
-  <main>
-    <aside>
-      <DocumentTree {fb} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
-    </aside>
-    <section><Editor bind:this={editor} {fb} /></section>
-  </main>
+  {#if view === "body"}
+    <Toolbar {editor} />
+    <main>
+      <aside>
+        <DocumentTree {fb} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
+      </aside>
+      <section><Editor bind:this={editor} {fb} /></section>
+    </main>
+  {:else if fb}
+    <div class="spacer" />
+    <div class="description-wrap">
+      <DescriptionPanel bind:fb />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -159,6 +181,25 @@
   }
   header button:hover:not(:disabled) { background: #fff8e5; }
   header button:disabled { opacity: 0.5; cursor: default; }
+  .view-toggle {
+    display: inline-flex;
+    gap: 0;
+    margin-left: 0.5rem;
+  }
+  .view-toggle button {
+    border-radius: 0;
+    border-right-width: 0;
+  }
+  .view-toggle button:first-child { border-radius: 4px 0 0 4px; }
+  .view-toggle button:last-child { border-radius: 0 4px 4px 0; border-right-width: 1px; }
+  .view-toggle button.active {
+    background: #fce6a0;
+    font-weight: 600;
+  }
+  .description-wrap {
+    overflow: hidden;
+  }
+  .spacer { height: 0; }
   .title { font-size: 0.9rem; color: #444; margin-left: 0.5rem; }
   .status { color: #2a7; font-size: 0.8rem; margin-left: auto; }
   .err { color: #a33; font-size: 0.8rem; margin-left: auto; }
