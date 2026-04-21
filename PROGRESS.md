@@ -6,6 +6,70 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 3 — 2026-04-21 — Scope narrowed; Wails app runs; full block coverage
+
+Version: **0.0.3**
+
+### What changed
+
+**Scope**
+- Platforms: macOS + Linux only (Windows dropped, original C++ FBE keeps the
+  Windows story). Rust / C acceptable for platform-integration pieces.
+- Docs updated: README.md, docs/ARCHITECTURE.md, docs/PHASES.md, docs/OPERATIONS.md.
+
+**Wails desktop app runs end-to-end**
+- `wails doctor`: green. `go install .../wails/v2/cmd/wails@latest` → v2.12.0.
+- `npm install` in `frontend/`: 90 packages, no critical issues.
+- Added `vitePreprocess` to `frontend/vite.config.ts` so Svelte components
+  accept TypeScript blocks.
+- `wails build -tags xsd` → **9.3 MB `fbe-go.app` bundle** (macOS). Launches,
+  renders the bundled sample book, Open… button wired to generated bindings.
+- Wails-generated TypeScript bindings appear at `frontend/wailsjs/go/main/App.{js,d.ts}`
+  with full types for OpenFile/SaveFile/Validate/… (gitignored).
+- `App.svelte` now uses dynamic `import("../wailsjs/...")` so plain `vite dev`
+  mode (no Wails runtime) still works by falling back to sample.
+
+**Full FB2 block coverage in `parse.ts` / `schema.ts`**
+- `parse.ts` rewritten to handle every block type the original FBE shows:
+  body-level Title / Epigraph / Image, section-level Annotation,
+  poem → stanza → verse, cite (with text-author trailer), block & inline
+  images, tables (`<tr>`, `<th>`, `<td>` with colspan/rowspan/align).
+- `sample.ts` re-authored as a Shevchenko "Заповіт" demo exercising every new
+  node type: poem with two stanzas, cite, table (H/O chemistry demo),
+  nested sections with annotation, subtitle, text-author, and all inline marks.
+- `Editor.svelte` CSS extended with book-style rules for epigraph, cite,
+  annotation, poem/stanza/verse, tables (th/td), code, links, images.
+
+### How to try it
+
+```
+# First time:
+cd /Users/dmitry.gordiyevsky/fbe-go
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+cd frontend && npm install && cd ..
+
+# Build & run:
+wails build -tags xsd
+open build/bin/fbe-go.app
+```
+
+### Files modified / added
+
+- **Modified:** `README.md`, `docs/ARCHITECTURE.md`, `docs/PHASES.md`,
+  `docs/OPERATIONS.md`, `frontend/vite.config.ts`, `frontend/src/App.svelte`,
+  `frontend/src/editor/Editor.svelte`, `frontend/src/editor/parse.ts`,
+  `frontend/src/fb2/sample.ts`, `frontend/package.json`, `wails.json`,
+  `PROGRESS.md`.
+- **Added (gitignored, auto-generated):** `frontend/wailsjs/…`,
+  `frontend/node_modules/`, `build/bin/fbe-go.app`, `frontend/dist/`.
+
+### Versions bumped
+
+- `wails.json`            0.0.2 → 0.0.3
+- `frontend/package.json` 0.0.2 → 0.0.3
+
+---
+
 ## Rev 2 — 2026-04-21 — Phase 0 PoC + encoding autodetect + XSD validator
 
 Version: **0.0.2**

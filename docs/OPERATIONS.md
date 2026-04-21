@@ -156,14 +156,15 @@ FBE loads JS files from `FBE/files/Scripts/*.js` via `#userCmd` slot (main.html:
 
 ## 13. Platform integration
 
+**Scope: macOS + Linux only.** Windows-specific FBShell components stay with the
+original C++ FBE and are not ported. Native platform code may use Rust or C.
+
 | FBE source | Feature | Go/Wails equivalent |
 |---|---|---|
-| `FBShell/ThumbnailHandler` | Windows Explorer cover preview | Keep C++ FBShell (not ported) OR rewrite in Rust |
-| `FBShell/ContextMenu` | Right-click → Validate | Keep C++ FBShell OR register Wails app as handler |
-| `FBShell/IconExtractor` | Custom .fb2 icon | Keep C++ FBShell |
-| macOS QuickLook | Preview in Finder | `macos/QuickLook/` — separate native target using `thumb.Extract` |
-| GNOME thumbnailer | Thumbnails in Files | `linux/thumbnailer/` — exec `fbe thumb` |
-| File associations | Double-click .fb2 opens editor | Installer registration (NSIS/DMG/.desktop) |
+| macOS QuickLook | Preview in Finder | `macos/QuickLook/` — separate native target (Swift or Rust) calling `thumb.Extract` via shared library or exec |
+| GNOME thumbnailer | Thumbnails in Files (Nautilus, Nemo, Thunar) | `linux/thumbnailer/` — `fbe thumb` wrapper + `.thumbnailer` spec |
+| File associations | Double-click .fb2 opens editor | DMG + Info.plist UTIs (macOS); `.desktop` + mimeapps.list (Linux) |
+| ~~`FBShell/ThumbnailHandler`~~ | ~~Windows Explorer cover preview~~ | Out of scope — stays in original C++ FBE |
 
 ---
 

@@ -84,4 +84,67 @@
   :global(.ProseMirror div.section) {
     margin-bottom: 1em;
   }
+  :global(.ProseMirror div.epigraph) {
+    margin: 1em 0 1em 3em;
+    font-style: italic;
+    color: #444;
+  }
+  :global(.ProseMirror div.cite) {
+    margin: 1em 0 1em 2em;
+    padding-left: 1em;
+    border-left: 3px solid #ccc;
+  }
+  :global(.ProseMirror div.annotation) {
+    margin: 1em 2em;
+    font-size: 0.95em;
+    color: #555;
+  }
+  :global(.ProseMirror div.poem) {
+    margin: 1.5em 0 1.5em 2em;
+  }
+  :global(.ProseMirror div.stanza) {
+    margin-bottom: 1em;
+  }
+  :global(.ProseMirror p.v) {
+    margin: 0;
+  }
+  :global(.ProseMirror div.table) {
+    display: table;
+    border-collapse: collapse;
+    margin: 1em 0;
+    border: 1px solid #d0d0c0;
+  }
+  :global(.ProseMirror div.tr) {
+    display: table-row;
+  }
+  :global(.ProseMirror p.td),
+  :global(.ProseMirror p.th) {
+    display: table-cell;
+    padding: 0.3em 0.7em;
+    border: 1px solid #d0d0c0;
+    margin: 0;
+  }
+  :global(.ProseMirror p.th) {
+    background: #f0f0ea;
+    font-weight: 600;
+  }
+  :global(.ProseMirror span.code),
+  :global(.ProseMirror code) {
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 0.92em;
+    background: #f5f5ef;
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+  }
+  :global(.ProseMirror a) {
+    color: #1a5490;
+  }
+  :global(.ProseMirror div.image) {
+    text-align: center;
+    margin: 1em 0;
+  }
+  :global(.ProseMirror img) {
+    max-width: 100%;
+    height: auto;
+  }
 </style>
