@@ -207,6 +207,9 @@ type Stanza struct {
 // Block is the union of block-level nodes inside rich-text containers.
 // Exactly one of the pointer fields is non-nil; custom Marshal/Unmarshal
 // dispatch on element name.
+//
+// Raw captures any element we don't have a typed representation for (custom
+// FB2 extensions, future-version elements) so the round-trip is lossless.
 type Block struct {
 	Paragraph *Paragraph
 	Poem      *Poem
@@ -215,9 +218,77 @@ type Block struct {
 	EmptyLine *EmptyLine
 	Table     *Table
 	Image     *Image
+	Raw       *RawElement
+}
+
+// RawElement preserves an arbitrary XML element verbatim. Used as a fallback
+// for unknown elements so that parse → write does not drop content.
+type RawElement struct {
+	XMLName xml.Name
+	Attrs   []xml.Attr
+	Items   []RawItem
+}
+
+// RawItem is either text content or a nested RawElement.
+type RawItem struct {
+	Text string
+	Elem *RawElement
+}
+
+// UnmarshalXML captures element name, attributes, and all child tokens.
+func (r *RawElement) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	r.XMLName = start.Name
+	r.Attrs = append([]xml.Attr(nil), start.Attr...)
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch t := tok.(type) {
+		case xml.CharData:
+			if s := string(t); s != "" {
+				r.Items = append(r.Items, RawItem{Text: s})
+			}
+		case xml.StartElement:
+			var sub RawElement
+			if err := sub.UnmarshalXML(d, t); err != nil {
+				return err
+			}
+			r.Items = append(r.Items, RawItem{Elem: &sub})
+		case xml.EndElement:
+			return nil
+		}
+	}
+}
+
+// MarshalXML re-emits the element with its original name, attributes, and
+// children (text + nested raw elements).
+func (r RawElement) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+	// Use only the local name so the ambient xmlns inherited from the root
+	// applies; never re-emit xmlns= on unknown elements.
+	start := xml.StartElement{
+		Name: xml.Name{Local: r.XMLName.Local},
+		Attr: r.Attrs,
+	}
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	for _, it := range r.Items {
+		if it.Text != "" {
+			if err := e.EncodeToken(xml.CharData(it.Text)); err != nil {
+				return err
+			}
+		} else if it.Elem != nil {
+			if err := it.Elem.MarshalXML(e, xml.StartElement{}); err != nil {
+				return err
+			}
+		}
+	}
+	return e.EncodeToken(start.End())
 }
 
 // UnmarshalXML dispatches on the element name (local part, namespace ignored).
+// Unknown elements are preserved verbatim via Raw for lossless round-trip.
 func (b *Block) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	switch start.Name.Local {
 	case "p":
@@ -242,8 +313,8 @@ func (b *Block) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 		b.Image = &Image{}
 		return d.DecodeElement(b.Image, &start)
 	}
-	// Unknown element: skip it so parsing doesn't fail on FB2 extensions.
-	return d.Skip()
+	b.Raw = &RawElement{}
+	return b.Raw.UnmarshalXML(d, start)
 }
 
 // MarshalXML emits the element corresponding to whichever field is populated.
@@ -263,6 +334,8 @@ func (b Block) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		return e.EncodeElement(b.Table, xml.StartElement{Name: xml.Name{Local: "table"}})
 	case b.Image != nil:
 		return e.EncodeElement(b.Image, xml.StartElement{Name: xml.Name{Local: "image"}})
+	case b.Raw != nil:
+		return b.Raw.MarshalXML(e, xml.StartElement{})
 	}
 	return nil
 }
@@ -380,10 +453,10 @@ func unmarshalInlineContent(d *xml.Decoder, start xml.StartElement, out *[]Inlin
 					return err
 				}
 			default:
-				if err := d.Skip(); err != nil {
+				inl.Raw = &RawElement{}
+				if err := inl.Raw.UnmarshalXML(d, t); err != nil {
 					return err
 				}
-				continue
 			}
 			*out = append(*out, inl)
 		case xml.EndElement:
@@ -438,6 +511,10 @@ func marshalInlineContent(e *xml.Encoder, children []Inline) error {
 			if err := e.EncodeElement(in.Image, xml.StartElement{Name: xml.Name{Local: "image"}}); err != nil {
 				return err
 			}
+		case in.Raw != nil:
+			if err := in.Raw.MarshalXML(e, xml.StartElement{}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -445,6 +522,7 @@ func marshalInlineContent(e *xml.Encoder, children []Inline) error {
 
 // Inline — inline content: plain text, marks, images, links. Exactly one field
 // is non-zero per Inline (Text alone; or one of the element pointers).
+// Raw preserves unknown inline elements verbatim for lossless round-trip.
 type Inline struct {
 	Text          string
 	Strong        *Paragraph
@@ -456,6 +534,7 @@ type Inline struct {
 	Sup           *Paragraph
 	Code          *Paragraph
 	Image         *Image
+	Raw           *RawElement
 }
 
 // StyleInline — named inline style (<style name="...">).

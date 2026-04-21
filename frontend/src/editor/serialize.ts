@@ -1,17 +1,314 @@
 /**
- * ProseMirror doc → FB2 document (doc.FictionBook on the Go side).
+ * ProseMirror doc → FictionBook (the shape Go expects via Wails).
  *
- * Counterpart to parse.ts. The result shape mirrors Go's doc.FictionBook so it
- * can be passed to App.UpdateDocument() then App.SaveFile() verbatim.
+ * Inverse of parse.ts. Works at the JSON-shape level so the result can be
+ * passed verbatim to `App.UpdateDocument(fb)` followed by `App.SaveFile(path)`.
  *
- * Reference: FBE/FBDoc.cpp::SaveToFile and the main.js GetDesc / GetBinaries
- * helpers (FBE/main.js:1525, 1539).
+ * Notes:
+ *  - Description (title-info, document-info, etc.) is not editable in
+ *    Phase 3 yet — it's preserved from the originally-loaded FictionBook.
+ *    Callers should merge the serialized bodies with the original description.
+ *  - Binaries are likewise preserved from the original.
  */
-import type { Node as PMNode } from "prosemirror-model";
+import type { Node as PMNode, Mark } from "prosemirror-model";
+import type {
+  FictionBook, Body, Section, Block, Paragraph, Inline,
+  Title, Epigraph, Annotation, Cite, Poem, Stanza,
+  Table, Cell, Image,
+} from "../fb2/types";
 
-type FictionBook = unknown; // to be replaced by Wails-generated type
+export function pmDocToFB2(doc: PMNode, base: FictionBook): FictionBook {
+  const bodies: Body[] = [];
+  doc.forEach((node) => {
+    if (node.type.name === "body") {
+      bodies.push(buildBody(node));
+    }
+  });
+  return {
+    ...base,
+    Bodies: bodies,
+  };
+}
 
-export function pmDocToFB2(_doc: PMNode): FictionBook {
-  // TODO: walk the doc, produce the FictionBook struct.
-  return {};
+function buildBody(node: PMNode): Body {
+  const body: Body = {
+    Name: node.attrs.name || undefined,
+    Sections: [],
+    Epigraph: [],
+  };
+  node.forEach((child) => {
+    switch (child.type.name) {
+      case "title":
+        body.Title = buildTitle(child);
+        break;
+      case "epigraph":
+        body.Epigraph!.push(buildEpigraph(child));
+        break;
+      case "image_block":
+        body.Image = buildImage(child);
+        break;
+      case "section":
+        body.Sections.push(buildSection(child));
+        break;
+    }
+  });
+  if (body.Epigraph?.length === 0) delete body.Epigraph;
+  return body;
+}
+
+function buildSection(node: PMNode): Section {
+  const out: Section = {
+    ID: node.attrs.id ?? undefined,
+    Epigraph: [],
+    Sections: [],
+    Blocks: [],
+  };
+  node.forEach((child) => {
+    switch (child.type.name) {
+      case "title":
+        out.Title = buildTitle(child);
+        break;
+      case "epigraph":
+        out.Epigraph!.push(buildEpigraph(child));
+        break;
+      case "image_block":
+        out.Image = buildImage(child);
+        break;
+      case "annotation":
+        out.Annotation = buildAnnotation(child);
+        break;
+      case "section":
+        out.Sections!.push(buildSection(child));
+        break;
+      default:
+        // Block-level content: paragraph / subtitle / empty_line / poem / cite / table / image_block.
+        const blk = buildBlock(child);
+        if (blk) out.Blocks!.push(blk);
+    }
+  });
+  if (out.Epigraph?.length === 0) delete out.Epigraph;
+  if (out.Sections?.length === 0) delete out.Sections;
+  if (out.Blocks?.length === 0) delete out.Blocks;
+  return out;
+}
+
+function buildTitle(node: PMNode): Title {
+  const children: Block[] = [];
+  node.forEach((child) => {
+    const blk = buildBlock(child);
+    if (blk) children.push(blk);
+  });
+  return { Children: children };
+}
+
+function buildEpigraph(node: PMNode): Epigraph {
+  const children: Block[] = [];
+  const textAuthor: Paragraph[] = [];
+  node.forEach((child) => {
+    if (child.type.name === "text_author") {
+      textAuthor.push({ Children: buildInlines(child) });
+    } else {
+      const blk = buildBlock(child);
+      if (blk) children.push(blk);
+    }
+  });
+  const out: Epigraph = { Children: children };
+  if (textAuthor.length) out.TextAuthor = textAuthor;
+  return out;
+}
+
+function buildAnnotation(node: PMNode): Annotation {
+  const children: Block[] = [];
+  node.forEach((child) => {
+    const blk = buildBlock(child);
+    if (blk) children.push(blk);
+  });
+  return { Children: children };
+}
+
+function buildCite(node: PMNode): Cite {
+  const children: Block[] = [];
+  const textAuthor: Paragraph[] = [];
+  node.forEach((child) => {
+    if (child.type.name === "text_author") {
+      textAuthor.push({ Children: buildInlines(child) });
+    } else {
+      const blk = buildBlock(child);
+      if (blk) children.push(blk);
+    }
+  });
+  const out: Cite = { Children: children };
+  if (textAuthor.length) out.TextAuthor = textAuthor;
+  return out;
+}
+
+function buildPoem(node: PMNode): Poem {
+  const stanzas: Stanza[] = [];
+  const textAuthor: Paragraph[] = [];
+  let title: Title | undefined;
+  const epigraphs: Epigraph[] = [];
+  node.forEach((child) => {
+    switch (child.type.name) {
+      case "title":
+        title = buildTitle(child);
+        break;
+      case "epigraph":
+        epigraphs.push(buildEpigraph(child));
+        break;
+      case "stanza":
+        stanzas.push(buildStanza(child));
+        break;
+      case "text_author":
+        textAuthor.push({ Children: buildInlines(child) });
+        break;
+    }
+  });
+  const poem: Poem = { Stanzas: stanzas };
+  if (title) poem.Title = title;
+  if (epigraphs.length) poem.Epigraph = epigraphs;
+  if (textAuthor.length) poem.TextAuthor = textAuthor;
+  return poem;
+}
+
+function buildStanza(node: PMNode): Stanza {
+  const verses: Paragraph[] = [];
+  let title: Title | undefined;
+  let subtitle: Paragraph | undefined;
+  node.forEach((child) => {
+    switch (child.type.name) {
+      case "title":
+        title = buildTitle(child);
+        break;
+      case "subtitle":
+        subtitle = { Children: buildInlines(child) };
+        break;
+      case "verse":
+        verses.push({ Children: buildInlines(child) });
+        break;
+    }
+  });
+  const out: Stanza = { Verses: verses };
+  if (title) out.Title = title;
+  if (subtitle) out.Subtitle = subtitle;
+  return out;
+}
+
+function buildTable(node: PMNode): Table {
+  const rows: Table["Rows"] = [];
+  node.forEach((row) => {
+    const cells: Cell[] = [];
+    row.forEach((cell) => {
+      const c: Cell = {
+        XMLName: { Local: cell.attrs.header ? "th" : "td" },
+        Children: buildInlines(cell),
+      };
+      if (cell.attrs.colspan && cell.attrs.colspan !== 1) c.ColSpan = String(cell.attrs.colspan);
+      if (cell.attrs.rowspan && cell.attrs.rowspan !== 1) c.RowSpan = String(cell.attrs.rowspan);
+      if (cell.attrs.align) c.Align = cell.attrs.align;
+      if (cell.attrs.valign) c.VAlign = cell.attrs.valign;
+      cells.push(c);
+    });
+    rows.push({ Cells: cells });
+  });
+  return { Rows: rows, ID: node.attrs.id || undefined };
+}
+
+function buildImage(node: PMNode): Image {
+  return {
+    Href: node.attrs.href || "",
+    Title: node.attrs.title || undefined,
+    Alt: node.attrs.alt || undefined,
+  };
+}
+
+function buildBlock(node: PMNode): Block | null {
+  switch (node.type.name) {
+    case "paragraph":
+      return { Paragraph: buildParagraph(node) };
+    case "subtitle":
+      return { Subtitle: { Children: buildInlines(node) } };
+    case "empty_line":
+      return { EmptyLine: {} };
+    case "poem":
+      return { Poem: buildPoem(node) };
+    case "cite":
+      return { Cite: buildCite(node) };
+    case "table":
+      return { Table: buildTable(node) };
+    case "image_block":
+      return { Image: buildImage(node) };
+  }
+  return null;
+}
+
+function buildParagraph(node: PMNode): Paragraph {
+  const p: Paragraph = { Children: buildInlines(node) };
+  if (node.attrs.id) p.ID = node.attrs.id;
+  if (node.attrs.style) p.Style = node.attrs.style;
+  return p;
+}
+
+function buildInlines(node: PMNode): Inline[] {
+  const out: Inline[] = [];
+  node.forEach((child) => {
+    if (child.isText) {
+      pushTextWithMarks(child.text ?? "", child.marks, out);
+    } else if (child.type.name === "image_inline") {
+      out.push({
+        Image: {
+          Href: child.attrs.href || "",
+          Title: child.attrs.title || undefined,
+          Alt: child.attrs.alt || undefined,
+        },
+      });
+    }
+  });
+  return out;
+}
+
+/**
+ * Convert a PM text node with marks into an Inline. We nest marks
+ * right-to-left so the outermost element corresponds to the first mark.
+ * Order-within-marks: strong > emphasis > strikethrough > sub > sup > code > style > link.
+ */
+function pushTextWithMarks(text: string, marks: readonly Mark[], out: Inline[]): void {
+  if (marks.length === 0) {
+    out.push({ Text: text });
+    return;
+  }
+  const ordered = [...marks].sort((a, b) => markOrder(a) - markOrder(b));
+  let inner: Inline = { Text: text };
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    inner = wrapMark(ordered[i], inner);
+  }
+  out.push(inner);
+}
+
+function markOrder(m: Mark): number {
+  switch (m.type.name) {
+    case "strong":        return 1;
+    case "emphasis":      return 2;
+    case "strikethrough": return 3;
+    case "sub":           return 4;
+    case "sup":           return 5;
+    case "code":          return 6;
+    case "style":         return 7;
+    case "link":          return 8;
+    default:              return 99;
+  }
+}
+
+function wrapMark(m: Mark, child: Inline): Inline {
+  const children: Inline[] = [child];
+  switch (m.type.name) {
+    case "strong":        return { Strong: { Children: children } };
+    case "emphasis":      return { Emphasis: { Children: children } };
+    case "strikethrough": return { Strikethrough: { Children: children } };
+    case "sub":           return { Sub: { Children: children } };
+    case "sup":           return { Sup: { Children: children } };
+    case "code":          return { Code: { Children: children } };
+    case "style":         return { Style: { Name: m.attrs.name ?? "", Children: children } };
+    case "link":          return { A: { Href: m.attrs.href ?? "", Type: m.attrs.type ?? "", Children: children } };
+  }
+  return child;
 }

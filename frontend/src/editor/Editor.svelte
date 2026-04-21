@@ -8,6 +8,7 @@
   import { Node as PMNode } from "prosemirror-model";
   import { fb2Schema } from "./schema";
   import { fb2ToPMDoc } from "./parse";
+  import { pmDocToFB2 } from "./serialize";
   import {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
     toggleSub, toggleSup, toggleCode, toggleLink,
@@ -20,6 +21,12 @@
 
   /** Export the EditorView so the toolbar in App.svelte can dispatch commands. */
   export let view: EditorView | undefined = undefined;
+
+  /** Serialize current PM doc back to a FictionBook, merged with the original description + binaries. */
+  export function currentFB(): FictionBook | null {
+    if (!view || !fb) return null;
+    return pmDocToFB2(view.state.doc, fb);
+  }
 
   let container: HTMLDivElement;
 
