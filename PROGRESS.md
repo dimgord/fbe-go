@@ -6,6 +6,73 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 7 — 2026-04-21 — Save cycle + Raw fallback for unknown elements
+
+Version: **0.0.7**
+
+### What changed
+
+**Part 1 — Save cycle (edit → disk round-trip)**
+
+- `frontend/src/editor/serialize.ts` fully implemented: walks the ProseMirror
+  doc and builds a FictionBook shape that mirrors Go's `doc.FictionBook`.
+  Covers body/section (nested or flat), title, epigraph + text-author,
+  annotation, paragraph, subtitle, empty-line, poem → stanza → verse,
+  cite + text-author, table (th/td with colspan/rowspan/align/valign), block
+  and inline images, plus all inline marks (strong/emphasis/strikethrough/
+  sub/sup/code/style/link) with stable nesting order. Description + binaries
+  are preserved from the originally-loaded FictionBook.
+- `Editor.svelte` exposes `currentFB()` so App.svelte can grab the current doc
+  state.
+- `App.svelte` adds Save / Save As… / Validate buttons:
+  - **Save** — reuses `currentPath` or falls back to Save-As dialog if none.
+  - **Save As…** — Wails `SaveFileDialog` with `.fb2` filter.
+  - **Validate** — calls `App.Validate(path)` and shows result in status bar.
+  - Keyboard: `⌘S` / `⌘⇧S` for Save / Save As.
+- Status bar feedback: green "Saved X" on success (auto-clears after 3 s),
+  "XSD valid ✓" or error summary on Validate.
+
+**Part 2 — Lossless round-trip for unknown elements**
+
+- New `doc.RawElement` type that captures arbitrary XML elements verbatim:
+  name, attributes, recursive child tokens (text + nested elements).
+  Custom `UnmarshalXML` / `MarshalXML` preserve nesting and attributes.
+- `Block` gains a `Raw *RawElement` field for unknown block-level elements
+  (FB2 extensions, future-version tags). `Block.UnmarshalXML` now captures
+  unknown elements into Raw instead of silently skipping via `d.Skip()`.
+- `Inline` gains the same `Raw *RawElement`. Mixed-content reader in
+  `unmarshalInlineContent` routes unknown inline elements to Raw.
+- `marshalInlineContent` emits Raw elements back verbatim.
+
+**Verification**
+
+- `go test ./...` — all pre-existing tests still pass.
+- `go test -v ./internal/fb2/writer/ -run TestRaw` — two new tests:
+  - `TestRawFallbackPreservesUnknownBlock`: `<custom-extension
+    data-source="Flibusta" count="42">…<b>…</b>…</custom-extension>`
+    survives round-trip with all attributes and nested elements intact.
+  - `TestRawFallbackPreservesUnknownInline`: `<ruby rb="漢" rt="kan">漢</ruby>`
+    inside a `<p>` round-trips verbatim.
+- Corpus run (`go test -tags 'corpus xsd' ...`) unchanged:
+  `parse=3/3 write=3/3 reparse=3/3 srcValid=1/3 outValid=1/3 fidelityBroken=0`.
+  The −1 XSD-error delta on one file remains — caused by our writer
+  normalizing element order (valid `<empty-line>` placed where schema allows
+  instead of before `<title>`). Not a lost-content bug.
+
+### Files modified / added
+
+- **Modified:** `internal/fb2/doc/doc.go`, `frontend/src/App.svelte`,
+  `frontend/src/editor/Editor.svelte`, `frontend/src/editor/serialize.ts`,
+  `PROGRESS.md`, `wails.json`, `frontend/package.json`.
+- **Added:** `internal/fb2/writer/raw_test.go`.
+
+### Versions bumped
+
+- `wails.json`            0.0.6 → 0.0.7
+- `frontend/package.json` 0.0.6 → 0.0.7
+
+---
+
 ## Rev 6 — 2026-04-21 — First editable experience: toolbar + inline marks + block styles
 
 Version: **0.0.6**
