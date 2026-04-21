@@ -14,6 +14,8 @@
     toggleSub, toggleSup, toggleCode, toggleLink,
     styleNormal, styleSubtitle, styleTextAuthor,
     insertEmptyLine,
+    cloneContainer, removeOuterContainer,
+    addTitle, addEpigraph, addAnnotation, addTextAuthor,
   } from "./commands";
   import type { FictionBook } from "../fb2/types";
 
@@ -156,6 +158,8 @@
     toggleSub, toggleSup, toggleCode,
     styleNormal, styleSubtitle, styleTextAuthor,
     insertEmptyLine,
+    cloneContainer, removeOuterContainer,
+    addTitle, addEpigraph, addAnnotation, addTextAuthor,
     undo, redo,
   };
 </script>
