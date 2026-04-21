@@ -9,6 +9,7 @@
   import { fb2Schema } from "./schema";
   import { fb2ToPMDoc } from "./parse";
   import { pmDocToFB2 } from "./serialize";
+  import { cleanPastedHTML, cleanPastedText } from "./paste";
   import {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
     toggleSub, toggleSup, toggleCode, toggleLink,
@@ -127,7 +128,11 @@
         keymap(baseKeymap),
       ],
     });
-    view = new EditorView(container, { state });
+    view = new EditorView(container, {
+      state,
+      transformPastedHTML: cleanPastedHTML,
+      transformPastedText: cleanPastedText,
+    });
   }
 
   onMount(() => {

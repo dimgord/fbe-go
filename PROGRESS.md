@@ -6,6 +6,26 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 14 — 2026-04-21 — Paste handling (strip Word clutter) [dev]
+
+Version: **0.0.14**
+
+- `frontend/src/editor/paste.ts` — `cleanPastedHTML` strips Word
+  conditional comments, `<style>` blocks, `<meta>` / `<link>` / `<xml>` /
+  `<o:p>` / `<w:*>` tags, mso-* inline styles, font-family/size/color
+  junk, class attributes, `<span>` wrappers; collapses multi-`<br>` into
+  paragraph breaks; drops empty paragraphs; converts `&nbsp;` to regular
+  space. `cleanPastedText` normalizes CRLF → LF, strips non-printable
+  control chars, normalizes nbsp.
+- `Editor.svelte` wires them to `transformPastedHTML` /
+  `transformPastedText` on the PM view.
+- 12 new vitest assertions (54/54 total).
+- Matches `FBEview.cpp::OnPaste` / `OnRealPaste` spirit.
+
+Versions bumped 0.0.13 → 0.0.14.
+
+---
+
 ## Rev 13 — 2026-04-21 — MergeContainers — Phase 3 complete [dev branch]
 
 Version: **0.0.13**
