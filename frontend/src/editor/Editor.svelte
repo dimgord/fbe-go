@@ -16,6 +16,7 @@
     insertEmptyLine,
     cloneContainer, removeOuterContainer,
     addTitle, addEpigraph, addAnnotation, addTextAuthor,
+    insertCite, insertPoem,
   } from "./commands";
   import type { FictionBook } from "../fb2/types";
 
@@ -160,6 +161,7 @@
     insertEmptyLine,
     cloneContainer, removeOuterContainer,
     addTitle, addEpigraph, addAnnotation, addTextAuthor,
+    insertCite, insertPoem,
     undo, redo,
   };
 </script>

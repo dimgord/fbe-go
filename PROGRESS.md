@@ -6,6 +6,68 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 11 — 2026-04-21 — InsertPoem + InsertCite [dev branch]
+
+Version: **0.0.11**
+
+### What changed
+
+Closes the 🔴 hard-half of Phase 3's container commands. `InsertPoem` and
+`InsertCite` wrap a block range in the corresponding FB2 container, replacing
+the stubs that were in `commands.ts` since Rev 6.
+
+**`insertCite`** (FBEview.cpp:1048 equivalent)
+- Requires the cursor to be inside `section` / `poem` / `annotation` / `history`.
+- Uses `$from.blockRange($to)` to locate the covered blocks.
+- Collects paragraph / empty-line / subtitle children from that range into the
+  new `<cite>`; skips incompatible blocks (nested poems, tables, images) so
+  the cite doesn't violate its FB2 schema.
+- Replaces the range with the cite via `tr.replaceRangeWith`.
+
+**`insertPoem`** (FBEview.cpp:903 equivalent)
+- Requires cursor inside `section` / `epigraph` / `annotation` / `history` /
+  `cite` (same parents FBE allows).
+- Each paragraph in the range becomes a `<v>` verse.
+- `<empty-line>` blocks **split stanzas**: two paragraphs, blank line, two
+  more paragraphs → two `<stanza>`s of two verses each (matches FBE's
+  stanza-splitting heuristic).
+- Empty ranges produce one stanza with one empty verse, keeping the poem
+  editable.
+
+### Tests
+
+- 3 new vitest cases in `commands.test.ts`:
+  - `insertCite wraps the selected paragraphs in a <cite>` — 3 paragraphs,
+    selection over last two → section becomes title/paragraph/cite(2 paras).
+  - `insertPoem converts selected paragraphs to a stanza of verses` — 3
+    paragraphs, full selection → poem with one stanza of three verses.
+  - `insertPoem splits stanzas at empty-line blocks` — 4 paragraphs with an
+    empty-line in the middle → poem with two stanzas of two verses each.
+- Total: **31/31** vitest pass (14 serialize + 5 outline + 12 commands).
+
+### Toolbar
+
+Two new buttons after the structural group: `❝ Cite`, `♪ Poem`.
+Tooltips explain the block-range + empty-line semantics.
+
+### Still stubbed
+
+- 🔴 `mergeContainers` — FBE's `main.js:2216` has 6 sub-cases with subtle
+  invariants; needs a focused rev of its own.
+- 🔴 `insertTable` — rows × cols × header toggle; probably a modal dialog.
+
+### Files modified
+
+- `frontend/src/editor/commands.ts`, `commands.test.ts`, `Editor.svelte`,
+  `Toolbar.svelte`, `PROGRESS.md`, `wails.json`, `frontend/package.json`.
+
+### Versions bumped
+
+- `wails.json`            0.0.10 → 0.0.11
+- `frontend/package.json` 0.0.10 → 0.0.11
+
+---
+
 ## Rev 10 — 2026-04-21 — Phase 3 structural commands [dev branch]
 
 Version: **0.0.10**
