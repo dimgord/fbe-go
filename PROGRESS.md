@@ -6,6 +6,64 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 5 — 2026-04-21 — Real-world corpus testing
+
+Version: **0.0.5**
+
+### What changed
+
+**Corpus test harness (`internal/fb2/corpus_test.go`, build tag `corpus`)**
+- Walks a directory for `.fb2` files (defaults to `~/Documents/books`,
+  overridable via `FBE_CORPUS_DIR`).
+- For each file: parse → write → re-parse → validate source AND output against
+  the bundled FictionBook.xsd.
+- Reports: parse/write/reparse/srcValid/outValid counts, plus
+  **fidelityBroken** (source valid → our output invalid) and
+  **fidelityPreserved** (source invalid, we emit same count of errors).
+- Per-file XSD error deltas surface anywhere our writer diverges from source
+  faithfulness.
+
+### First corpus run results (3 files, 3.2 MB)
+
+```
+parse=3/3 write=3/3 reparse=3/3 srcValid=1/3 outValid=1/3 fidelityBroken=0
+```
+
+All three files parse, write, and re-parse successfully (including
+`Mihalovskij_*.fb2` in `windows-1251` — encoding autodetect working).
+
+**fidelityBroken=0** — the critical check: no valid-source file was broken
+by our round-trip.
+
+**Observation:** `Спынь Ксения - Дурные.fb2` has 6 XSD errors in source, 5 in
+our output (-1). The missing error is
+`Element 'empty-line': This element is not expected` — the source had an
+`<empty-line>` in a position our parser didn't accept into the typed tree, so
+we silently dropped it. Tracked for Phase 1:
+- TODO: preserve unknown/misplaced elements via a `Raw []byte` fallback field
+  on containers, so unfamiliar FB2 extensions round-trip losslessly.
+
+### Running the corpus test
+
+```
+FBE_CORPUS_DIR=/path/to/books \
+  go test -tags 'corpus xsd' -v ./internal/fb2/ -run TestCorpus
+```
+
+Default `go test ./...` does NOT run corpus (build tag gated), so CI stays hermetic.
+
+### Files modified / added
+
+- **Added:** `internal/fb2/corpus_test.go`.
+- **Modified:** `PROGRESS.md`, `wails.json`, `frontend/package.json`.
+
+### Versions bumped
+
+- `wails.json`            0.0.4 → 0.0.5
+- `frontend/package.json` 0.0.4 → 0.0.5
+
+---
+
 ## Rev 4 — 2026-04-21 — Writer round-trip + polymorphic Block/Inline marshalers
 
 Version: **0.0.4**
