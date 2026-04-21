@@ -5,8 +5,14 @@
   import DateField from "./DateField.svelte";
   import SequenceField from "./SequenceField.svelte";
   import CoverpageField from "./CoverpageField.svelte";
+  import AnnotationEditor from "./AnnotationEditor.svelte";
+  import type { Annotation } from "../fb2/types";
 
   export let info: TitleInfo;
+
+  function onAnnotationChange(e: CustomEvent<Annotation>) {
+    info.Annotation = e.detail;
+  }
   /** For the coverpage dropdown — IDs of binaries available on the book. */
   export let availableBinaryIDs: string[] = [];
 
@@ -79,10 +85,7 @@
   </div>
 
   <h3>Annotation</h3>
-  <p class="hint">
-    Rich-text annotation editing isn't supported in the form yet — switch to the body view
-    to edit the <code>&lt;annotation&gt;</code>, or edit the raw FB2 for now.
-  </p>
+  <AnnotationEditor annotation={info.Annotation ?? { Children: [] }} on:change={onAnnotationChange} />
 
   <h3>Coverpage</h3>
   <CoverpageField bind:cover={info.Coverpage} {availableBinaryIDs} />
