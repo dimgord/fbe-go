@@ -6,6 +6,64 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 12 — 2026-04-21 — InsertTable with dialog [dev branch]
+
+Version: **0.0.12**
+
+### What changed
+
+Adds `insertTable` alongside a small modal dialog for entering dimensions.
+
+**`insertTableCmd(rows, cols, header)` in `commands.ts`:**
+- Parent must be `section` / `epigraph` / `annotation` / `history` / `cite`.
+  (Body-level placement is rejected — matches FB2 schema.)
+- Builds `table > table_row+ > table_cell` with `header=true` on the first
+  row when the header flag is set.
+- Inserts at `range.end` for empty selections (doesn't split the caret
+  paragraph); replaces the range for non-empty selections.
+- Also exports `insertTable` — a zero-arg 3×3-with-header convenience for
+  menus that can't pass parameters.
+
+**`TableDialog.svelte`** — 20 rem-wide modal, centered on a semi-transparent
+backdrop:
+- Number inputs for rows (1–50) and cols (1–20), plus a header checkbox.
+- Rows input auto-focuses on open; `Enter` submits, `Esc` cancels.
+- Click-outside closes. Emits `insert` with `{rows, cols, header}` payload.
+
+**`Editor.svelte`** wires it:
+- Exposes `openTableDialog()` for the toolbar.
+- Handles `insert` event from the dialog, dispatching `insertTableCmd(...)`.
+
+**`Toolbar.svelte`** gets a `▦ Table…` button after the Cite/Poem pair.
+
+### Tests
+
+Three new vitest cases (`commands.test.ts`):
+- Inserts a 3×3 header table; verifies header flag on row 0, not on rows 1–2.
+- Refuses to insert from inside a `<title>` (no valid container ancestor).
+- Rejects `rows < 1` or `cols < 1` dimensions.
+
+34/34 vitest pass (14 serialize + 5 outline + 15 commands).
+
+### Still stubbed
+
+- 🔴 `mergeContainers` — FBE `main.js:2216`, 6 sub-cases. Last major
+  Phase 3 structural piece.
+
+### Files modified / added
+
+- **Modified:** `frontend/src/editor/commands.ts`, `commands.test.ts`,
+  `Editor.svelte`, `Toolbar.svelte`, `PROGRESS.md`, `wails.json`,
+  `frontend/package.json`.
+- **Added:** `frontend/src/editor/TableDialog.svelte`.
+
+### Versions bumped
+
+- `wails.json`            0.0.11 → 0.0.12
+- `frontend/package.json` 0.0.11 → 0.0.12
+
+---
+
 ## Rev 11 — 2026-04-21 — InsertPoem + InsertCite [dev branch]
 
 Version: **0.0.11**
