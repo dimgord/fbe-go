@@ -28,6 +28,77 @@
     return pmDocToFB2(view.state.doc, fb);
   }
 
+  /**
+   * Scroll the editor to the section identified by an outline path like
+   * [bodyIdx, sectionIdx, subIdx, ...]. Uses ProseMirror's coordsAtPos so it
+   * works even when the section has no DOM id.
+   */
+  export function scrollToPath(path: number[]): void {
+    if (!view || path.length === 0) return;
+    const pos = findNodePos(view.state.doc, path);
+    if (pos == null) return;
+    const coords = view.coordsAtPos(pos);
+    const rootRect = (view.dom as HTMLElement).getBoundingClientRect();
+    // Scroll the nearest scrollable ancestor so the coord is visible at the top.
+    let el: HTMLElement | null = view.dom as HTMLElement;
+    while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement;
+    if (el) {
+      el.scrollTop += coords.top - rootRect.top - 12;
+    }
+    // Brief highlight.
+    const node = view.domAtPos(pos).node as HTMLElement | null;
+    if (node && node instanceof HTMLElement) {
+      node.classList.add("outline-flash");
+      setTimeout(() => node.classList.remove("outline-flash"), 700);
+    }
+  }
+
+  /** Walk the doc by outline path: [bodyIdx, sectionIdx, sub, …]. Returns the position of that node. */
+  function findNodePos(doc: PMNode, path: number[]): number | null {
+    if (path.length === 0) return null;
+    // Step 0: the bodyIdx-th body child of doc.
+    let cursor = doc;
+    let absPos = 0;
+    let remaining = path.slice();
+    // Descend through body → section → sub…
+    // First, pick body.
+    const bodyIdx = remaining.shift()!;
+    let i = 0;
+    for (let c = 0; c < cursor.childCount; c++) {
+      const child = cursor.child(c);
+      if (child.type.name === "body") {
+        if (i === bodyIdx) {
+          absPos += 1; // enter body
+          cursor = child;
+          break;
+        }
+        i++;
+      }
+      absPos += child.nodeSize;
+    }
+    // Then descend into sections.
+    while (remaining.length > 0) {
+      const want = remaining.shift()!;
+      let sIdx = 0;
+      let found = false;
+      for (let c = 0; c < cursor.childCount; c++) {
+        const child = cursor.child(c);
+        if (child.type.name === "section") {
+          if (sIdx === want) {
+            absPos += 1; // enter section
+            cursor = child;
+            found = true;
+            break;
+          }
+          sIdx++;
+        }
+        absPos += child.nodeSize;
+      }
+      if (!found) return null;
+    }
+    return absPos;
+  }
+
   let container: HTMLDivElement;
 
   function mount(doc: PMNode) {
@@ -192,5 +263,9 @@
   :global(.ProseMirror img) {
     max-width: 100%;
     height: auto;
+  }
+  :global(.ProseMirror .outline-flash) {
+    transition: background-color 0.3s ease;
+    background: #fff2b0;
   }
 </style>

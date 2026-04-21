@@ -13,7 +13,7 @@ const nodes: Record<string, NodeSpec> = {
 
   // Block containers (each has optional title/epigraph/image/annotation children).
   body: {
-    content: "(title | epigraph | image | annotation | section)+",
+    content: "(title | epigraph | image_block | annotation | section)+",
     group: "structural",
     attrs: { name: { default: "" } },
     toDOM: (n) => ["div", { class: "body", "data-name": n.attrs.name }, 0],
@@ -21,7 +21,7 @@ const nodes: Record<string, NodeSpec> = {
   },
 
   section: {
-    content: "(title | epigraph | image | annotation)* (section+ | block+)",
+    content: "(title | epigraph | image_block | annotation)* (section+ | block+)",
     group: "structural",
     attrs: { id: { default: null } },
     toDOM: (n) => ["div", { class: "section", id: n.attrs.id }, 0],

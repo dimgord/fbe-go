@@ -6,6 +6,72 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 8 — 2026-04-21 — Frontend round-trip tests + DocumentTree outline
+
+Version: **0.0.8**
+
+### What changed
+
+**Part 1 — vitest round-trip tests for `serialize.ts`**
+
+- Added `vitest` to devDeps; `npm test` / `npm run test:watch` scripts.
+- `frontend/src/editor/serialize.test.ts` — 14 assertions running
+  `fb2ToPMDoc → pmDocToFB2` on `SAMPLE_BOOK` and verifying every node kind
+  survives: bodies, sections (nested), titles, epigraphs with text-author,
+  poems with stanzas & text-author, all inline marks (strong/emphasis/
+  strikethrough/sub/sup/code/link/style), empty-line, cite with text-author,
+  subtitle, tables (th/td + colspan/rowspan/align with sub mark inside
+  cells), nested sections with annotation, book-title and description.
+- **Caught a real schema bug:** `schema.ts` content expressions referenced a
+  nonexistent `image` node in `body` and `section` content rules. Fixed to
+  `image_block` — schema now initializes cleanly.
+
+**Part 2 — DocumentTree outline + click-to-scroll**
+
+- `frontend/src/tree/outline.ts` — `buildOutline(fb)` walks a FictionBook and
+  returns `OutlineNode[]` with `{label, kind: "body"|"section", path, children}`.
+  `label` comes from the section's `<title>` (inline-flattened); falls back
+  to a placeholder when untitled. `path` is an index array ([body, section, …])
+  used for navigation.
+- `frontend/src/tree/outline.test.ts` — 5 assertions on `SAMPLE_BOOK`:
+  body count, top-level section labels, nested section labels, unique paths,
+  empty-input handling.
+- `DocumentTree.svelte` rewritten to accept `fb: FictionBook | null` prop;
+  renders an `<ul>` of `OutlineItem.svelte` components. Recursion uses
+  `<svelte:self>` for nested sections.
+- `OutlineItem.svelte` — one clickable button per node. Emits `navigate`
+  event with `path` on click. Styled with kind-based classes (body is
+  blue/bold, section is default).
+- `Editor.svelte` gains `scrollToPath(path)`: walks the ProseMirror doc by
+  outline path to find the target node's position, uses `coordsAtPos` to
+  scroll the editor into view, flashes `.outline-flash` on the section for
+  700 ms.
+- `App.svelte` wires `<DocumentTree {fb} on:navigate>` to
+  `editor?.scrollToPath(e.detail.path)`.
+
+### Verified
+
+- `npm test` → 19/19 pass (14 serialize + 5 outline).
+- `wails build -tags xsd` — 9.4 MB `.app`, relaunches with the outline in
+  the left pane. Clicking an item scrolls the editor and flashes the target.
+
+### Files modified / added
+
+- **Modified:** `frontend/package.json`, `frontend/src/editor/schema.ts`,
+  `frontend/src/editor/Editor.svelte`, `frontend/src/App.svelte`,
+  `frontend/src/tree/DocumentTree.svelte`,
+  `PROGRESS.md`, `wails.json`.
+- **Added:** `frontend/src/editor/serialize.test.ts`,
+  `frontend/src/tree/outline.ts`, `frontend/src/tree/outline.test.ts`,
+  `frontend/src/tree/OutlineItem.svelte`.
+
+### Versions bumped
+
+- `wails.json`            0.0.7 → 0.0.8
+- `frontend/package.json` 0.0.7 → 0.0.8
+
+---
+
 ## Rev 7 — 2026-04-21 — Save cycle + Raw fallback for unknown elements
 
 Version: **0.0.7**
