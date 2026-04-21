@@ -17,6 +17,8 @@ import {
   addEpigraph,
   addAnnotation,
   addTextAuthor,
+  insertCite,
+  insertPoem,
 } from "./commands";
 import { SAMPLE_BOOK } from "../fb2/sample";
 import type { FictionBook } from "../fb2/types";
@@ -215,6 +217,127 @@ describe("structural commands on SAMPLE_BOOK", () => {
     // The wrapper is removed; its two sub-sections are promoted into the body.
     // Net: -1 wrapper + 2 promoted = +1 section at body level.
     expect(sectionsAfter).toBe(sectionsBefore - 1 + 2);
+  });
+});
+
+describe("insertCite / insertPoem", () => {
+  /** Build a FictionBook with a section containing N simple paragraphs. */
+  function sectionOfParagraphs(texts: (string | "empty")[]): FictionBook {
+    return {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            {
+              Title: { Children: [{ Paragraph: { Children: [{ Text: "Test" }] } }] },
+              Blocks: texts.map((t) =>
+                t === "empty"
+                  ? { EmptyLine: {} }
+                  : { Paragraph: { Children: [{ Text: t }] } },
+              ),
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  /** Find positions of paragraphs whose direct parent is the first section. */
+  function bodyParaPositions(state: EditorState): number[] {
+    const out: number[] = [];
+    state.doc.descendants((n, pos, parent) => {
+      if (n.type.name === "paragraph" && parent?.type.name === "section") out.push(pos);
+    });
+    return out;
+  }
+
+  it("insertCite wraps the selected paragraphs in a <cite>", () => {
+    const fb = sectionOfParagraphs(["alpha", "beta", "gamma"]);
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+    const p = bodyParaPositions(state); // [alpha, beta, gamma] positions
+
+    // Select beta + gamma.
+    const gamma = state.doc.nodeAt(p[2])!;
+    const selStart = p[1] + 1; // inside beta
+    const selEnd = p[2] + gamma.nodeSize - 1;
+    const stateSel = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, selStart, selEnd)),
+    );
+
+    let resultDoc: PMNode = stateSel.doc;
+    const ok = insertCite(stateSel, (tr) => { resultDoc = stateSel.apply(tr).doc; });
+    expect(ok).toBe(true);
+
+    const section = resultDoc.firstChild!.firstChild!;
+    const names: string[] = [];
+    section.forEach((c) => names.push(c.type.name));
+    expect(names).toEqual(["title", "paragraph", "cite"]);
+
+    let cite: PMNode | null = null;
+    section.forEach((c) => { if (c.type.name === "cite") cite = c; });
+    expect((cite as any).childCount).toBe(2);
+  });
+
+  it("insertPoem converts selected paragraphs to a stanza of verses", () => {
+    const fb = sectionOfParagraphs(["line one", "line two", "line three"]);
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+    const p = bodyParaPositions(state); // 3 body paragraphs
+
+    const last = state.doc.nodeAt(p[2])!;
+    const selStart = p[0] + 1;
+    const selEnd = p[2] + last.nodeSize - 1;
+    const stateSel = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, selStart, selEnd)),
+    );
+
+    let resultDoc: PMNode = stateSel.doc;
+    const ok = insertPoem(stateSel, (tr) => { resultDoc = stateSel.apply(tr).doc; });
+    expect(ok).toBe(true);
+
+    const section = resultDoc.firstChild!.firstChild!;
+    let poem: PMNode | null = null;
+    section.forEach((c) => { if (c.type.name === "poem") poem = c; });
+    expect(poem).not.toBeNull();
+    expect((poem as any).childCount).toBe(1); // one stanza
+    const stanza = (poem as any).firstChild;
+    expect(stanza.type.name).toBe("stanza");
+    expect(stanza.childCount).toBe(3);
+    stanza.forEach((v: PMNode) => { expect(v.type.name).toBe("verse"); });
+  });
+
+  it("insertPoem splits stanzas at empty-line blocks", () => {
+    const fb = sectionOfParagraphs([
+      "stanza1 line1", "stanza1 line2",
+      "empty",
+      "stanza2 line1", "stanza2 line2",
+    ]);
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+    const p = bodyParaPositions(state); // 4 body paragraphs (empty-line not included)
+
+    const last = state.doc.nodeAt(p[3])!;
+    const selStart = p[0] + 1;
+    const selEnd = p[3] + last.nodeSize - 1;
+    const stateSel = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, selStart, selEnd)),
+    );
+
+    let resultDoc: PMNode = stateSel.doc;
+    const ok = insertPoem(stateSel, (tr) => { resultDoc = stateSel.apply(tr).doc; });
+    expect(ok).toBe(true);
+
+    let poem: PMNode | null = null;
+    resultDoc.descendants((n) => {
+      if (poem) return false;
+      if (n.type.name === "poem") { poem = n; return false; }
+    });
+    expect(poem).not.toBeNull();
+    expect((poem as any).childCount).toBe(2); // two stanzas
+    // First stanza has 2 verses, second stanza has 2 verses.
+    expect((poem as any).child(0).childCount).toBe(2);
+    expect((poem as any).child(1).childCount).toBe(2);
   });
 });
 

@@ -39,6 +39,9 @@
   <button title="Add epigraph to enclosing body / section / poem" on:click={() => cmd("addEpigraph")}>+ Epigraph</button>
   <button title="Add annotation to enclosing section" on:click={() => cmd("addAnnotation")}>+ Annot.</button>
   <button title="Append text-author to enclosing poem / cite / epigraph" on:click={() => cmd("addTextAuthor")}>+ T-A</button>
+  <span class="sep" />
+  <button title="Wrap selection in a &lt;cite&gt;" on:click={() => cmd("insertCite")}>❝ Cite</button>
+  <button title="Wrap selection in a &lt;poem&gt; (paragraphs → verses; empty-line splits stanzas)" on:click={() => cmd("insertPoem")}>♪ Poem</button>
 </div>
 
 <style>

@@ -316,8 +316,105 @@ function firstInsertionPointAfterHeader(
   return containerBefore + offset;
 }
 
-// ── Still stubbed (🔴 complex in FBE) ───────────────────────────────────────
+/**
+ * Wrap the block range covered by the selection in a <cite>. Empty-line blocks
+ * are kept; non-paragraph blocks (subtitles, nested poems, tables) are flattened
+ * out because cite's FB2 schema is stricter than arbitrary block content.
+ *
+ * Matches FBEview.cpp:1048 InsertCite (simplified: we don't do ExpandTxtRange
+ * equivalent, relying on ProseMirror's blockRange() to give us the containing
+ * blocks).
+ */
+export const insertCite: Command = (state, dispatch) => {
+  const { $from, $to } = state.selection;
 
-export const insertPoem: Command = () => false;    // FBEview.cpp:903  (selection → stanza split, hard)
-export const insertCite: Command = () => false;    // FBEview.cpp:1048 (expand-to-paragraphs logic)
+  // Parent must allow <cite>: section / annotation / history / poem.
+  const parent = findAncestorAny($from, ["section", "poem", "annotation", "history"]);
+  if (!parent) return false;
+
+  const range = $from.blockRange($to);
+  if (!range) return false;
+
+  // Must be at the parent's depth (not inside a nested poem/cite/etc.).
+  const rangeParent = range.parent;
+  if (!["section", "poem", "annotation", "history"].includes(rangeParent.type.name)) return false;
+
+  if (!dispatch) return true;
+
+  // Collect paragraphs / empty-lines from the range. Drop incompatible block types.
+  const citeChildren: PMNode[] = [];
+  for (let i = range.startIndex; i < range.endIndex; i++) {
+    const child = rangeParent.child(i);
+    if (child.type.name === "paragraph" || child.type.name === "empty_line") {
+      citeChildren.push(child);
+    } else if (child.type.name === "subtitle") {
+      citeChildren.push(child);
+    }
+    // Skip poem/table/image — they don't fit inside cite's "block" group.
+  }
+  if (citeChildren.length === 0) {
+    citeChildren.push(N.paragraph.createAndFill()!);
+  }
+
+  const cite = N.cite.create(null, citeChildren);
+  const tr = state.tr.replaceRangeWith(range.start, range.end, cite);
+  dispatch(tr.scrollIntoView());
+  return true;
+};
+
+/**
+ * Convert the block range covered by the selection into a <poem><stanza><v>…+.
+ *
+ * Each paragraph becomes a `<v>` verse. `<empty-line>` blocks split the content
+ * into separate stanzas (so "two paragraphs, blank line, two more paragraphs"
+ * becomes two stanzas of two verses each).
+ *
+ * Matches FBEview.cpp:903 InsertPoem (simplified: FBE's original also strips
+ * leading/trailing blank lines from each stanza — we replicate that).
+ */
+export const insertPoem: Command = (state, dispatch) => {
+  const { $from, $to } = state.selection;
+
+  const parent = findAncestorAny($from, ["section", "epigraph", "annotation", "history", "cite"]);
+  if (!parent) return false;
+
+  const range = $from.blockRange($to);
+  if (!range) return false;
+
+  const rangeParent = range.parent;
+  if (!["section", "epigraph", "annotation", "history", "cite"].includes(rangeParent.type.name)) return false;
+
+  if (!dispatch) return true;
+
+  // Group paragraphs into stanzas, split by empty-lines.
+  const stanzas: PMNode[][] = [[]];
+  for (let i = range.startIndex; i < range.endIndex; i++) {
+    const child = rangeParent.child(i);
+    if (child.type.name === "paragraph") {
+      stanzas[stanzas.length - 1].push(N.verse.create(null, child.content));
+    } else if (child.type.name === "empty_line") {
+      // Start a new stanza if the current one is non-empty.
+      if (stanzas[stanzas.length - 1].length > 0) stanzas.push([]);
+    }
+    // subtitles / tables / nested poems inside the range: skip silently.
+  }
+
+  // Drop trailing empty stanza.
+  if (stanzas[stanzas.length - 1].length === 0) stanzas.pop();
+
+  // If no verses at all, produce one empty stanza/verse for editing.
+  const stanzaNodes: PMNode[] =
+    stanzas.length === 0
+      ? [N.stanza.create(null, [N.verse.createAndFill()!])]
+      : stanzas.map((verses) => N.stanza.create(null, verses));
+
+  const poem = N.poem.create(null, stanzaNodes);
+  const tr = state.tr.replaceRangeWith(range.start, range.end, poem);
+  dispatch(tr.scrollIntoView());
+  return true;
+};
+
+// ── Still stubbed (🔴 requires careful semantics) ──────────────────────────
+
 export const mergeContainers: Command = () => false; // main.js:2216 (6 sub-cases)
+export const insertTable: Command = () => false;      // FBEview.cpp:3556
