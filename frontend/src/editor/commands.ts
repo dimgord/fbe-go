@@ -414,7 +414,71 @@ export const insertPoem: Command = (state, dispatch) => {
   return true;
 };
 
+/**
+ * Insert a `rows × cols` table at the cursor. When `header` is true, the first
+ * row uses `<th>` cells. Matches FBEview.cpp:3556 InsertTable.
+ *
+ * The command returns a factory so the toolbar can bind its dimensions from a
+ * dialog. `insertTableCmd()` without arguments yields a sensible 3×3 default.
+ */
+export function insertTableCmd(rows = 3, cols = 3, header = true): Command {
+  return (state, dispatch) => {
+    if (rows < 1 || cols < 1) return false;
+
+    const { $from, $to } = state.selection;
+    const parent = findAncestorAny($from, [
+      "section", "epigraph", "annotation", "history", "cite",
+    ]);
+    if (!parent) return false;
+
+    // Make sure the insertion point is at the block level of a valid container,
+    // not inside an inline run where a <table> would be invalid.
+    const range = $from.blockRange($to);
+    if (!range) return false;
+    if (!["section", "epigraph", "annotation", "history", "cite"].includes(range.parent.type.name)) {
+      return false;
+    }
+
+    if (!dispatch) return true;
+
+    const table = buildTableNode(rows, cols, header);
+    // If there's a non-empty selection across blocks, replace it; otherwise
+    // insert at the current block's end so we don't split the caret paragraph.
+    let tr = state.tr;
+    if (state.selection.empty) {
+      tr = tr.insert(range.end, table);
+    } else {
+      tr = tr.replaceRangeWith(range.start, range.end, table);
+    }
+    dispatch(tr.scrollIntoView());
+    return true;
+  };
+}
+
+/** Convenience: 3×3 with header row, for menus that want a zero-arg command. */
+export const insertTable: Command = insertTableCmd();
+
+function buildTableNode(rows: number, cols: number, header: boolean): PMNode {
+  const rowsNodes: PMNode[] = [];
+  for (let r = 0; r < rows; r++) {
+    const isHeader = header && r === 0;
+    const cells: PMNode[] = [];
+    for (let c = 0; c < cols; c++) {
+      cells.push(
+        N.table_cell.create({
+          header: isHeader,
+          colspan: 1,
+          rowspan: 1,
+          align: null,
+          valign: null,
+        }),
+      );
+    }
+    rowsNodes.push(N.table_row.create(null, cells));
+  }
+  return N.table.create(null, rowsNodes);
+}
+
 // ── Still stubbed (🔴 requires careful semantics) ──────────────────────────
 
 export const mergeContainers: Command = () => false; // main.js:2216 (6 sub-cases)
-export const insertTable: Command = () => false;      // FBEview.cpp:3556

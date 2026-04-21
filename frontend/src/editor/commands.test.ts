@@ -19,6 +19,7 @@ import {
   addTextAuthor,
   insertCite,
   insertPoem,
+  insertTableCmd,
 } from "./commands";
 import { SAMPLE_BOOK } from "../fb2/sample";
 import type { FictionBook } from "../fb2/types";
@@ -338,6 +339,105 @@ describe("insertCite / insertPoem", () => {
     // First stanza has 2 verses, second stanza has 2 verses.
     expect((poem as any).child(0).childCount).toBe(2);
     expect((poem as any).child(1).childCount).toBe(2);
+  });
+});
+
+describe("insertTable", () => {
+  function sectionOfParagraphs(texts: string[]): FictionBook {
+    return {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            {
+              Title: { Children: [{ Paragraph: { Children: [{ Text: "Test" }] } }] },
+              Blocks: texts.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })),
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  it("inserts a 3×3 header table at the end of the containing section", () => {
+    const fb = sectionOfParagraphs(["one"]);
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+
+    // Place cursor inside the body paragraph.
+    let paraPos = -1;
+    state.doc.descendants((n, pos, parent) => {
+      if (paraPos === -1 && n.type.name === "paragraph" && parent?.type.name === "section") {
+        paraPos = pos + 1;
+        return false;
+      }
+    });
+    const stateAtPara = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, paraPos)),
+    );
+
+    let result: PMNode = stateAtPara.doc;
+    const ok = insertTableCmd(3, 3, true)(stateAtPara, (tr) => {
+      result = stateAtPara.apply(tr).doc;
+    });
+    expect(ok).toBe(true);
+
+    // Locate the inserted table in the first section.
+    const section = result.firstChild!.firstChild!;
+    let table: PMNode | null = null;
+    section.forEach((c) => { if (c.type.name === "table") table = c; });
+    expect(table).not.toBeNull();
+    const t = table as unknown as PMNode;
+    expect(t.childCount).toBe(3);
+    // First row is all <th>.
+    const firstRow = t.firstChild!;
+    expect(firstRow.type.name).toBe("table_row");
+    expect(firstRow.childCount).toBe(3);
+    firstRow.forEach((cell: PMNode) => {
+      expect(cell.type.name).toBe("table_cell");
+      expect(cell.attrs.header).toBe(true);
+    });
+    // Subsequent rows are <td>.
+    for (let r = 1; r < t.childCount; r++) {
+      const row = t.child(r);
+      row.forEach((cell: PMNode) => {
+        expect(cell.attrs.header).toBe(false);
+      });
+    }
+  });
+
+  it("refuses to insert inside a <body> (no valid parent)", () => {
+    const fb: FictionBook = {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [{ Title: { Children: [{ Paragraph: { Children: [{ Text: "t" }] } }] }, Sections: [] }],
+    };
+    // Force fb2ToPMDoc to produce a body without sections; put cursor in the title.
+    const doc = fb2ToPMDoc({
+      ...fb,
+      Bodies: [{ ...fb.Bodies[0], Sections: [{ Blocks: [{ Paragraph: { Children: [{ Text: "x" }] } }] }] }],
+    });
+    const state = EditorState.create({ schema: fb2Schema, doc });
+
+    // Place cursor in the body's title paragraph — no section ancestor → command refuses.
+    let titlePos = -1;
+    state.doc.descendants((n, pos, parent) => {
+      if (titlePos === -1 && n.type.name === "paragraph" && parent?.type.name === "title") {
+        titlePos = pos + 1;
+        return false;
+      }
+    });
+    const stateInTitle = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, titlePos)),
+    );
+    expect(insertTableCmd(2, 2, false)(stateInTitle)).toBe(false);
+  });
+
+  it("rejects invalid dimensions", () => {
+    const fb = sectionOfParagraphs(["x"]);
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+    expect(insertTableCmd(0, 3, true)(state)).toBe(false);
+    expect(insertTableCmd(3, -1, true)(state)).toBe(false);
   });
 });
 
