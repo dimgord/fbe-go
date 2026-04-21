@@ -6,6 +6,29 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 17 — 2026-04-21 — Speller (native webview + Hunspell interface) [dev]
+
+Version: **0.0.17**
+
+**Decision.** Use the webview's native OS spellchecker instead of shipping
+Hunspell bytes with the .app. macOS (WKWebView) and Linux (WebKitGTK) both
+surface red squiggles + right-click suggestions when the editable DOM
+declares `spellcheck="true" lang="…"`.
+
+- `Editor.svelte` sets `spellcheck="true"` and `lang={fb.TitleInfo.Lang}`
+  on the PM view attributes. The lang attribute is re-evaluated when the
+  loaded book changes, so switching to a Ukrainian book picks up `uk`
+  dictionaries automatically.
+- `internal/fb2/speller/speller.go` keeps the `Speller` interface and the
+  no-op backend; adds a documented roadmap for the future
+  `-tags speller_hunspell` CGo backend (empty stub file for now).
+- `docs/OPERATIONS.md §9` rewritten to describe the native-spellcheck
+  current state and the Hunspell plan for Phase 4.
+
+Versions bumped 0.0.16 → 0.0.17.
+
+---
+
 ## Rev 16 — 2026-04-21 — Rich annotation editor [dev]
 
 Version: **0.0.16**
