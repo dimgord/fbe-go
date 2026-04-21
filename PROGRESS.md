@@ -6,6 +6,28 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 15 — 2026-04-21 — HTML export [dev]
+
+Version: **0.0.15**
+
+- `internal/fb2/export/html` — full Go implementation replacing FBE's
+  493-line XSLT (`FBE/ExportHTML/html.xsl`). Walks the typed FictionBook
+  struct, emits a single self-contained HTML file with embedded CSS and
+  base64 data: URLs for images. Handles description (cover, title,
+  authors, annotation), nested sections with heading levels 2–6,
+  epigraphs/cites/poems/stanzas/verses, subtitles, empty-lines, tables,
+  inline and block images, every inline mark + link + style mark. Raw
+  unknown elements surface as `<div data-unknown="…">` with their text
+  content.
+- `cmd/fbe export html FILE.fb2 OUT.html` now works.
+- `App.ExportHTML(path)` exposed to the frontend; App.svelte adds an
+  `Export HTML…` button.
+- Two Go tests (blank.fb2, rich.fb2) assert key output markers.
+
+Versions bumped 0.0.14 → 0.0.15.
+
+---
+
 ## Rev 14 — 2026-04-21 — Paste handling (strip Word clutter) [dev]
 
 Version: **0.0.14**
