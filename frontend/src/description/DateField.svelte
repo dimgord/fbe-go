@@ -1,7 +1,11 @@
 <script lang="ts">
   import type { DateVal } from "../fb2/types";
+  import { uid } from "../lib/uid";
+
   export let date: DateVal | null | undefined;
   export let label = "Date";
+
+  const id_ = uid("date");
 
   /** Ensure the underlying object exists before binding. */
   $: if (!date) date = { Text: "", Value: "" };
@@ -9,10 +13,11 @@
 
 {#if date}
   <div class="date">
-    <label>{label}</label>
-    <input placeholder="Text (e.g. 21 April 2026)" bind:value={date.Text} />
+    <label for={`${id_}-text`}>{label}</label>
+    <input id={`${id_}-text`} placeholder="Text (e.g. 21 April 2026)" bind:value={date.Text} />
     <input
       class="iso"
+      aria-label="{label} (ISO value)"
       placeholder="ISO yyyy-mm-dd"
       bind:value={date.Value}
     />

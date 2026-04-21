@@ -19,13 +19,13 @@
     {#each items as _, i (i)}
       <div class="entry">
         <div class="row">
-          <label>Type</label>
-          <input bind:value={items[i].InfoType} placeholder="e.g. library-id" />
+          <label for={`ci-${i}-type`}>Type</label>
+          <input id={`ci-${i}-type`} bind:value={items[i].InfoType} placeholder="e.g. library-id" />
           <button class="aux" type="button" on:click={() => remove(i)}>×</button>
         </div>
         <div class="row">
-          <label>Value</label>
-          <textarea rows="3" bind:value={items[i].Value} />
+          <label for={`ci-${i}-val`}>Value</label>
+          <textarea id={`ci-${i}-val`} rows="3" bind:value={items[i].Value} />
         </div>
       </div>
     {/each}

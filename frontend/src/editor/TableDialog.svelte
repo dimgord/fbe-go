@@ -48,8 +48,20 @@
 </script>
 
 {#if open}
-  <div class="backdrop" on:click={cancel} role="presentation">
-    <div class="dialog" on:click|stopPropagation role="dialog" aria-modal="true" aria-labelledby="td-title">
+  <div
+    class="backdrop"
+    role="button"
+    tabindex="-1"
+    aria-label="Dismiss dialog"
+    on:click={cancel}
+    on:keydown={(e) => e.key === "Escape" && cancel()}>
+    <div
+      class="dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="td-title"
+      on:click|stopPropagation
+      on:keydown|stopPropagation>
       <h3 id="td-title">Insert table</h3>
       <div class="row">
         <label for="td-rows">Rows</label>
