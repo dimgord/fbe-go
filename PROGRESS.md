@@ -6,6 +6,31 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 18 — 2026-04-21 — A11y + unused CSS cleanup [dev]
+
+Version: **0.0.18**
+
+Clears every vite-plugin-svelte warning the production build used to print:
+
+- **Label ↔ control association** (was: 15 warnings across every form
+  component). Added `frontend/src/lib/uid.ts` with a per-process counter
+  so each component instance composes unique `id`s for its inputs, and
+  every `<label>` now has `for={…}`. Affects `AuthorField`, `GenreField`,
+  `DateField`, `SequenceField`, `TitleInfoForm`, `DocumentInfoForm`,
+  `CustomInfoForm` (for `SrcURL` / `Type` / `Value`).
+- **Backdrop a11y** in `TableDialog.svelte`: the dismiss-on-click `<div>`
+  now has `role="button"`, `tabindex="-1"`, `aria-label`, and a `keydown`
+  handler for Escape; the inner dialog keeps `role="dialog"` and stops
+  click / keydown bubbling.
+- **Unused CSS** removed from `TitleInfoForm.svelte` (the `.hint` and
+  `code` selectors that remained after Rev 16 replaced the placeholder).
+
+54/54 vitest still pass. Production build produces **zero warnings**.
+
+Versions bumped 0.0.17 → 0.0.18.
+
+---
+
 ## Rev 17 — 2026-04-21 — Speller (native webview + Hunspell interface) [dev]
 
 Version: **0.0.17**

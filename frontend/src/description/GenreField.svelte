@@ -1,15 +1,17 @@
 <script lang="ts">
   import type { Genre } from "../fb2/types";
   import { createEventDispatcher } from "svelte";
+  import { uid } from "../lib/uid";
 
   export let genre: Genre;
+  const id_ = uid("genre");
   const dispatch = createEventDispatcher<{ remove: void; clone: void }>();
 </script>
 
 <div class="genre">
   <input class="name" placeholder="Genre (e.g. sf, prose_contemporary)" bind:value={genre.Value} />
-  <label>match</label>
-  <input class="match" type="text" maxlength="3" placeholder="100" bind:value={genre.Match} />
+  <label for={`${id_}-match`}>match</label>
+  <input id={`${id_}-match`} class="match" type="text" maxlength="3" placeholder="100" bind:value={genre.Match} />
   <button class="aux" type="button" on:click={() => dispatch("clone")} title="Clone">＋</button>
   <button class="aux" type="button" on:click={() => dispatch("remove")} title="Remove">×</button>
 </div>
