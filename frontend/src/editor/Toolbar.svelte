@@ -43,6 +43,7 @@
   <button title="Wrap selection in a &lt;cite&gt;" on:click={() => cmd("insertCite")}>❝ Cite</button>
   <button title="Wrap selection in a &lt;poem&gt; (paragraphs → verses; empty-line splits stanzas)" on:click={() => cmd("insertPoem")}>♪ Poem</button>
   <button title="Insert table…" on:click={() => editor?.openTableDialog()}>▦ Table…</button>
+  <button title="Merge with next sibling section / stanza / cite" on:click={() => cmd("mergeContainers")}>⟛ Merge</button>
 </div>
 
 <style>

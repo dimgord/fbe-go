@@ -479,6 +479,174 @@ function buildTableNode(rows: number, cols: number, header: boolean): PMNode {
   return N.table.create(null, rowsNodes);
 }
 
-// ── Still stubbed (🔴 requires careful semantics) ──────────────────────────
+/**
+ * Merge the current container with its immediate next sibling of the same type.
+ * Supports section, stanza, and cite containers. Matches main.js:2216 semantics
+ * across the four structural combinations plus the cite and stanza special cases.
+ *
+ * Section combinations:
+ *  - flat+flat: concat block content; unwrap nx's title/epigraph/annotation
+ *    wrappers (title's paragraphs become subtitles, matching FBE).
+ *  - flat+nested: flatten nx's nested sections into cp's block content.
+ *  - nested+flat: promote nx's flat content into a new subsection appended to cp.
+ *  - nested+nested: concat the nested-section children; nx's header items
+ *    (title/epigraph/image/annotation) are dropped to keep the merged section
+ *    valid (user can re-add if needed).
+ *
+ * Stanza: verse lists concatenate.
+ * Cite: children concatenate; cp's text_author paragraphs demote to
+ *       plain paragraphs (matching FBE's removeAttribute("className") step).
+ */
+export const mergeContainers: Command = (state, dispatch) => {
+  const { $from } = state.selection;
+  const target = findAncestorAny($from, ["section", "stanza", "cite"]);
+  if (!target) return false;
 
-export const mergeContainers: Command = () => false; // main.js:2216 (6 sub-cases)
+  // Locate cp's index within its parent; find next sibling of same type.
+  const cpDepth = target.depth;
+  const parent = $from.node(cpDepth - 1);
+  const cpIndex = $from.index(cpDepth - 1);
+  const nx = cpIndex + 1 < parent.childCount ? parent.child(cpIndex + 1) : null;
+  if (!nx || nx.type.name !== target.node.type.name) return false;
+
+  if (!dispatch) return true;
+
+  const merged = mergeTwo(target.node, nx);
+  if (!merged) return false;
+
+  // Replace [cp.start, nx.end] with the merged node.
+  const cpBefore = target.before;
+  const nxAfter = cpBefore + target.node.nodeSize + nx.nodeSize;
+  const tr = state.tr.replaceWith(cpBefore, nxAfter, merged);
+  dispatch(tr.scrollIntoView());
+  return true;
+};
+
+/** Produce a merged node of the same type as cp, combining content with nx. */
+function mergeTwo(cp: PMNode, nx: PMNode): PMNode | null {
+  switch (cp.type.name) {
+    case "section": return mergeSections(cp, nx);
+    case "stanza":  return mergeStanzas(cp, nx);
+    case "cite":    return mergeCites(cp, nx);
+  }
+  return null;
+}
+
+/** True if a section's top-level children are only nested sections (plus optional title/epigraph/annotation/image headers). */
+function isNestedSection(section: PMNode): boolean {
+  let hasSection = false;
+  let hasFlat = false;
+  section.forEach((child) => {
+    const n = child.type.name;
+    if (n === "section") hasSection = true;
+    else if (n === "title" || n === "epigraph" || n === "annotation" || n === "image_block") {
+      /* header items — neutral */
+    } else hasFlat = true;
+  });
+  return hasSection && !hasFlat;
+}
+
+function mergeSections(cp: PMNode, nx: PMNode): PMNode {
+  const cpNested = isNestedSection(cp);
+  const nxNested = isNestedSection(nx);
+
+  // Start with cp's own children, then add nx's processed children.
+  const children: PMNode[] = [];
+  cp.forEach((c) => children.push(c));
+
+  if (cpNested && nxNested) {
+    // Both nested: keep cp's headers + sections, append nx's nested sections. Drop nx's headers.
+    nx.forEach((c) => {
+      if (c.type.name === "section") children.push(c);
+    });
+  } else if (cpNested && !nxNested) {
+    // Nested + flat: wrap nx's flat content in a new section and append.
+    const demoted: PMNode[] = [];
+    nx.forEach((c) => {
+      // Skip nx's headers; keep only its flat block children.
+      const n = c.type.name;
+      if (n !== "title" && n !== "epigraph" && n !== "annotation" && n !== "image_block") {
+        demoted.push(c);
+      }
+    });
+    if (demoted.length === 0) demoted.push(N.paragraph.createAndFill()!);
+    children.push(N.section.create(null, demoted));
+  } else if (!cpNested && nxNested) {
+    // Flat + nested: flatten nx's nested sections into blocks and append to cp.
+    nx.forEach((c) => {
+      if (c.type.name === "section") {
+        flattenSectionInto(c, children);
+      }
+      // Skip nx's own headers; the nested sections' headers are handled in flattenSectionInto.
+    });
+  } else {
+    // Both flat: append nx's block content, unwrapping title/epigraph/annotation headers.
+    nx.forEach((c) => {
+      const n = c.type.name;
+      if (n === "title") {
+        // Title paragraphs become subtitles.
+        c.forEach((p) => {
+          if (p.type.name === "paragraph") {
+            children.push(N.subtitle.create(null, p.content));
+          } else {
+            children.push(p);
+          }
+        });
+      } else if (n === "epigraph" || n === "annotation") {
+        // Unwrap: promote inner blocks as-is.
+        c.forEach((inner) => children.push(inner));
+      } else if (n === "image_block") {
+        children.push(c);
+      } else {
+        // Flat block content: paragraph / empty_line / subtitle / poem / cite / table / image_block.
+        children.push(c);
+      }
+    });
+  }
+
+  return N.section.create(cp.attrs, children);
+}
+
+/** For a flat-style merge where we're absorbing a nested section: promote its
+ * nested blocks (and recurse for sub-sections) so the result stays flat. */
+function flattenSectionInto(section: PMNode, out: PMNode[]): void {
+  section.forEach((c) => {
+    const n = c.type.name;
+    if (n === "title") {
+      c.forEach((p) => {
+        if (p.type.name === "paragraph") out.push(N.subtitle.create(null, p.content));
+        else out.push(p);
+      });
+    } else if (n === "epigraph" || n === "annotation") {
+      c.forEach((inner) => out.push(inner));
+    } else if (n === "section") {
+      flattenSectionInto(c, out);
+    } else {
+      out.push(c);
+    }
+  });
+}
+
+function mergeStanzas(cp: PMNode, nx: PMNode): PMNode {
+  const children: PMNode[] = [];
+  cp.forEach((c) => children.push(c));
+  nx.forEach((c) => {
+    if (c.type.name === "verse") children.push(c);
+    // Drop nx's title/subtitle (cp's header is kept).
+  });
+  return N.stanza.create(cp.attrs, children);
+}
+
+function mergeCites(cp: PMNode, nx: PMNode): PMNode {
+  // Demote cp's text_author children to plain paragraphs before merging.
+  const children: PMNode[] = [];
+  cp.forEach((c) => {
+    if (c.type.name === "text_author") {
+      children.push(N.paragraph.create(null, c.content));
+    } else {
+      children.push(c);
+    }
+  });
+  nx.forEach((c) => children.push(c));
+  return N.cite.create(cp.attrs, children);
+}

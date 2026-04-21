@@ -20,6 +20,7 @@ import {
   insertCite,
   insertPoem,
   insertTableCmd,
+  mergeContainers,
 } from "./commands";
 import { SAMPLE_BOOK } from "../fb2/sample";
 import type { FictionBook } from "../fb2/types";
@@ -438,6 +439,336 @@ describe("insertTable", () => {
     const state = EditorState.create({ schema: fb2Schema, doc });
     expect(insertTableCmd(0, 3, true)(state)).toBe(false);
     expect(insertTableCmd(3, -1, true)(state)).toBe(false);
+  });
+});
+
+describe("mergeContainers", () => {
+  function twoSections(cp: string[], nx: string[]): FictionBook {
+    return {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            { Blocks: cp.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })) },
+            { Blocks: nx.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })) },
+          ],
+        },
+      ],
+    };
+  }
+
+  /**
+   * Place cursor inside the FIRST top-level section of body[0]. Prefers the
+   * section's own title paragraph; falls back to the first flat block; as a
+   * last resort descends into a nested section's paragraph.
+   */
+  function cursorInFirstSection(fb: FictionBook): EditorState {
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+
+    // Find the first top-level section (body's first `section` child).
+    const body = state.doc.firstChild!;
+    let sectionStart = -1;
+    let sectionNode: PMNode | null = null;
+    let acc = 1; // enter body
+    for (let i = 0; i < body.childCount; i++) {
+      const c = body.child(i);
+      if (c.type.name === "section") {
+        sectionStart = acc;
+        sectionNode = c;
+        break;
+      }
+      acc += c.nodeSize;
+    }
+    if (sectionStart < 0 || !sectionNode) throw new Error("no section found");
+
+    // Walk the section's children, preferring title > flat paragraph > deeper.
+    let inner = -1;
+    let offset = sectionStart + 1; // enter the section
+    for (let i = 0; i < sectionNode.childCount; i++) {
+      const c = sectionNode.child(i);
+      if (c.type.name === "title") {
+        // Title → paragraph.
+        let innerOffset = offset + 1;
+        c.forEach((pCandidate) => {
+          if (inner === -1 && pCandidate.type.name === "paragraph") {
+            inner = innerOffset + 1;
+          }
+        });
+        if (inner !== -1) break;
+      } else if (c.type.name === "paragraph") {
+        inner = offset + 1;
+        break;
+      }
+      offset += c.nodeSize;
+    }
+    if (inner < 0) {
+      // Fall back to the first paragraph anywhere in the section (e.g., nested subsection).
+      sectionNode.descendants((n, p) => {
+        if (inner === -1 && n.type.name === "paragraph") {
+          inner = sectionStart + p + 2; // +2 accounts for the section wrapper entry
+          return false;
+        }
+      });
+    }
+    if (inner < 0) throw new Error("no cursor target in first section");
+    return state.apply(state.tr.setSelection(TextSelection.create(state.doc, inner)));
+  }
+
+  function paragraphTexts(node: PMNode): string[] {
+    const out: string[] = [];
+    node.forEach((c) => {
+      if (c.type.name === "paragraph" || c.type.name === "subtitle") out.push(c.textContent);
+    });
+    return out;
+  }
+
+  it("merges two flat sections: concatenated paragraphs, one section", () => {
+    const state = cursorInFirstSection(twoSections(["a1", "a2"], ["b1", "b2"]));
+    let result: PMNode = state.doc;
+    expect(mergeContainers(state, (tr) => { result = state.apply(tr).doc; })).toBe(true);
+    const body = result.firstChild!;
+    expect(countChildrenByName(body, "section")).toBe(1);
+    expect(paragraphTexts(body.firstChild!)).toEqual(["a1", "a2", "b1", "b2"]);
+  });
+
+  it("flat+flat: nx's <title> becomes subtitles, <epigraph>/<annotation> unwrap", () => {
+    const fb: FictionBook = {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            { Blocks: [{ Paragraph: { Children: [{ Text: "cp1" }] } }] },
+            {
+              Title: { Children: [{ Paragraph: { Children: [{ Text: "Next Title" }] } }] },
+              Annotation: { Children: [{ Paragraph: { Children: [{ Text: "Ann text" }] } }] },
+              Blocks: [{ Paragraph: { Children: [{ Text: "nx1" }] } }],
+            },
+          ],
+        },
+      ],
+    };
+    const state = cursorInFirstSection(fb);
+    let result: PMNode = state.doc;
+    expect(mergeContainers(state, (tr) => { result = state.apply(tr).doc; })).toBe(true);
+    const section = result.firstChild!.firstChild!;
+    // cp1 + subtitle("Next Title") + Ann text + nx1 (order: cp content, then nx's unwrapped content).
+    const kinds: string[] = [];
+    section.forEach((c) => kinds.push(c.type.name));
+    expect(kinds.includes("subtitle")).toBe(true);
+    // Find the subtitle and check text.
+    let sub: PMNode | null = null;
+    section.forEach((c) => { if (!sub && c.type.name === "subtitle") sub = c; });
+    expect((sub as any).textContent).toBe("Next Title");
+  });
+
+  it("nested+flat: nx flat content is wrapped in a new subsection", () => {
+    const fb: FictionBook = {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            {
+              // cp has only nested sections (nested) plus a title to host the cursor.
+              Title: { Children: [{ Paragraph: { Children: [{ Text: "cp-title" }] } }] },
+              Sections: [
+                { Blocks: [{ Paragraph: { Children: [{ Text: "inner" }] } }] },
+              ],
+            },
+            { Blocks: [{ Paragraph: { Children: [{ Text: "flat nx" }] } }] },
+          ],
+        },
+      ],
+    };
+    const state = cursorInFirstSection(fb);
+    let result: PMNode = state.doc;
+    expect(mergeContainers(state, (tr) => { result = state.apply(tr).doc; })).toBe(true);
+    const body = result.firstChild!;
+    expect(countChildrenByName(body, "section")).toBe(1);
+    const merged = body.firstChild!;
+    // After merge, merged section should have 2 sub-sections.
+    let subSections = 0;
+    merged.forEach((c) => { if (c.type.name === "section") subSections++; });
+    expect(subSections).toBe(2);
+  });
+
+  it("flat+nested: nx's nested sections are flattened into cp's block content", () => {
+    const fb: FictionBook = {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            { Blocks: [{ Paragraph: { Children: [{ Text: "cp-flat" }] } }] },
+            {
+              Sections: [
+                {
+                  Title: { Children: [{ Paragraph: { Children: [{ Text: "InnerTitle" }] } }] },
+                  Blocks: [{ Paragraph: { Children: [{ Text: "inner-p" }] } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const state = cursorInFirstSection(fb);
+    let result: PMNode = state.doc;
+    expect(mergeContainers(state, (tr) => { result = state.apply(tr).doc; })).toBe(true);
+    const body = result.firstChild!;
+    expect(countChildrenByName(body, "section")).toBe(1);
+    const merged = body.firstChild!;
+    // After merge: cp-flat, subtitle(InnerTitle), inner-p.
+    const texts = paragraphTexts(merged);
+    expect(texts).toEqual(["cp-flat", "InnerTitle", "inner-p"]);
+  });
+
+  it("nested+nested: concat section children, drop nx's headers", () => {
+    const fb: FictionBook = {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            {
+              Title: { Children: [{ Paragraph: { Children: [{ Text: "cp-title" }] } }] },
+              Sections: [{ Blocks: [{ Paragraph: { Children: [{ Text: "cp-sub1" }] } }] }],
+            },
+            {
+              Title: { Children: [{ Paragraph: { Children: [{ Text: "dropped title" }] } }] },
+              Sections: [{ Blocks: [{ Paragraph: { Children: [{ Text: "nx-sub1" }] } }] }],
+            },
+          ],
+        },
+      ],
+    };
+    const state = cursorInFirstSection(fb);
+    let result: PMNode = state.doc;
+    expect(mergeContainers(state, (tr) => { result = state.apply(tr).doc; })).toBe(true);
+    const merged = result.firstChild!.firstChild!;
+    let subs = 0;
+    merged.forEach((c) => { if (c.type.name === "section") subs++; });
+    expect(subs).toBe(2);
+    // No title with "dropped title" content should survive.
+    let foundDropped = false;
+    merged.descendants((n) => {
+      if (n.type.name === "paragraph" && n.textContent === "dropped title") foundDropped = true;
+    });
+    expect(foundDropped).toBe(false);
+  });
+
+  it("stanzas concatenate their verses", () => {
+    const fb: FictionBook = {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            {
+              Blocks: [
+                {
+                  Poem: {
+                    Stanzas: [
+                      { Verses: [{ Children: [{ Text: "v1" }] }, { Children: [{ Text: "v2" }] }] },
+                      { Verses: [{ Children: [{ Text: "v3" }] }, { Children: [{ Text: "v4" }] }] },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+    // Position cursor inside the first stanza's first verse.
+    let versePos = -1;
+    state.doc.descendants((n, pos) => {
+      if (versePos === -1 && n.type.name === "verse") { versePos = pos + 1; return false; }
+    });
+    const stateAtVerse = state.apply(state.tr.setSelection(TextSelection.create(state.doc, versePos)));
+    let result: PMNode = stateAtVerse.doc;
+    expect(mergeContainers(stateAtVerse, (tr) => { result = stateAtVerse.apply(tr).doc; })).toBe(true);
+    // Find poem and count stanzas.
+    let poem: PMNode | null = null;
+    result.descendants((n) => { if (!poem && n.type.name === "poem") { poem = n; return false; } });
+    expect((poem as any).childCount).toBe(1);
+    const stanza = (poem as any).firstChild;
+    expect(stanza.childCount).toBe(4); // v1..v4
+  });
+
+  it("cites concatenate, cp's text-author demotes to paragraph", () => {
+    const fb: FictionBook = {
+      Description: SAMPLE_BOOK.Description,
+      Bodies: [
+        {
+          Sections: [
+            {
+              Blocks: [
+                {
+                  Cite: {
+                    Children: [{ Paragraph: { Children: [{ Text: "quote1" }] } }],
+                    TextAuthor: [{ Children: [{ Text: "— author1" }] }],
+                  },
+                },
+                {
+                  Cite: {
+                    Children: [{ Paragraph: { Children: [{ Text: "quote2" }] } }],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+    let pos = -1;
+    state.doc.descendants((n, p) => {
+      if (pos === -1 && n.type.name === "cite") { pos = p + 3; return false; }
+    });
+    const stateInCite = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)));
+    let result: PMNode = stateInCite.doc;
+    expect(mergeContainers(stateInCite, (tr) => { result = stateInCite.apply(tr).doc; })).toBe(true);
+    // Only one cite should remain.
+    let cites = 0;
+    result.descendants((n) => { if (n.type.name === "cite") cites++; });
+    expect(cites).toBe(1);
+    // The text_author must have been demoted to a paragraph.
+    let cite: PMNode | null = null;
+    result.descendants((n) => { if (!cite && n.type.name === "cite") { cite = n; return false; } });
+    let hasTextAuthor = false;
+    (cite as any).forEach((c: PMNode) => {
+      if (c.type.name === "text_author") hasTextAuthor = true;
+    });
+    expect(hasTextAuthor).toBe(false);
+    // "— author1" text should now be in a plain paragraph.
+    const texts = paragraphTexts(cite as any);
+    expect(texts).toContain("— author1");
+  });
+
+  it("refuses when no same-type sibling follows", () => {
+    const fb = twoSections(["only"], []); // nx has no paragraphs but still a section
+    const doc = fb2ToPMDoc(fb);
+    const state = EditorState.create({ schema: fb2Schema, doc });
+    let pos = -1;
+    state.doc.descendants((n, p, parent) => {
+      if (pos === -1 && n.type.name === "paragraph" && parent?.type.name === "section") {
+        pos = p + 1;
+        return false;
+      }
+    });
+    const stateAtFirst = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)));
+    // A second section DOES follow here (with empty blocks → one filler paragraph).
+    expect(mergeContainers(stateAtFirst)).toBe(true);
+    // But if cursor is in the SECOND section, no sibling follows → refuse.
+    let lastSectionPara = -1;
+    state.doc.descendants((n, p, parent) => {
+      if (n.type.name === "paragraph" && parent?.type.name === "section") {
+        lastSectionPara = p + 1;
+      }
+    });
+    const stateAtLast = state.apply(state.tr.setSelection(TextSelection.create(state.doc, lastSectionPara)));
+    expect(mergeContainers(stateAtLast)).toBe(false);
   });
 });
 

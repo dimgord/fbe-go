@@ -17,6 +17,7 @@
     cloneContainer, removeOuterContainer,
     addTitle, addEpigraph, addAnnotation, addTextAuthor,
     insertCite, insertPoem, insertTableCmd,
+    mergeContainers,
   } from "./commands";
   import TableDialog from "./TableDialog.svelte";
   import type { FictionBook } from "../fb2/types";
@@ -173,6 +174,7 @@
     cloneContainer, removeOuterContainer,
     addTitle, addEpigraph, addAnnotation, addTextAuthor,
     insertCite, insertPoem,
+    mergeContainers,
     undo, redo,
   };
 </script>
