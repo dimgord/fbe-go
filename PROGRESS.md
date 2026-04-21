@@ -6,6 +6,47 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 21 — 2026-04-21 — Drop `*.fb2.zip` filter (Wails v2 macOS UTType nil crash) [dev]
+
+Version: **0.0.21**
+
+### Symptom
+
+Opening any FB2 crashed the `.app` hard with:
+
+```
+*** Terminating app due to uncaught exception 'NSInvalidArgumentException',
+    reason: '*** -[__NSArrayM insertObject:atIndex:]: object cannot be nil'
+StartCustomProtocolHandler + 11926
+OpenFileDialog + 506
+```
+
+The Go-side recover() from Rev 20 could not catch it because the crash
+happened in Objective-C, before the dialog even returned — so
+`defer recover()` around `OpenFile` was never going to help for this one.
+
+### Root cause
+
+In Wails v2.9.2 (`internal/frontend/desktop/darwin/WailsContext.m`) the
+native file-dialog helper splits the pattern on `;`, strips `*.`, and
+feeds each token to `[UTType typeWithFilenameExtension:]`. The result
+is added to an `NSMutableArray` **without a nil check**. The extension
+`fb2.zip` (a multi-dot pattern) resolves to `nil` on macOS 11+, and
+`addObject:nil` throws `NSInvalidArgumentException` from native code —
+crashing the whole process.
+
+### Fix
+
+`PickFB2ToOpen` now passes `Pattern: "*.fb2"` only. Users who need to
+open `.fb2.zip` archives select "All files" in the dialog's format
+picker.
+
+Doc comment explains the Wails bug for future-me.
+
+Versions bumped 0.0.20 → 0.0.21.
+
+---
+
 ## Rev 20 — 2026-04-21 — Robust Open (panic recovery + graceful schema fallback) [dev]
 
 Version: **0.0.20**

@@ -42,13 +42,20 @@ func (a *App) OnStartup(ctx context.Context) {
 // expose wrappers so the frontend can open dialogs without a direct window.runtime
 // dependency, which in Wails v2 doesn't ship dialog helpers to JS). ---
 
-// PickFB2ToOpen shows a native "open file" dialog filtered for .fb2 and .fb2.zip.
+// PickFB2ToOpen shows a native "open file" dialog filtered for .fb2 files.
 // Returns an empty string if the user cancels.
+//
+// Note: Wails v2.9.2 on macOS crashes with `NSInvalidArgumentException` when a
+// filter pattern contains multi-dot extensions like `*.fb2.zip`, because its
+// native code feeds each split token to `[UTType typeWithFilenameExtension:]`
+// without a nil check — multi-dot extensions return nil and then
+// `[NSArray addObject:nil]` throws. We stick to the single `*.fb2` extension
+// and let users pick `.fb2.zip` archives via "All files" instead.
 func (a *App) PickFB2ToOpen() (string, error) {
 	return wailsrt.OpenFileDialog(a.ctx, wailsrt.OpenDialogOptions{
 		Title: "Open FB2 file",
 		Filters: []wailsrt.FileFilter{
-			{DisplayName: "FictionBook (*.fb2;*.fb2.zip)", Pattern: "*.fb2;*.fb2.zip"},
+			{DisplayName: "FictionBook (*.fb2)", Pattern: "*.fb2"},
 		},
 	})
 }
