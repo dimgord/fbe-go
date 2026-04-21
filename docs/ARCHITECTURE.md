@@ -76,13 +76,17 @@ Implementation path: try `github.com/lestrrat-go/libxml2` first (CGo, but mature
 
 ## Cross-platform strategy
 
-| Concern | Windows | macOS | Linux |
-|---|---|---|---|
-| Webview | WebView2 (Edge Chromium) | WKWebView | WebKitGTK |
-| Binary size | ~15 MB | ~12 MB | ~10 MB |
-| File association | NSIS installer | DMG + Info.plist UTIs | .desktop file + mimeapps |
-| Thumbnailer | Keep original C++ FBShell.dll | QuickLook generator (Swift/ObjC) | GNOME thumbnailer (`fbe thumb` wrapper) |
-| Spellcheck | Hunspell via CGo (bundle DLLs) | Hunspell via CGo | Hunspell (system or bundled) |
+**Target: macOS + Linux only.** Windows is out of scope — the original C++ FBE
+remains the Windows story. Native platform code (thumbnailers, shell plugins)
+may be written in Rust or C where Go is awkward.
+
+| Concern | macOS | Linux |
+|---|---|---|
+| Webview | WKWebView | WebKitGTK |
+| Binary size | ~12 MB | ~10 MB |
+| File association | DMG + `Info.plist` UTIs | `.desktop` file + `mimeapps.list` |
+| Thumbnailer | QuickLook generator (Swift, or Rust via `swift-bridge`) | GNOME thumbnailer shim (Bash + `fbe thumb` or Rust CLI) |
+| Spellcheck | Hunspell via CGo | Hunspell (system or bundled) via CGo |
 
 ## What the original FBE had that this port deliberately drops
 

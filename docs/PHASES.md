@@ -76,15 +76,19 @@ Order of implementation (lowest → highest risk):
 
 **Exit criterion:** a returning FBE user finds everything they used.
 
-## Phase 5 — Platform polish (2 weeks)
+## Phase 5 — Platform polish (1.5 weeks)
 
-- [ ] Windows installer (NSIS) + file association + FBShell.dll (C++ kept as-is)
-- [ ] macOS DMG + UTI + QuickLook generator (Swift)
-- [ ] Linux AppImage + .desktop + GNOME thumbnailer shim
-- [ ] CI builds for all three platforms
-- [ ] Auto-update (optional — Wails has no built-in; consider Squirrel/Sparkle)
+**Target platforms: macOS + Linux only.** Windows is out of scope — the original
+C++ FBE remains the Windows story. Platform-native bits (thumbnailers, QuickLook)
+may be written in Rust or C where Go is awkward.
 
-**Exit criterion:** downloadable .msi / .dmg / .AppImage, drag-and-drop in Finder/Explorer/Files shows thumbnails.
+- [ ] macOS DMG + UTI + QuickLook generator (Swift or Rust)
+- [ ] Linux AppImage + .desktop + GNOME thumbnailer shim (calls `fbe thumb`)
+- [ ] CI builds for macOS (arm64 + x86_64) and Linux (x86_64 + arm64)
+- [ ] Auto-update (optional — Wails has no built-in; consider Sparkle for macOS)
+
+**Exit criterion:** downloadable `.dmg` / `.AppImage`, drag-and-drop in Finder
+and Linux file managers shows cover thumbnails.
 
 ## Total estimate
 
@@ -95,13 +99,13 @@ Order of implementation (lowest → highest risk):
 | 2 | 2 | 7 |
 | 3 | 8 | 15 |
 | 4 | 4 | 19 |
-| 5 | 2 | 21 |
+| 5 | 1.5 | 20.5 |
 
 **~5 months of single-contributor focused work.** In reality, expect 8–10 calendar months with research detours and testing.
 
 ## Milestones for external communication
 
 - **M1 (week 5):** "Go CLI replaces FBV" — announce on FB2 forums, get feedback from library maintainers
-- **M2 (week 7):** "Cross-platform FB2 reader" — read-only beta on all three OSes
+- **M2 (week 7):** "Cross-platform FB2 reader" — read-only beta on macOS + Linux
 - **M3 (week 15):** "Editor alpha" — invite original FBE community to try writing
-- **M4 (week 21):** "1.0" — feature parity, installers, thumbnailers
+- **M4 (week 20.5):** "1.0" — feature parity, installers, thumbnailers (macOS + Linux)

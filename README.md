@@ -2,7 +2,9 @@
 
 A Go + Wails port of the classic [FictionBook Editor (FBE)](https://github.com/evpobr/fictionbookeditor) — a desktop editor for FB2 (FictionBook 2.x) documents.
 
-Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project re-implements the core in pure Go and moves the editor surface from MSHTML `contentEditable` to a web-based editor (ProseMirror/TipTap) hosted in a system webview via Wails v2. Result: a cross-platform (Windows/macOS/Linux) native-feeling FB2 editor with a ~15 MB binary.
+Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project re-implements the core in pure Go and moves the editor surface from MSHTML `contentEditable` to a web-based editor (ProseMirror) hosted in a system webview via Wails v2.
+
+**Target platforms: macOS + Linux.** Windows is out of scope — the original C++ FBE remains the Windows story. Platform-native components (thumbnailer, QuickLook) may use Rust or C where Go is awkward.
 
 ## Project status
 
@@ -13,9 +15,10 @@ Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project r
 - Go 1.24+
 - Node 20+ (for the frontend)
 - [Wails v2 CLI](https://wails.io/docs/gettingstarted/installation): `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
-- On Linux: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`
-- For XSD validation: `libxml2` (optional, CGo path)
-- For spellcheck: `hunspell` + dictionaries (optional, CGo path)
+- **macOS:** Xcode Command Line Tools (`xcode-select --install`)
+- **Linux:** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`
+- For XSD validation (`-tags xsd`): `libxml2` (macOS: bundled in CLT; Linux: `libxml2-dev`)
+- For spellcheck: `hunspell` + dictionaries (CGo path, future)
 
 ## Layout
 
