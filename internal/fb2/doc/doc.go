@@ -15,8 +15,9 @@ const (
 )
 
 // FictionBook is the root element of an FB2 document.
+// The XMLName binds the FB2 namespace so the writer emits xmlns at the root.
 type FictionBook struct {
-	XMLName     xml.Name     `xml:"FictionBook"`
+	XMLName     xml.Name     `xml:"http://www.gribuser.ru/xml/fictionbook/2.0 FictionBook"`
 	Stylesheets []Stylesheet `xml:"stylesheet,omitempty"`
 	Description Description  `xml:"description"`
 	Bodies      []Body       `xml:"body"`
@@ -204,19 +205,66 @@ type Stanza struct {
 }
 
 // Block is the union of block-level nodes inside rich-text containers.
-// Only one field is non-zero at a time. Parser/writer dispatch on tag name.
+// Exactly one of the pointer fields is non-nil; custom Marshal/Unmarshal
+// dispatch on element name.
 type Block struct {
-	XMLName   xml.Name
-	Paragraph *Paragraph  `xml:"p,omitempty"`
-	Poem      *Poem       `xml:"poem,omitempty"`
-	Subtitle  *Paragraph  `xml:"subtitle,omitempty"`
-	Cite      *Cite       `xml:"cite,omitempty"`
-	EmptyLine *EmptyLine  `xml:"empty-line,omitempty"`
-	Table     *Table      `xml:"table,omitempty"`
-	Image     *Image      `xml:"image,omitempty"`
+	Paragraph *Paragraph
+	Poem      *Poem
+	Subtitle  *Paragraph
+	Cite      *Cite
+	EmptyLine *EmptyLine
+	Table     *Table
+	Image     *Image
+}
 
-	// Raw fallback: any unknown block-level element.
-	Raw []byte `xml:",innerxml"`
+// UnmarshalXML dispatches on the element name (local part, namespace ignored).
+func (b *Block) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	switch start.Name.Local {
+	case "p":
+		b.Paragraph = &Paragraph{}
+		return d.DecodeElement(b.Paragraph, &start)
+	case "poem":
+		b.Poem = &Poem{}
+		return d.DecodeElement(b.Poem, &start)
+	case "subtitle":
+		b.Subtitle = &Paragraph{}
+		return d.DecodeElement(b.Subtitle, &start)
+	case "cite":
+		b.Cite = &Cite{}
+		return d.DecodeElement(b.Cite, &start)
+	case "empty-line":
+		b.EmptyLine = &EmptyLine{}
+		return d.DecodeElement(b.EmptyLine, &start)
+	case "table":
+		b.Table = &Table{}
+		return d.DecodeElement(b.Table, &start)
+	case "image":
+		b.Image = &Image{}
+		return d.DecodeElement(b.Image, &start)
+	}
+	// Unknown element: skip it so parsing doesn't fail on FB2 extensions.
+	return d.Skip()
+}
+
+// MarshalXML emits the element corresponding to whichever field is populated.
+func (b Block) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+	switch {
+	case b.Paragraph != nil:
+		return e.EncodeElement(b.Paragraph, xml.StartElement{Name: xml.Name{Local: "p"}})
+	case b.Poem != nil:
+		return e.EncodeElement(b.Poem, xml.StartElement{Name: xml.Name{Local: "poem"}})
+	case b.Subtitle != nil:
+		return e.EncodeElement(b.Subtitle, xml.StartElement{Name: xml.Name{Local: "subtitle"}})
+	case b.Cite != nil:
+		return e.EncodeElement(b.Cite, xml.StartElement{Name: xml.Name{Local: "cite"}})
+	case b.EmptyLine != nil:
+		return e.EncodeElement(b.EmptyLine, xml.StartElement{Name: xml.Name{Local: "empty-line"}})
+	case b.Table != nil:
+		return e.EncodeElement(b.Table, xml.StartElement{Name: xml.Name{Local: "table"}})
+	case b.Image != nil:
+		return e.EncodeElement(b.Image, xml.StartElement{Name: xml.Name{Local: "image"}})
+	}
+	return nil
 }
 
 // EmptyLine — FB2's explicit blank line.
@@ -225,41 +273,252 @@ type EmptyLine struct {
 }
 
 // Paragraph = run of inline nodes with optional style/id.
+// Children is populated via custom UnmarshalXML so text and elements interleave.
 type Paragraph struct {
 	ID       string   `xml:"id,attr,omitempty"`
 	Style    string   `xml:"style,attr,omitempty"`
 	Lang     string   `xml:"lang,attr,omitempty"`
-	Children []Inline `xml:",any"`
+	Children []Inline `xml:"-"`
 }
 
-// Inline — inline content: text, marks, images, links.
-type Inline struct {
-	XMLName      xml.Name
-	Text         string       `xml:",chardata"`
-	Strong       *Paragraph   `xml:"strong,omitempty"`
-	Emphasis     *Paragraph   `xml:"emphasis,omitempty"`
-	Style        *StyleInline `xml:"style,omitempty"`
-	A            *Link        `xml:"a,omitempty"`
-	Strikethrough *Paragraph  `xml:"strikethrough,omitempty"`
-	Sub          *Paragraph   `xml:"sub,omitempty"`
-	Sup          *Paragraph   `xml:"sup,omitempty"`
-	Code         *Paragraph   `xml:"code,omitempty"`
-	Image        *Image       `xml:"image,omitempty"`
+// UnmarshalXML reads mixed content (text + inline elements) into Children.
+func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	// Attributes first.
+	for _, a := range start.Attr {
+		switch a.Name.Local {
+		case "id":
+			p.ID = a.Value
+		case "style":
+			p.Style = a.Value
+		case "lang":
+			p.Lang = a.Value
+		}
+	}
+	return unmarshalInlineContent(d, start, &p.Children)
+}
 
-	Raw []byte `xml:",innerxml"`
+// MarshalXML emits attributes and then re-serializes Children as mixed content.
+func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	addAttrIfSet(&start, "id", p.ID)
+	addAttrIfSet(&start, "style", p.Style)
+	addAttrIfSet(&start, "lang", p.Lang)
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if err := marshalInlineContent(e, p.Children); err != nil {
+		return err
+	}
+	return e.EncodeToken(start.End())
+}
+
+// addAttrIfSet appends an attribute to the start element if its value is non-empty.
+func addAttrIfSet(start *xml.StartElement, name, value string) {
+	if value != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: name}, Value: value})
+	}
+}
+
+// unmarshalInlineContent reads tokens until the matching end element, treating
+// chardata as a text Inline and nested elements as marks/images/links.
+func unmarshalInlineContent(d *xml.Decoder, start xml.StartElement, out *[]Inline) error {
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch t := tok.(type) {
+		case xml.CharData:
+			if s := string(t); s != "" {
+				*out = append(*out, Inline{Text: s})
+			}
+		case xml.StartElement:
+			var inl Inline
+			switch t.Name.Local {
+			case "strong":
+				inl.Strong = &Paragraph{}
+				if err := d.DecodeElement(inl.Strong, &t); err != nil {
+					return err
+				}
+			case "emphasis":
+				inl.Emphasis = &Paragraph{}
+				if err := d.DecodeElement(inl.Emphasis, &t); err != nil {
+					return err
+				}
+			case "style":
+				inl.Style = &StyleInline{}
+				if err := d.DecodeElement(inl.Style, &t); err != nil {
+					return err
+				}
+			case "a":
+				inl.A = &Link{}
+				if err := d.DecodeElement(inl.A, &t); err != nil {
+					return err
+				}
+			case "strikethrough":
+				inl.Strikethrough = &Paragraph{}
+				if err := d.DecodeElement(inl.Strikethrough, &t); err != nil {
+					return err
+				}
+			case "sub":
+				inl.Sub = &Paragraph{}
+				if err := d.DecodeElement(inl.Sub, &t); err != nil {
+					return err
+				}
+			case "sup":
+				inl.Sup = &Paragraph{}
+				if err := d.DecodeElement(inl.Sup, &t); err != nil {
+					return err
+				}
+			case "code":
+				inl.Code = &Paragraph{}
+				if err := d.DecodeElement(inl.Code, &t); err != nil {
+					return err
+				}
+			case "image":
+				inl.Image = &Image{}
+				if err := d.DecodeElement(inl.Image, &t); err != nil {
+					return err
+				}
+			default:
+				if err := d.Skip(); err != nil {
+					return err
+				}
+				continue
+			}
+			*out = append(*out, inl)
+		case xml.EndElement:
+			if t.Name == start.Name {
+				return nil
+			}
+		}
+	}
+}
+
+// marshalInlineContent re-emits the Inline children collected by Paragraph.
+func marshalInlineContent(e *xml.Encoder, children []Inline) error {
+	for _, in := range children {
+		switch {
+		case in.Text != "":
+			if err := e.EncodeToken(xml.CharData(in.Text)); err != nil {
+				return err
+			}
+		case in.Strong != nil:
+			if err := e.EncodeElement(in.Strong, xml.StartElement{Name: xml.Name{Local: "strong"}}); err != nil {
+				return err
+			}
+		case in.Emphasis != nil:
+			if err := e.EncodeElement(in.Emphasis, xml.StartElement{Name: xml.Name{Local: "emphasis"}}); err != nil {
+				return err
+			}
+		case in.Style != nil:
+			if err := e.EncodeElement(in.Style, xml.StartElement{Name: xml.Name{Local: "style"}}); err != nil {
+				return err
+			}
+		case in.A != nil:
+			if err := e.EncodeElement(in.A, xml.StartElement{Name: xml.Name{Local: "a"}}); err != nil {
+				return err
+			}
+		case in.Strikethrough != nil:
+			if err := e.EncodeElement(in.Strikethrough, xml.StartElement{Name: xml.Name{Local: "strikethrough"}}); err != nil {
+				return err
+			}
+		case in.Sub != nil:
+			if err := e.EncodeElement(in.Sub, xml.StartElement{Name: xml.Name{Local: "sub"}}); err != nil {
+				return err
+			}
+		case in.Sup != nil:
+			if err := e.EncodeElement(in.Sup, xml.StartElement{Name: xml.Name{Local: "sup"}}); err != nil {
+				return err
+			}
+		case in.Code != nil:
+			if err := e.EncodeElement(in.Code, xml.StartElement{Name: xml.Name{Local: "code"}}); err != nil {
+				return err
+			}
+		case in.Image != nil:
+			if err := e.EncodeElement(in.Image, xml.StartElement{Name: xml.Name{Local: "image"}}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Inline — inline content: plain text, marks, images, links. Exactly one field
+// is non-zero per Inline (Text alone; or one of the element pointers).
+type Inline struct {
+	Text          string
+	Strong        *Paragraph
+	Emphasis      *Paragraph
+	Style         *StyleInline
+	A             *Link
+	Strikethrough *Paragraph
+	Sub           *Paragraph
+	Sup           *Paragraph
+	Code          *Paragraph
+	Image         *Image
 }
 
 // StyleInline — named inline style (<style name="...">).
 type StyleInline struct {
 	Name     string   `xml:"name,attr"`
-	Children []Inline `xml:",any"`
+	Children []Inline `xml:"-"`
+}
+
+// UnmarshalXML reads the name attribute and mixed inline content.
+func (s *StyleInline) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	for _, a := range start.Attr {
+		if a.Name.Local == "name" {
+			s.Name = a.Value
+		}
+	}
+	return unmarshalInlineContent(d, start, &s.Children)
+}
+
+// MarshalXML re-emits attribute + children.
+func (s StyleInline) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	addAttrIfSet(&start, "name", s.Name)
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if err := marshalInlineContent(e, s.Children); err != nil {
+		return err
+	}
+	return e.EncodeToken(start.End())
 }
 
 // Link = FB2 <a> — note references use type="note".
 type Link struct {
 	Href     string   `xml:"http://www.w3.org/1999/xlink href,attr"`
 	Type     string   `xml:"type,attr,omitempty"`
-	Children []Inline `xml:",any"`
+	Children []Inline `xml:"-"`
+}
+
+// UnmarshalXML reads href/type attributes and mixed inline content.
+func (l *Link) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	for _, a := range start.Attr {
+		switch {
+		case a.Name.Local == "href" && (a.Name.Space == NSXLink || a.Name.Space == ""):
+			l.Href = a.Value
+		case a.Name.Local == "type":
+			l.Type = a.Value
+		}
+	}
+	return unmarshalInlineContent(d, start, &l.Children)
+}
+
+// MarshalXML emits l:href (xlink) and type attribute, plus mixed content.
+func (l Link) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if l.Href != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Space: NSXLink, Local: "href"}, Value: l.Href})
+	}
+	addAttrIfSet(&start, "type", l.Type)
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if err := marshalInlineContent(e, l.Children); err != nil {
+		return err
+	}
+	return e.EncodeToken(start.End())
 }
 
 // Image — block or inline; distinguished by position in the tree.

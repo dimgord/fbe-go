@@ -1,13 +1,14 @@
 // Package writer serializes a doc.FictionBook back to canonical FB2 XML.
 //
-// Responsibilities:
-//   - Emit the correct XML declaration (encoding="utf-8" by default).
-//   - Indent to match FBE's historical output style (2-space indent, single blank line between bodies).
-//   - Preserve insignificant whitespace where meaningful (verses).
-//   - Re-emit xlink:href attributes with the expected prefix.
+// Output shape:
+//   - XML declaration at top (`<?xml version="1.0" encoding="utf-8"?>`).
+//   - Root `<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">`
+//     with the FB2 namespace declared once.
+//   - 2-space indentation.
+//   - `<binary>` entries are re-emitted as base64 with their id/content-type.
 //
-// NOTE: Skeleton only. Replicates the recursive algorithm from FBDoc.cpp::SaveToFile
-// (see docs/OPERATIONS.md).
+// Element-name dispatch for polymorphic containers (Block, Inline) is handled
+// by MarshalXML methods on those types in the doc package.
 package writer
 
 import (
@@ -28,5 +29,9 @@ func Write(w io.Writer, fb *doc.FictionBook) error {
 	if err := enc.Encode(fb); err != nil {
 		return fmt.Errorf("fb2 write: %w", err)
 	}
-	return enc.Flush()
+	if err := enc.Flush(); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, "\n")
+	return err
 }
