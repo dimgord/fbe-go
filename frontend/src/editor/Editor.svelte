@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { EditorState } from "prosemirror-state";
+  import { EditorState, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
   import { history, redo, undo } from "prosemirror-history";
   import { keymap } from "prosemirror-keymap";
@@ -8,12 +8,20 @@
   import { Node as PMNode } from "prosemirror-model";
   import { fb2Schema } from "./schema";
   import { fb2ToPMDoc } from "./parse";
+  import {
+    toggleStrong, toggleEmphasis, toggleStrikethrough,
+    toggleSub, toggleSup, toggleCode, toggleLink,
+    styleNormal, styleSubtitle, styleTextAuthor,
+    insertEmptyLine,
+  } from "./commands";
   import type { FictionBook } from "../fb2/types";
 
   export let fb: FictionBook | null = null;
 
+  /** Export the EditorView so the toolbar in App.svelte can dispatch commands. */
+  export let view: EditorView | undefined = undefined;
+
   let container: HTMLDivElement;
-  let view: EditorView | undefined;
 
   function mount(doc: PMNode) {
     view?.destroy();
@@ -22,7 +30,17 @@
       doc,
       plugins: [
         history(),
-        keymap({ "Mod-z": undo, "Mod-y": redo, "Mod-Shift-z": redo }),
+        keymap({
+          "Mod-z": undo,
+          "Mod-y": redo,
+          "Mod-Shift-z": redo,
+          "Mod-b": toggleStrong,
+          "Mod-i": toggleEmphasis,
+          "Mod-Shift-s": toggleStrikethrough,
+          "Mod-,": toggleSub,
+          "Mod-.": toggleSup,
+          "Mod-Shift-c": toggleCode,
+        }),
         keymap(baseKeymap),
       ],
     });
@@ -36,11 +54,32 @@
 
   onDestroy(() => view?.destroy());
 
-  // Reactively remount when the fb prop changes (after Open).
   $: if (view && fb) {
     const next = fb2ToPMDoc(fb);
     mount(next);
   }
+
+  export function exec(cmd: (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean): void {
+    if (!view) return;
+    cmd(view.state, view.dispatch);
+    view.focus();
+  }
+
+  export function execLink(): void {
+    if (!view) return;
+    const href = prompt("Link URL (leave empty to remove):") ?? "";
+    toggleLink(href)(view.state, view.dispatch);
+    view.focus();
+  }
+
+  // Re-export commands so App.svelte can import-and-bind from the same place.
+  export {
+    toggleStrong, toggleEmphasis, toggleStrikethrough,
+    toggleSub, toggleSup, toggleCode,
+    styleNormal, styleSubtitle, styleTextAuthor,
+    insertEmptyLine,
+    undo, redo,
+  };
 </script>
 
 <div bind:this={container} class="editor" />

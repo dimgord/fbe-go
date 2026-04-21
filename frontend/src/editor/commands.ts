@@ -1,102 +1,116 @@
 /**
  * FB2 editing commands for ProseMirror.
  *
- * Every entry here replaces a C++ method in FBEview.cpp or a JS function in
- * FBE/main.js. See docs/OPERATIONS.md for the full mapping.
+ * Each command follows the ProseMirror convention:
+ *   (state, dispatch?) => boolean
+ * When `dispatch` is omitted the command only reports availability.
  *
- * Contract: each command has signature (state, dispatch?) => boolean.
- * - When `dispatch` is omitted, the command reports availability (FBE's `fCheck=true`).
- * - When `dispatch` is provided, the command performs its transaction.
+ * See docs/OPERATIONS.md for the FBE → command mapping.
  */
 import type { EditorState, Transaction } from "prosemirror-state";
-import type { NodeType } from "prosemirror-model";
+import type { NodeType, Attrs } from "prosemirror-model";
+import {
+  toggleMark as pmToggleMark,
+  setBlockType as pmSetBlockType,
+} from "prosemirror-commands";
 import { fb2Schema } from "./schema";
 
-type Command = (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean;
+export type Command = (
+  state: EditorState,
+  dispatch?: (tr: Transaction) => void,
+) => boolean;
 
-// --- Containers ---
+// ── Inline mark toggles ─────────────────────────────────────────────────────
 
-/** Replaces FBEview::InsertPoem (FBE/FBEview.cpp:903). Wraps selected paragraphs in <poem><stanza>...</stanza></poem>. */
-export const insertPoem: Command = (_state, _dispatch) => {
-  // TODO
-  return false;
-};
+const M = fb2Schema.marks;
 
-/** Replaces FBEview::InsertCite (FBE/FBEview.cpp:1048). */
-export const insertCite: Command = () => false;
+/** Toggle <strong> on the selection. Keyboard: Mod-b. */
+export const toggleStrong: Command        = pmToggleMark(M.strong);
 
-/** Replaces FBEview::InsertTable (FBE/FBEview.cpp:3556). */
-export const insertTable = (rows: number, cols: number, header: boolean): Command => () => false;
+/** Toggle <emphasis> on the selection. Keyboard: Mod-i. */
+export const toggleEmphasis: Command      = pmToggleMark(M.emphasis);
 
-/** Replaces main.js::AddEpigraph (FBE/main.js:2050). */
-export const addEpigraph: Command = () => false;
+/** Toggle <strikethrough>. */
+export const toggleStrikethrough: Command = pmToggleMark(M.strikethrough);
 
-/** Replaces main.js::AddAnnotation (FBE/main.js:2142). */
-export const addAnnotation: Command = () => false;
+/** Toggle <sub>. */
+export const toggleSub: Command           = pmToggleMark(M.sub);
 
-/** Replaces main.js::AddTA (FBE/main.js:2168). Adds text-author to the enclosing poem/cite/epigraph. */
-export const addTextAuthor: Command = () => false;
+/** Toggle <sup>. */
+export const toggleSup: Command           = pmToggleMark(M.sup);
 
-/** Replaces main.js::AddTitle (FBE/main.js:1766). */
-export const addTitle: Command = () => false;
+/** Toggle inline <code>. */
+export const toggleCode: Command          = pmToggleMark(M.code);
 
-/** Replaces main.js::AddBody (FBE/main.js:1894). */
-export const addBody: Command = () => false;
-
-/** Replaces main.js::AddImage (FBE/main.js:2030). Block image at section start. */
-export const addImage: Command = () => false;
-
-// --- Insert at cursor ---
-
-/** Replaces main.js::InsImage (FBE/main.js:1971). */
-export const insertImage = (_href: string): Command => () => false;
-
-/** Replaces main.js::InsInlineImage (FBE/main.js:2001). */
-export const insertInlineImage = (_href: string): Command => () => false;
-
-// --- Structural manipulation ---
-
-/** Replaces main.js::CloneContainer (FBE/main.js:1940). Duplicates section/poem/stanza/cite/epigraph. */
-export const cloneContainer: Command = () => false;
-
-/** Replaces main.js::MergeContainers (FBE/main.js:2216). Joins adjacent same-type sections/stanzas/cites. */
-export const mergeContainers: Command = () => false;
-
-/** Replaces main.js::RemoveOuterContainer (FBE/main.js:2357). Pops child sections up a level. */
-export const removeOuterContainer: Command = () => false;
-
-// --- Paragraph styles ---
-
-/** Replaces main.js::StyleNormal. Removes text-author/subtitle/code classes. */
-export const styleNormal: Command = () => false;
-
-/** Replaces main.js::StyleSubtitle (FBE/main.js:1699). */
-export const styleSubtitle: Command = () => false;
-
-/** Replaces main.js::StyleTextAuthor (FBE/main.js:1693). */
-export const styleTextAuthor: Command = () => false;
-
-/** Replaces main.js::StyleCode (FBE/main.js:1705). */
-export const styleCode: Command = () => false;
-
-// --- Inline marks ---
-
-/** Toggle an inline mark by schema name. */
-export function toggleMark(name: keyof typeof fb2Schema.marks): Command {
-  // TODO: thin wrapper around prosemirror-commands.toggleMark with availability check.
-  return () => false;
+/** Toggle a link with the given href. Pass empty href to remove. */
+export function toggleLink(href: string): Command {
+  if (!href) {
+    // Remove link mark from the range.
+    return (state, dispatch) => {
+      const { from, to } = state.selection;
+      if (from === to) return false;
+      if (dispatch) {
+        const tr = state.tr.removeMark(from, to, M.link);
+        dispatch(tr);
+      }
+      return true;
+    };
+  }
+  return pmToggleMark(M.link, { href, type: "" });
 }
 
-// --- Splits ---
+/** Apply a named <style name="…"> to the selection. */
+export function applyStyleMark(name: string): Command {
+  return pmToggleMark(M.style, { name });
+}
 
-/** Replaces FBEview split command (ID_EDIT_SPLIT). Breaks section at caret. */
-export const splitSection: Command = () => false;
+// ── Paragraph style (block-type) commands ───────────────────────────────────
 
-// --- Notes / footnotes ---
+const N = fb2Schema.nodes;
 
-/** Inline note reference (<a type="note">). Creates a new body with name="notes". */
-export const insertFootnote = (_id: string): Command => () => false;
+/** Turn the current paragraph back into a plain <p>. */
+export const styleNormal: Command       = pmSetBlockType(N.paragraph);
 
-// Utility — unused parameter suppression to keep TSC happy while stubs exist.
-function _unused<T>(x: T): T { return x; }
-_unused<NodeType>(fb2Schema.nodes.paragraph);
+/** Convert the current block into a <subtitle>. */
+export const styleSubtitle: Command     = pmSetBlockType(N.subtitle);
+
+/** Convert the current block into a <text-author> (typically at end of poem/cite/epigraph). */
+export const styleTextAuthor: Command   = pmSetBlockType(N.text_author);
+
+/** Convert the current block into an <empty-line>. */
+export const insertEmptyLine: Command = (state, dispatch) => {
+  if (!N.empty_line) return false;
+  if (dispatch) {
+    const tr = state.tr.replaceSelectionWith(N.empty_line.create());
+    dispatch(tr);
+  }
+  return true;
+};
+
+// ── Helpers that return the block/mark status under the cursor ──────────────
+
+/** Is the given mark active at the current selection head? */
+export function isMarkActive(state: EditorState, markName: keyof typeof M): boolean {
+  const mark = M[markName];
+  const { from, $from, to, empty } = state.selection;
+  if (empty) return !!mark.isInSet(state.storedMarks ?? $from.marks());
+  return state.doc.rangeHasMark(from, to, mark);
+}
+
+/** Is the block at the cursor of the given type? */
+export function isBlockActive(state: EditorState, nodeType: NodeType, attrs?: Attrs): boolean {
+  const { $from, to } = state.selection;
+  if (to > $from.end()) return false;
+  return $from.parent.hasMarkup(nodeType, attrs ?? null);
+}
+
+// ── Structural stubs kept for Phase 3 ───────────────────────────────────────
+// Not yet implemented — see OPERATIONS.md for reference FBE code paths.
+
+export const insertPoem:   Command = () => false;  // FBEview.cpp:903
+export const insertCite:   Command = () => false;  // FBEview.cpp:1048
+export const addEpigraph:  Command = () => false;  // main.js:2050
+export const addAnnotation: Command = () => false; // main.js:2142
+export const cloneContainer: Command = () => false;
+export const mergeContainers: Command = () => false;
+export const removeOuterContainer: Command = () => false;
