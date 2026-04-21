@@ -1,0 +1,13 @@
+build/bin/
+frontend/dist/
+frontend/node_modules/
+frontend/wailsjs/
+*.exe
+*.app
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# Compiled CLI binary (top-level, after `go build ./cmd/fbe`)
+/fbe

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre>sf</genre>
+      <author>
+        <first-name>Unknown</first-name>
+        <last-name>Author</last-name>
+      </author>
+      <book-title>Blank</book-title>
+      <lang>en</lang>
+    </title-info>
+    <document-info>
+      <author>
+        <nickname>fbe-go</nickname>
+      </author>
+      <program-used>FictionBook Editor (Go) 0.0.1</program-used>
+      <date value="2026-04-21">21 April 2026</date>
+      <id>00000000-0000-0000-0000-000000000000</id>
+      <version>1.0</version>
+    </document-info>
+  </description>
+  <body>
+    <title>
+      <p>Blank</p>
+    </title>
+    <section>
+      <p>Start writing here…</p>
+    </section>
+  </body>
+</FictionBook>
