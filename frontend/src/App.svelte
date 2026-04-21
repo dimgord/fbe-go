@@ -28,12 +28,27 @@
       if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
       const path = await App.PickFB2ToOpen();
       if (!path) return;
+      console.log(`[fbe] opening ${path}`);
+      status = `Opening ${path.split(/[\\/]/).pop()}…`;
       // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
-      fb = await App.OpenFile(path);
+      const parsed: FictionBook = await App.OpenFile(path);
+      console.log(
+        `[fbe] parsed: ${parsed.Bodies?.length ?? 0} bodies, ` +
+        `${parsed.Binaries?.length ?? 0} binaries, ` +
+        `title "${parsed.Description?.TitleInfo?.BookTitle ?? ""}"`,
+      );
+      // Defer to next tick so the status update renders before we potentially
+      // block the UI thread converting a huge doc into ProseMirror nodes.
+      await new Promise((r) => setTimeout(r, 0));
+      fb = parsed;
       currentPath = path;
       filename = path.split(/[\\/]/).pop() ?? path;
+      status = `Opened ${filename}`;
+      setTimeout(() => (status = ""), 3000);
     } catch (e) {
-      error = (e as Error).message;
+      const msg = (e as Error).message || String(e);
+      console.error("[fbe] openFile failed:", e);
+      error = `Open failed: ${msg}`;
       fb = SAMPLE_BOOK;
       currentPath = "";
       filename = "blank.fb2 (sample)";
