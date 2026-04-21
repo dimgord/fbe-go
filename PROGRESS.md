@@ -6,6 +6,86 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 13 — 2026-04-21 — MergeContainers — Phase 3 complete [dev branch]
+
+Version: **0.0.13**
+
+### What changed
+
+Implements the last 🔴 command from FBE (`main.js:2216 MergeContainers`)
+with full coverage of its four structural combinations. **Phase 3 is now
+complete.**
+
+**`mergeContainers` in `commands.ts`:**
+
+1. Requires the cursor inside a `section` / `stanza` / `cite`.
+2. Requires an immediate next sibling of the same type (refuses otherwise).
+3. Picks a strategy based on the sibling pair shape:
+
+| cp         | nx         | behavior |
+|------------|------------|----------|
+| section flat    | section flat     | concat block content; unwrap `nx`'s `title` → subtitles, `epigraph` / `annotation` → promote inner blocks |
+| section nested  | section flat     | wrap `nx`'s flat content in a new subsection appended to `cp` |
+| section flat    | section nested   | flatten `nx`'s nested sections into `cp`'s block content (recursive: nested titles → subtitles) |
+| section nested  | section nested   | concat `cp`'s headers + sub-sections with `nx`'s sub-sections; drop `nx`'s headers |
+| stanza          | stanza           | concat verses; drop `nx`'s title/subtitle |
+| cite            | cite             | concat children; `cp`'s trailing `text_author` demotes to plain paragraphs (matches FBE's `removeAttribute("className")`) |
+
+Helpers `isNestedSection`, `mergeSections`, `mergeStanzas`, `mergeCites`,
+and `flattenSectionInto` encapsulate each case. The final replacement uses
+`tr.replaceWith([cp.before, nx.after], merged)` so undo rolls it back
+cleanly.
+
+### Tests
+
+Seven new vitest cases exercising every branch:
+
+- flat+flat: paragraphs concat.
+- flat+flat with nx's title → subtitle demotion + annotation unwrap.
+- nested+flat: nx flat blocks land in a new subsection.
+- flat+nested: nested sections flatten into cp (titles → subtitles).
+- nested+nested: concat sub-sections, drop nx's headers.
+- stanza+stanza: verses concat.
+- cite+cite: children concat + cp's text-author demotes to paragraph.
+- Refuses when no same-type sibling follows.
+
+Also rewrote the `cursorInFirstSection` test helper so the cursor lands
+inside the *top-level* first section (prefers `<title>`'s paragraph,
+falls back to a flat block, then descends) — earlier attempts were
+landing inside nested children or the next section.
+
+**42/42 vitest pass** (14 serialize + 5 outline + 23 commands).
+
+### Toolbar
+
+New `⟛ Merge` button after the Table one.
+
+### Phase 3 status
+
+All structural commands implemented:
+
+- ✅ cloneContainer, removeOuterContainer, addTitle, addEpigraph,
+  addAnnotation, addTextAuthor (Rev 10)
+- ✅ insertCite, insertPoem (Rev 11)
+- ✅ insertTable (Rev 12)
+- ✅ mergeContainers (this rev)
+
+Next natural step: **Speller** (Hunspell CGo + PM decoration plugin) or
+**HTML export** (Go templates from `internal/fb2/export/html`) or **rich
+annotation editor** in the description form.
+
+### Files modified
+
+- `frontend/src/editor/commands.ts`, `commands.test.ts`, `Editor.svelte`,
+  `Toolbar.svelte`, `PROGRESS.md`, `wails.json`, `frontend/package.json`.
+
+### Versions bumped
+
+- `wails.json`            0.0.12 → 0.0.13
+- `frontend/package.json` 0.0.12 → 0.0.13
+
+---
+
 ## Rev 12 — 2026-04-21 — InsertTable with dialog [dev branch]
 
 Version: **0.0.12**
