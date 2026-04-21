@@ -6,6 +6,27 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 16 — 2026-04-21 — Rich annotation editor [dev]
+
+Version: **0.0.16**
+
+- `frontend/src/description/AnnotationEditor.svelte` — embedded ProseMirror
+  instance for `<annotation>` rich-text editing. Uses a derived schema
+  (`fb2Schema.spec.nodes.update("doc", …)`) so the root accepts
+  `paragraph | subtitle | empty_line | cite | poem | table`. Marks (strong,
+  emphasis, strike, sub, sup, code, link) reuse the main schema's mark
+  specs so they round-trip cleanly.
+- Two-way binding: converts `Annotation.Children` into PM nodes on mount,
+  emits `change` with the re-serialized `Annotation` on every transaction.
+- Paste handling reuses `editor/paste.ts` (Word cleanup, CRLF normalize).
+- Keyboard: Mod-B / Mod-I / standard undo/redo.
+- `TitleInfoForm.svelte` replaces the placeholder hint with a real
+  `<AnnotationEditor>` bound to `info.Annotation`.
+
+Versions bumped 0.0.15 → 0.0.16.
+
+---
+
 ## Rev 15 — 2026-04-21 — HTML export [dev]
 
 Version: **0.0.15**
