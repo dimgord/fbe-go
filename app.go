@@ -15,6 +15,7 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
+	"github.com/dimgord/fbe-go/internal/fb2/export/html"
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
@@ -131,6 +132,19 @@ func (a *App) ExtractThumbnail(path string) (string, error) {
 	buf.WriteString("data:" + ct + ";base64,")
 	buf.WriteString(base64.StdEncoding.EncodeToString(data))
 	return buf.String(), nil
+}
+
+// ExportHTML writes the currently-open document as a self-contained HTML file.
+func (a *App) ExportHTML(path string) error {
+	if a.current == nil {
+		return fmt.Errorf("no document open")
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return html.Export(f, a.current)
 }
 
 // Validate runs XSD validation on a file path and returns per-error messages.

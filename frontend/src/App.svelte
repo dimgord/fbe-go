@@ -76,6 +76,34 @@
     }
   }
 
+  async function exportHTML() {
+    error = ""; status = "";
+    try {
+      const w = await wails();
+      if (!w) throw new Error("Wails bindings not available.");
+      if (!editor) throw new Error("Editor not ready.");
+      // Refresh the Go-side fb with the current PM doc before export.
+      const current = editor.currentFB();
+      if (current) {
+        // @ts-expect-error — doc.FictionBook shape
+        await w.App.UpdateDocument(current);
+      }
+      const defaultName = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
+      const path: string = await w.runtime.SaveFileDialog({
+        Title: "Export HTML",
+        DefaultFilename: defaultName,
+        Filters: [{ DisplayName: "HTML (*.html)", Pattern: "*.html" }],
+      });
+      if (!path) return;
+      // @ts-expect-error
+      await w.App.ExportHTML(path);
+      status = `Exported ${path.split(/[\\/]/).pop() ?? path}`;
+      setTimeout(() => (status = ""), 3000);
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
   async function validate() {
     error = ""; status = "";
     try {
@@ -118,6 +146,7 @@
     <button on:click={() => save(false)} disabled={!editor}>Save</button>
     <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
     <button on:click={validate} disabled={!currentPath}>Validate</button>
+    <button on:click={exportHTML} disabled={!editor}>Export HTML…</button>
     <div class="view-toggle" role="tablist" aria-label="View">
       <button
         class:active={view === "body"}
