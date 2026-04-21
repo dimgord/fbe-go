@@ -1,11 +1,20 @@
 // Package speller provides spell checking for text nodes in a doc.FictionBook.
 //
-// Backend options:
-//   - CGo → hunspell: most compatible with original FBE dictionaries (uk_UA, ru_RU, en_US, ...).
-//   - Pure-Go (e.g., github.com/client9/misspell) — limited, English-focused.
-//   - External process: exec hunspell; portable but slow.
+// Current status:
+//   - The built-in noop speller (this file) always reports words as valid.
+//     The Wails app relies on the webview's native OS spellchecker
+//     (enabled via `spellcheck="true"` on the PM editor), which is sufficient
+//     for macOS + Linux deployments.
+//   - A full Hunspell CGo backend lives under a `speller_hunspell` build tag
+//     (stubbed in speller_hunspell.go). It needs `libhunspell` + dictionaries
+//     to compile, which is why it's not the default.
 //
-// Recommendation: CGo hunspell with a build tag; fall back to no-op on builds without it.
+// Dictionary file locations (for the future Hunspell backend):
+//   macOS (Homebrew): /usr/local/share/hunspell/ or /opt/homebrew/share/hunspell/
+//   Linux:            /usr/share/hunspell/
+//
+// FB2 locales commonly used (from FBE/Speller.h:59–72): en_US, ru_RU, de_DE,
+// fr_FR, es_ES, uk_UA, cs_CZ, be_BY, bg_BG, pl_PL, it_IT.
 package speller
 
 import (
@@ -21,9 +30,10 @@ type Speller interface {
 	Close() error
 }
 
-// Open initializes a speller for the given language code ("uk_UA", "ru_RU", "en_US", ...).
+// Open initializes a speller for the given language code (e.g., "uk_UA").
+// The default backend returns a no-op speller; use `-tags speller_hunspell`
+// for the real CGo-hunspell implementation.
 func Open(lang, dictsDir string) (Speller, error) {
-	// TODO: wire up hunspell via CGo; see FBE/Speller.cpp for reference.
 	return &noop{lang: strings.ToLower(lang)}, nil
 }
 

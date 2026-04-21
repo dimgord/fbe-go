@@ -119,12 +119,25 @@ Sub-components used in multiple sections:
 
 Reference: `Speller.h:15` (Hunspell), `Speller.h:59–72` (locale list).
 
+**Current state (Rev 17):** the Wails editor delegates spellcheck to the
+webview's **native OS engine** via `spellcheck="true"` + `lang` attributes
+on the PM editor DOM. On macOS/Linux this surfaces red squiggles and
+right-click suggestions automatically, using whatever dictionaries the user
+has installed at the OS level (System Settings → Keyboard → Text
+Replacements for macOS; LibreOffice / system hunspell on Linux).
+
+**Future:** the `internal/fb2/speller` Go package defines a `Speller`
+interface (`Check` / `Suggest` / `AddToSession`). A `-tags speller_hunspell`
+backend will wire up CGo Hunspell bindings for environments that need
+explicit control, custom dictionaries, or batch scripting. Locales mirror
+FBE's original list.
+
 | FBE source | Operation | Go/Wails equivalent |
 |---|---|---|
-| `Speller.cpp` | Init per-language dictionary | `speller.Open(lang, dictsDir)` |
-| Red squiggles in editor | Mark misspelled words | PM decoration plugin calling `App.SpellCheck(word, lang)` |
-| `CSpellDialog` (Speller.h:78) | Modal with Ignore / Change / Add | `dialogs/Spell.svelte` |
-| Per-word replacements (`WordsItem` in Settings.h) | User dictionary | `settings.WordsList` |
+| Red squiggles in editor | Mark misspelled words | **Native webview** (macOS WKWebView / Linux WebKitGTK) via `spellcheck="true"` |
+| `Speller.cpp` | Hunspell init | future `speller.Open(lang, dictsDir)` with `-tags speller_hunspell` |
+| `CSpellDialog` (Speller.h:78) | Ignore / Change / Add modal | native right-click menu for now; custom modal in Phase 4 |
+| Per-word replacements (`WordsItem` in Settings.h) | User dictionary | `settings.WordsList` (future) |
 
 ## 10. Scripts (user automation)
 

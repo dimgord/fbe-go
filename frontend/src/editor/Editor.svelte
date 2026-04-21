@@ -28,6 +28,9 @@
   /** Export the EditorView so the toolbar in App.svelte can dispatch commands. */
   export let view: EditorView | undefined = undefined;
 
+  /** Inferred from the document's title-info <lang> for native spellcheck routing. */
+  $: lang = fb?.Description?.TitleInfo?.Lang || "en";
+
   /** Serialize current PM doc back to a FictionBook, merged with the original description + binaries. */
   export function currentFB(): FictionBook | null {
     if (!view || !fb) return null;
@@ -130,8 +133,17 @@
     });
     view = new EditorView(container, {
       state,
+      attributes: { spellcheck: "true", lang },
       transformPastedHTML: cleanPastedHTML,
       transformPastedText: cleanPastedText,
+    });
+  }
+
+  // Re-render attrs when language changes so the webview re-evaluates spellcheck
+  // against the new dictionary.
+  $: if (view) {
+    view.setProps({
+      attributes: { spellcheck: "true", lang },
     });
   }
 
