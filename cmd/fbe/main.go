@@ -22,6 +22,7 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
+	"github.com/dimgord/fbe-go/internal/fb2/xsd"
 	"github.com/dimgord/fbe-go/internal/fb2/zipfb2"
 )
 
@@ -75,8 +76,26 @@ func cmdValidate(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: fbe validate FILE.fb2")
 	}
-	// TODO: open file and run xsd.Validate; print line/col for each error.
-	return fmt.Errorf("xsd validator not implemented yet (see internal/fb2/xsd)")
+	in, err := os.Open(args[0])
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	errs, err := xsd.Validate(in)
+	if err != nil {
+		return err
+	}
+	if len(errs) == 0 {
+		fmt.Println("VALID")
+		return nil
+	}
+	fmt.Printf("INVALID: %d error(s)\n", len(errs))
+	for _, e := range errs {
+		fmt.Printf("  %s\n", e.Message)
+	}
+	os.Exit(1)
+	return nil
 }
 
 func cmdThumb(args []string) error {
