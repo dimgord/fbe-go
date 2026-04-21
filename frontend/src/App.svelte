@@ -122,7 +122,9 @@
   <Toolbar {editor} />
 
   <main>
-    <aside><DocumentTree /></aside>
+    <aside>
+      <DocumentTree {fb} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
+    </aside>
     <section><Editor bind:this={editor} {fb} /></section>
   </main>
 </div>

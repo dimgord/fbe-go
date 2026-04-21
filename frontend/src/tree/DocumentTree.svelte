@@ -1,38 +1,40 @@
 <script lang="ts">
-  // Document outline. Replaces FBE/DocumentTree.cpp.
-  // Data source: the current ProseMirror doc — walk the nodes and build a tree
-  // (sections, titles, poems, cites, epigraphs, annotations).
+  import { createEventDispatcher } from "svelte";
+  import OutlineItem from "./OutlineItem.svelte";
+  import { buildOutline } from "./outline";
+  import type { FictionBook } from "../fb2/types";
 
-  export let tree: TreeNode[] = [];
+  export let fb: FictionBook | null = null;
 
-  type TreeNode = {
-    label: string;
-    kind: "body" | "section" | "title" | "poem" | "cite" | "epigraph" | "annotation";
-    id?: string;
-    children?: TreeNode[];
-  };
+  const dispatch = createEventDispatcher<{ navigate: { path: number[] } }>();
+
+  $: tree = buildOutline(fb);
+
+  function onNavigate(e: CustomEvent<{ path: number[] }>) {
+    dispatch("navigate", e.detail);
+  }
 </script>
 
-<ul>
-  {#each tree as node}
-    <li>
-      <span class="kind">{node.kind}</span> {node.label}
-      {#if node.children?.length}
-        <svelte:self tree={node.children} />
-      {/if}
-    </li>
-  {/each}
-</ul>
+{#if tree.length === 0}
+  <div class="empty">No document loaded</div>
+{:else}
+  <ul class="outline">
+    {#each tree as node (node.path.join("."))}
+      <OutlineItem {node} on:navigate={onNavigate} />
+    {/each}
+  </ul>
+{/if}
 
 <style>
-  ul {
-    list-style: none;
-    padding-left: 1rem;
-    margin: 0;
+  .empty {
+    padding: 1rem;
+    color: #999;
+    font-style: italic;
+    font-size: 0.85rem;
   }
-  .kind {
-    color: #888;
-    font-size: 0.75rem;
-    text-transform: uppercase;
+  .outline {
+    list-style: none;
+    padding: 0.5rem 0.5rem;
+    margin: 0;
   }
 </style>
