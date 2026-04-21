@@ -18,6 +18,7 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
+	"github.com/dimgord/fbe-go/internal/fb2/xsd"
 )
 
 // App holds per-session state.
@@ -130,6 +131,18 @@ func (a *App) ExtractThumbnail(path string) (string, error) {
 	buf.WriteString("data:" + ct + ";base64,")
 	buf.WriteString(base64.StdEncoding.EncodeToString(data))
 	return buf.String(), nil
+}
+
+// Validate runs XSD validation on a file path and returns per-error messages.
+// Requires the app to be built with `-tags xsd`; otherwise returns a single
+// error "validator not compiled in".
+func (a *App) Validate(path string) ([]xsd.ValidationError, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return xsd.Validate(f)
 }
 
 // --- Settings ---

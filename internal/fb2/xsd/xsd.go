@@ -1,38 +1,50 @@
-// Package xsd validates an FB2 document against FictionBook.xsd.
+// Package xsd validates an FB2 document against the bundled FictionBook.xsd.
 //
-// Strategy options (pick one before implementation):
+// Two backends, selected via build tag:
 //
-//  1. CGo → libxml2: most accurate, battle-tested; platform build pain (ship libxml2
-//     per OS). Use github.com/lestrrat-go/libxml2 or raw CGo bindings.
-//  2. Pure-Go XSD: no mature library exists; would require writing a subset validator.
-//     Viable because FictionBook.xsd is relatively simple (no complex type derivation).
-//  3. JS-side validation in the webview: acceptable as a stopgap but not usable for the CLI.
+//   default:      no-op validator that returns ErrNotImplemented
+//   -tags xsd:    CGo-based libxml2 validator (requires libxml-2.0 on the build host)
 //
-// Current recommendation: (1) for Phase 2, gated behind a build tag so the pure-Go CLI
-// builds without libxml2.
+// Build with `go build -tags xsd ./...` to get real validation. The CLI and
+// Wails app can both be built either way.
 package xsd
 
 import (
-	"io"
+	"embed"
+	"errors"
+	"io/fs"
 )
 
 // ValidationError describes a single schema violation.
 type ValidationError struct {
-	Line    int
-	Column  int
-	Message string
+	Line    int    `json:"line"`
+	Column  int    `json:"column"`
+	Message string `json:"message"`
 }
 
-// Validate checks r against the bundled FictionBook.xsd.
-// Returns nil (not an empty slice) on success.
-func Validate(r io.Reader) ([]ValidationError, error) {
-	// TODO: wire up libxml2 (CGo) or pure-Go XSD validator.
-	return nil, ErrNotImplemented
+// Error implements the error interface for convenience.
+func (e ValidationError) Error() string { return e.Message }
+
+// ErrNotImplemented is returned by the default (no-op) backend.
+var ErrNotImplemented = errors.New("xsd: validator not compiled in — rebuild with -tags xsd")
+
+// SchemaFiles holds the bundled FictionBook.xsd and its imports.
+// Exposed so alternate backends (pure-Go, future) can access the schema payload.
+//
+//go:embed FictionBook.xsd FictionBookGenres.xsd FictionBookLang.xsd FictionBookLinks.xsd
+var SchemaFiles embed.FS
+
+// SchemaFileNames returns the list of bundled XSD filenames.
+func SchemaFileNames() []string {
+	entries, err := fs.ReadDir(SchemaFiles, ".")
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
 }
-
-// ErrNotImplemented is returned until a validator backend is wired up.
-var ErrNotImplemented = &NotImplementedError{}
-
-type NotImplementedError struct{}
-
-func (*NotImplementedError) Error() string { return "xsd: validator not implemented yet" }
