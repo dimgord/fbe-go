@@ -6,6 +6,85 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 9 — 2026-04-21 — Description form (all 5 metadata sections) [dev branch]
+
+Version: **0.0.9**
+
+### What changed
+
+Added a full `<description>` editor. The body/description split mirrors the
+original FBE's `apiShowDesc(state)` toggle: a `[Body] [Description]` segmented
+button in the header swaps between the ProseMirror editor and a tabbed form.
+
+**`DescriptionPanel.svelte`** — top-level container with 5 tabs:
+
+- **Title info** — `TitleInfoForm.svelte`, fully wired
+- **Source title** — same form component, shown only when `<src-title-info>`
+  is present; offers "Add source title info" when missing
+- **Document** — `DocumentInfoForm.svelte` (authors, id with New-UUID button,
+  version, program-used, date, src-ocr, src-url[])
+- **Publish** — `PublishInfoForm.svelte` (book-name, publisher, city, year,
+  isbn, sequence)
+- **Custom** — `CustomInfoForm.svelte` (repeatable type/value pairs)
+
+**Reusable field components:**
+
+- `AuthorField.svelte` — first/middle/last name on one row; disclosure reveals
+  nickname, id, email[], home-page[]. Variants: `primary` (always expanded)
+  and `compact` (collapsed). Remove + clone buttons.
+- `GenreField.svelte` — genre string + match percentage, remove + clone.
+- `DateField.svelte` — human-readable text + ISO value side by side.
+- `SequenceField.svelte` — recursive via `<svelte:self>` so nested series
+  work (FB2 allows `<sequence>` inside `<sequence>`).
+- `CoverpageField.svelte` — dropdown of available binary IDs (from
+  `fb.Binaries`) + custom-href fallback.
+
+**Two-way binding through App.svelte:**
+
+`<DescriptionPanel bind:fb />` propagates every field edit back to the parent
+`fb` state, which flows through `Editor.currentFB()` on Save. This means
+edits to metadata are saved alongside body edits without extra plumbing.
+
+**Gotchas fixed during implementation:**
+
+- Svelte's template parser does not accept TypeScript non-null assertions
+  inside `{expr}` attribute bindings. Replaced `author.Email![i]` etc. with
+  reactive guards (`$: if (!author.Email) author.Email = []`) + plain
+  `author.Email[i]`, and wrapped nullable parents in `{#if date}` / `{#if cover}`.
+- `pattern="\d{{4}}..."` inside an `<input>` triggered Svelte's mustache
+  parser; removed the `pattern` attribute (HTML5 validation can come back
+  later with a different escape).
+
+### Verified
+
+- `npm test` → 19/19 still passing (serialize + outline).
+- `wails build -tags xsd` → 9.4 MB `.app`, 8.7 s; launches with working
+  `[Body] [Description]` toggle and all 5 tabs functional.
+- Editing a field in the form mutates `fb`; switching back to Body and
+  Saving writes the updated description to disk.
+
+### Files modified / added
+
+- **Modified:** `frontend/src/App.svelte`, `PROGRESS.md`, `wails.json`,
+  `frontend/package.json`.
+- **Added:** `frontend/src/description/AuthorField.svelte`,
+  `GenreField.svelte`, `DateField.svelte`, `SequenceField.svelte`,
+  `CoverpageField.svelte`, `TitleInfoForm.svelte`,
+  `DocumentInfoForm.svelte`, `PublishInfoForm.svelte`,
+  `CustomInfoForm.svelte`, `DescriptionPanel.svelte`.
+
+### Branch
+
+Committed on `dev` (per new workflow: dev is work-in-progress, main gets
+explicit merges).
+
+### Versions bumped
+
+- `wails.json`            0.0.8 → 0.0.9
+- `frontend/package.json` 0.0.8 → 0.0.9
+
+---
+
 ## Rev 8 — 2026-04-21 — Frontend round-trip tests + DocumentTree outline
 
 Version: **0.0.8**
