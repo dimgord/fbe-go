@@ -6,6 +6,84 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 10 — 2026-04-21 — Phase 3 structural commands [dev branch]
+
+Version: **0.0.10**
+
+### What changed
+
+Implements six of the structural commands from `docs/OPERATIONS.md` as real
+ProseMirror commands with selection-constraint checking, keyboard/toolbar
+hookup, and vitest coverage. These close the easy half of Phase 3; the 🔴
+hard ones (InsertPoem / InsertCite / MergeContainers / InsertTable) stay
+stubbed.
+
+**Implemented commands (`frontend/src/editor/commands.ts`):**
+
+- **`cloneContainer`** — duplicates the surrounding section / poem / stanza /
+  cite / epigraph. Deep-copies via `nodeFromJSON` so marks and nested
+  structure survive. Matches `main.js:1940 CloneContainer`.
+- **`removeOuterContainer`** — dissolves a section that contains only other
+  sections (matches FBE's `IsCtSection` check), promoting the children up a
+  level. Safe: returns false on sections with flat block content to avoid
+  data loss. Matches `main.js:2357 RemoveOuterContainer`.
+- **`addTitle`** — inserts an empty `<title>` at the start of the enclosing
+  section / body / poem / stanza when none exists. Simplified from
+  `main.js:1766 AddTitle` (doesn't consume selection text yet).
+- **`addEpigraph`** — inserts an empty `<epigraph>` in the enclosing body /
+  section / poem, positioned after any existing `<title>` to maintain
+  canonical element order. Matches `main.js:2050 AddEpigraph`.
+- **`addAnnotation`** — inserts `<annotation>` in the enclosing section (if
+  absent), positioned after title/epigraph/image. Matches
+  `main.js:2142 AddAnnotation`.
+- **`addTextAuthor`** — appends a `<text-author>` trailer to the enclosing
+  poem / epigraph / cite. Matches `main.js:2168 AddTA`.
+
+Helper `findAncestor` / `findAncestorAny` walks the `ResolvedPos` chain to
+locate the nearest container of a given type, plus
+`firstInsertionPointAfterHeader` keeps epigraph/annotation placement
+schema-legal.
+
+**Toolbar** (`Toolbar.svelte`): new row of structure buttons after the
+style/empty-line group: `Clone`, `Unwrap`, `+ Title`, `+ Epigraph`,
+`+ Annot.`, `+ T-A`. Each shows a tooltip describing when it's applicable.
+
+**Editor.svelte** re-exports the new commands so App.svelte / Toolbar can
+reference them by name.
+
+### Tests
+
+- `commands.test.ts` — 9 new assertions covering both positive and negative
+  paths: cloneContainer duplicates a section; addTitle no-ops on a titled
+  section and adds one on an untitled section; addEpigraph / addAnnotation
+  place the new container after `<title>`; addAnnotation no-ops on a
+  pre-annotated section; addTextAuthor appends to a poem; removeOuterContainer
+  refuses flat sections and correctly promotes nested ones.
+- Helper `buildStateWithCursor(fb, predicate)` walks the PM doc and places
+  the cursor at the first paragraph/verse whose ancestor chain satisfies the
+  caller's predicate — makes the command tests read naturally regardless of
+  doc layout.
+
+### Verified
+
+- `npm test` → **28/28** (14 serialize + 5 outline + 9 commands).
+- `wails build -tags xsd` → 9.4 MB `.app`, ~10 s.
+
+### Files modified / added
+
+- **Modified:** `frontend/src/editor/commands.ts`,
+  `frontend/src/editor/Editor.svelte`,
+  `frontend/src/editor/Toolbar.svelte`, `PROGRESS.md`, `wails.json`,
+  `frontend/package.json`.
+- **Added:** `frontend/src/editor/commands.test.ts`.
+
+### Versions bumped
+
+- `wails.json`            0.0.9 → 0.0.10
+- `frontend/package.json` 0.0.9 → 0.0.10
+
+---
+
 ## Rev 9 — 2026-04-21 — Description form (all 5 metadata sections) [dev branch]
 
 Version: **0.0.9**

@@ -32,6 +32,13 @@
   <button title="Subtitle" on:click={() => cmd("styleSubtitle")}>Sub</button>
   <button title="Text author (end of poem/cite/epigraph)" on:click={() => cmd("styleTextAuthor")}>T-A</button>
   <button title="Empty line" on:click={() => cmd("insertEmptyLine")}>␣</button>
+  <span class="sep" />
+  <button title="Clone section / poem / stanza / cite / epigraph" on:click={() => cmd("cloneContainer")}>Clone</button>
+  <button title="Remove outer section (promote children up)" on:click={() => cmd("removeOuterContainer")}>Unwrap</button>
+  <button title="Add title to enclosing section / body / poem / stanza" on:click={() => cmd("addTitle")}>+ Title</button>
+  <button title="Add epigraph to enclosing body / section / poem" on:click={() => cmd("addEpigraph")}>+ Epigraph</button>
+  <button title="Add annotation to enclosing section" on:click={() => cmd("addAnnotation")}>+ Annot.</button>
+  <button title="Append text-author to enclosing poem / cite / epigraph" on:click={() => cmd("addTextAuthor")}>+ T-A</button>
 </div>
 
 <style>
