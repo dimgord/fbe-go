@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre match="100">sf</genre>
+      <author>
+        <first-name>Тарас</first-name>
+        <last-name>Шевченко</last-name>
+      </author>
+      <book-title>Кобзар (тест)</book-title>
+      <annotation>
+        <p>Невеличкий <emphasis>тестовий</emphasis> FB2-файл для round-trip.</p>
+      </annotation>
+      <lang>uk</lang>
+    </title-info>
+    <document-info>
+      <author>
+        <nickname>fbe-go</nickname>
+      </author>
+      <program-used>fbe-go 0.0.4</program-used>
+      <date value="2026-04-21">21 April 2026</date>
+      <id>11111111-2222-3333-4444-555555555555</id>
+      <version>1.0</version>
+    </document-info>
+  </description>
+  <body>
+    <title>
+      <p>Кобзар (тест)</p>
+    </title>
+    <epigraph>
+      <p><emphasis>Борітеся — поборете!</emphasis></p>
+      <text-author>— Т. Шевченко</text-author>
+    </epigraph>
+    <section>
+      <title>
+        <p>Заповіт</p>
+      </title>
+      <p>Перший параграф із <strong>жирним</strong>, <emphasis>курсивом</emphasis>, <code>моноширинним</code>, <sub>2</sub> та <sup>3</sup>, <a l:href="https://example.com">посиланням</a>.</p>
+      <empty-line/>
+      <p>Другий параграф.</p>
+      <cite>
+        <p>Це цитата.</p>
+        <text-author>— Автор</text-author>
+      </cite>
+      <subtitle>Підзаголовок</subtitle>
+    </section>
+    <section>
+      <title>
+        <p>Вкладена</p>
+      </title>
+      <section>
+        <p>Вкладений вміст.</p>
+      </section>
+    </section>
+  </body>
+</FictionBook>

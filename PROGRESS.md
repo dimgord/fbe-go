@@ -6,6 +6,80 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 4 — 2026-04-21 — Writer round-trip + polymorphic Block/Inline marshalers
+
+Version: **0.0.4**
+
+### What changed
+
+**Custom XML marshalers for polymorphic types (Block, Paragraph, StyleInline, Link)**
+- Removed the `xml:",any"` + `xml:",innerxml"` approach from Block and Inline
+  that was losing content into the Raw field instead of populating typed
+  pointers.
+- Block now has `UnmarshalXML` that dispatches on the local element name
+  (p / poem / subtitle / cite / empty-line / table / image → corresponding
+  pointer field) and `MarshalXML` that re-emits only the populated field.
+- Paragraph, StyleInline, Link now have matching custom marshalers that read
+  attributes (id/style/lang, name, xlink:href/type respectively) plus mixed
+  text+element content into a typed `[]Inline` children slice. Writing
+  re-emits attributes and children as CharData/elements.
+- Writer-side `normalize` helper deleted — no longer needed; `xml.Encoder` now
+  produces clean output directly.
+
+**Namespace handling**
+- `FictionBook.XMLName` tagged with the FB2 namespace
+  (`http://www.gribuser.ru/xml/fictionbook/2.0 FictionBook`) so the writer
+  emits `xmlns="..."` once at the root. No more redundant xmlns on every `<p>`.
+
+**Writer verification**
+- `internal/fb2/writer/writer_test.go` — round-trip test:
+  parse → write → parse → compare. Asserts the writer output contains the FB2
+  xmlns at the root and does NOT re-declare it on paragraph elements.
+- `internal/fb2/writer/writer_xsd_test.go` (build tag `xsd`) — validates the
+  writer output against the bundled FictionBook.xsd.
+- Both tests pass for `testdata/blank.fb2` and a new `testdata/rich.fb2`
+  (epigraphs, cites, marks, links, nested sections, subtitles, empty-line).
+
+**New test fixture**
+- `testdata/rich.fb2` — exercises genre match, annotation, epigraph with
+  text-author, strong/emphasis/code/sub/sup/links, empty-line, cite, subtitle,
+  nested sections.
+
+### Verification
+
+```
+go test ./...                                # parser (4/4) + writer (2/2 round-trip)
+go test -tags xsd ./...                      # + xsd integration + writer-xsd validation
+./fbe validate testdata/blank.fb2            # → VALID
+./fbe validate testdata/rich.fb2             # → VALID
+wails build -tags xsd                         # 9.3 MB .app rebuilt in 10s
+```
+
+### Known limitations (still Phase 1 TODO)
+
+- Poem / Cite / Table bodies are round-tripped via the existing struct tags
+  (which work for `xml:",any"` on those containers with the newly-typed Block);
+  they compile and validate but haven't yet been exercised with rich content.
+  This is the next round of work before Phase 3.
+- Binary base64 wrapping (FBE wraps at 76 cols; we emit as a single line).
+  Cosmetic, doesn't break readers.
+- Whitespace inside `<p>` is not byte-exact (leading/trailing spaces may be
+  preserved differently). XSD-valid either way.
+
+### Files modified / added
+
+- **Modified:** `internal/fb2/doc/doc.go`, `internal/fb2/writer/writer.go`,
+  `internal/fb2/writer/writer_test.go`, `PROGRESS.md`, `wails.json`,
+  `frontend/package.json`.
+- **Added:** `testdata/rich.fb2`, `internal/fb2/writer/writer_xsd_test.go`.
+
+### Versions bumped
+
+- `wails.json`            0.0.3 → 0.0.4
+- `frontend/package.json` 0.0.3 → 0.0.4
+
+---
+
 ## Rev 3 — 2026-04-21 — Scope narrowed; Wails app runs; full block coverage
 
 Version: **0.0.3**
