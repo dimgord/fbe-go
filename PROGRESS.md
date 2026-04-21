@@ -6,6 +6,65 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 6 — 2026-04-21 — First editable experience: toolbar + inline marks + block styles
+
+Version: **0.0.6**
+
+### What changed
+
+**Real ProseMirror commands (`frontend/src/editor/commands.ts`)**
+- `toggleStrong` / `toggleEmphasis` / `toggleStrikethrough` / `toggleSub` /
+  `toggleSup` / `toggleCode` — inline mark toggles wrapping
+  `prosemirror-commands.toggleMark`.
+- `toggleLink(href)` — link mark with href; empty href removes the mark.
+- `applyStyleMark(name)` — sets the FB2 `<style name="…">` inline mark.
+- `styleNormal` / `styleSubtitle` / `styleTextAuthor` — block-type commands
+  via `pmSetBlockType`.
+- `insertEmptyLine` — replaces selection with an `<empty-line>` node.
+- `isMarkActive` / `isBlockActive` — helpers for toolbar highlighting (wired
+  in a later rev).
+- Structural stubs (`insertPoem`, `insertCite`, `addEpigraph`, …) kept for
+  Phase 3 work with file:line references to the original FBE.
+
+**Keyboard shortcuts in Editor.svelte**
+- `Mod-B` strong, `Mod-I` emphasis, `Mod-Shift-S` strikethrough,
+  `Mod-,` sub, `Mod-.` sup, `Mod-Shift-C` code. Undo/redo already wired.
+- Editor.svelte exposes `exec(cmd)` and `execLink()` so the toolbar can
+  dispatch commands with auto-focus. Also re-exports the command functions for
+  binding by name.
+
+**New Toolbar component (`frontend/src/editor/Toolbar.svelte`)**
+- Formatting buttons wired to the exported Editor methods: undo/redo, bold,
+  italic, strike, sub, sup, code, link, normal paragraph, subtitle,
+  text-author, empty-line.
+- Tooltips show the shortcut key. Minimal, book-friendly styling.
+
+**App.svelte wires the toolbar above the editor**
+- `bind:this={editor}` on the Editor component so the toolbar gets a
+  reference to dispatch commands.
+- Grid row added for the toolbar between header and main.
+
+### Verified
+
+- `wails build -tags xsd` → 9.4 MB `.app`, relaunches with toolbar visible.
+- Clicking formatting buttons modifies the sample document and preserves
+  history (undo/redo works).
+- Keyboard shortcuts take effect in the editor.
+
+### Files modified / added
+
+- **Modified:** `frontend/src/App.svelte`, `frontend/src/editor/Editor.svelte`,
+  `frontend/src/editor/commands.ts`, `PROGRESS.md`, `wails.json`,
+  `frontend/package.json`.
+- **Added:** `frontend/src/editor/Toolbar.svelte`.
+
+### Versions bumped
+
+- `wails.json`            0.0.5 → 0.0.6
+- `frontend/package.json` 0.0.5 → 0.0.6
+
+---
+
 ## Rev 5 — 2026-04-21 — Real-world corpus testing
 
 Version: **0.0.5**

@@ -2,12 +2,14 @@
   import { onMount } from "svelte";
   import DocumentTree from "./tree/DocumentTree.svelte";
   import Editor from "./editor/Editor.svelte";
+  import Toolbar from "./editor/Toolbar.svelte";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
 
   let fb: FictionBook | null = null;
   let filename = "(untitled)";
   let error = "";
+  let editor: Editor | undefined = undefined;
 
   /** Call into the Wails-bound Go App if present; otherwise fall back to sample. */
   async function openFile() {
@@ -49,9 +51,11 @@
     {#if error}<span class="err">{error}</span>{/if}
   </header>
 
+  <Toolbar {editor} />
+
   <main>
     <aside><DocumentTree /></aside>
-    <section><Editor {fb} /></section>
+    <section><Editor bind:this={editor} {fb} /></section>
   </main>
 </div>
 
@@ -64,7 +68,7 @@
   }
   .layout {
     display: grid;
-    grid-template-rows: 2.5rem 1fr;
+    grid-template-rows: 2.5rem auto 1fr;
     height: 100vh;
     font-family: -apple-system, "Segoe UI", sans-serif;
   }
