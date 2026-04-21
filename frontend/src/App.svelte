@@ -17,24 +17,19 @@
   let error = "";
   let editor: Editor | undefined = undefined;
 
-  async function wails() {
-    const App = await import("../wailsjs/go/main/App").catch(() => null);
-    const runtime = await import("../wailsjs/runtime/runtime").catch(() => null);
-    return App && runtime ? { App, runtime } : null;
+  async function wailsApp() {
+    return await import("../wailsjs/go/main/App").catch(() => null);
   }
 
   async function openFile() {
     error = ""; status = "";
     try {
-      const w = await wails();
-      if (!w) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
-      const path: string = await w.runtime.OpenFileDialog({
-        Title: "Open FB2 file",
-        Filters: [{ DisplayName: "FictionBook (*.fb2;*.fb2.zip)", Pattern: "*.fb2;*.fb2.zip" }],
-      });
+      const App = await wailsApp();
+      if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
+      const path = await App.PickFB2ToOpen();
       if (!path) return;
       // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
-      fb = await w.App.OpenFile(path);
+      fb = await App.OpenFile(path);
       currentPath = path;
       filename = path.split(/[\\/]/).pop() ?? path;
     } catch (e) {
@@ -48,28 +43,24 @@
   async function save(saveAs: boolean) {
     error = ""; status = "";
     try {
-      const w = await wails();
-      if (!w) throw new Error("Wails bindings not available — save works only in the desktop app.");
+      const App = await wailsApp();
+      if (!App) throw new Error("Wails bindings not available — save works only in the desktop app.");
       if (!editor) throw new Error("Editor not ready.");
       const current = editor.currentFB();
       if (!current) throw new Error("No document loaded.");
 
       let path = currentPath;
       if (saveAs || !path) {
-        path = await w.runtime.SaveFileDialog({
-          Title: saveAs ? "Save As" : "Save FB2",
-          DefaultFilename: filename.endsWith(".fb2") ? filename : "untitled.fb2",
-          Filters: [{ DisplayName: "FictionBook (*.fb2)", Pattern: "*.fb2" }],
-        });
+        const suggested = filename.endsWith(".fb2") ? filename : "untitled.fb2";
+        path = await App.PickFB2ToSave(suggested);
         if (!path) return;
       }
       // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
-      await w.App.UpdateDocument(current);
-      await w.App.SaveFile(path);
+      await App.UpdateDocument(current);
+      await App.SaveFile(path);
       currentPath = path;
       filename = path.split(/[\\/]/).pop() ?? path;
       status = `Saved ${filename}`;
-      // Clear status after 3s.
       setTimeout(() => (status = ""), 3000);
     } catch (e) {
       error = (e as Error).message;
@@ -79,24 +70,18 @@
   async function exportHTML() {
     error = ""; status = "";
     try {
-      const w = await wails();
-      if (!w) throw new Error("Wails bindings not available.");
+      const App = await wailsApp();
+      if (!App) throw new Error("Wails bindings not available.");
       if (!editor) throw new Error("Editor not ready.");
-      // Refresh the Go-side fb with the current PM doc before export.
       const current = editor.currentFB();
       if (current) {
-        // @ts-expect-error — doc.FictionBook shape
-        await w.App.UpdateDocument(current);
+        // @ts-expect-error
+        await App.UpdateDocument(current);
       }
-      const defaultName = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
-      const path: string = await w.runtime.SaveFileDialog({
-        Title: "Export HTML",
-        DefaultFilename: defaultName,
-        Filters: [{ DisplayName: "HTML (*.html)", Pattern: "*.html" }],
-      });
+      const suggested = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
+      const path = await App.PickHTMLToSave(suggested);
       if (!path) return;
-      // @ts-expect-error
-      await w.App.ExportHTML(path);
+      await App.ExportHTML(path);
       status = `Exported ${path.split(/[\\/]/).pop() ?? path}`;
       setTimeout(() => (status = ""), 3000);
     } catch (e) {
@@ -107,11 +92,10 @@
   async function validate() {
     error = ""; status = "";
     try {
-      const w = await wails();
-      if (!w || !currentPath) throw new Error("Open a saved file first.");
-      // @ts-expect-error
+      const App = await wailsApp();
+      if (!App || !currentPath) throw new Error("Open a saved file first.");
       const errs: Array<{ Line: number; Column: number; Message: string }> =
-        await w.App.Validate(currentPath);
+        await App.Validate(currentPath);
       if (!errs || errs.length === 0) {
         status = "XSD valid ✓";
       } else {
