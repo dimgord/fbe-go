@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dimgord/fbe-go/internal/fb2/export/html"
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
@@ -197,12 +198,17 @@ func cmdExport(args []string) error {
 		return err
 	}
 	defer in.Close()
-	_, err = parser.Parse(in)
+	fb, err := parser.Parse(in)
 	if err != nil {
 		return err
 	}
+	out, err := os.Create(args[2])
+	if err != nil {
+		return err
+	}
+	defer out.Close()
 	_ = writer.Write // keep writer imported for later
-	return fmt.Errorf("html export not implemented yet (see internal/fb2/export/html)")
+	return html.Export(out, fb)
 }
 
 // copyAll avoids importing io just for io.Copy.

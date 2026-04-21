@@ -12,7 +12,7 @@
   },
   "info": {
     "productName": "FictionBook Editor (Go)",
-    "productVersion": "0.0.14",
+    "productVersion": "0.0.15",
     "copyright": "© 2026",
     "comments": "FB2 editor — Go + Wails port of classic FBE"
   }
