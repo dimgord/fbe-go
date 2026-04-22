@@ -251,8 +251,14 @@
 
   .errors {
     /* Default size when the user hasn't dragged the resizer. Inline `height`
-       on the element overrides this once drag starts. */
-    height: 35%;
+       on the element overrides this once drag starts.
+       Was 35% before Rev 45 — two multi-line XSD messages (libxml2 wraps
+       to 3+ lines once the namespace URI is inlined) barely fit, so the
+       second error hid behind the scroll and users had to drag the
+       resizer before they noticed it was there. 45% holds 2–3 typical
+       error rows without dragging. min-height stays at 60px so the
+       resizer's panelBounds.min (60) isn't fought by the CSS clamp. */
+    height: 45%;
     min-height: 60px;
     overflow: auto;
     background: #fffaf0;
