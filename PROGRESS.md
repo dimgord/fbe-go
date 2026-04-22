@@ -6,6 +6,63 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 42 — 2026-04-22 — MIT LICENSE + NOTICE.md + credits [dev]
+
+Version: **0.1.3**
+
+### What
+
+Closes the licensing story the beta release left at "TBD".
+
+- `LICENSE` at repo root — full MIT License text, © 2026 Dmitry
+  Gordiyevsky.
+- `NOTICE.md` — exhaustive third-party attribution: bundled FB2 XSD
+  schemas (© 2004 Dmitry Gribov, 2-clause BSD, full text reproduced
+  inline to satisfy the "binary redistribution must reproduce notice"
+  clause), Go deps (Wails v2, lestrrat-go/libxml2, golang.org/x/*),
+  native C libs (libxml2, GTK 3, WebKitGTK, Cocoa), frontend deps
+  (Svelte, Vite, ProseMirror, Vitest, svelte-check, TypeScript), Nix
+  flake dependencies, and an inspiration-not-code-reuse note for the
+  classic FBE.
+- `README.md` — replaced the "TBD" license placeholder with a real
+  License section + a "Legacy & acknowledgements" section that
+  thanks Gribov, evpobr + FBE team, Wails (Lea Anthony), ProseMirror
+  (Marijn Haverbeke), libxml2 (Daniel Veillard), and
+  lestrrat-go/libxml2 (Daisuke Maki). Points at NOTICE for the
+  formal list.
+- `frontend/package.json` — `"license": "MIT"` field added.
+- `HelpDialog.svelte` — header line extended to
+  `Version X.Y.Z-beta · MIT-licensed · LICENSE · NOTICE` with the
+  two links opening via the existing `openExternal(url)` helper
+  (points at the main branch on GitHub). Added a small credits
+  footer in the About section.
+
+### No code changes
+
+Pure docs / metadata. No behavior changes. Version bump is the
+standard rev-cadence discipline per CLAUDE.md.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 58/58.
+- LICENSE + NOTICE render correctly on github.com once pushed.
+
+### Files added / modified
+
+- `LICENSE` (new), `NOTICE.md` (new)
+- `README.md` — License + Legacy & acknowledgements sections
+- `frontend/src/help/HelpDialog.svelte` — license line + credits
+- `frontend/package.json` — `license` field
+- `PROGRESS.md`, `wails.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.1.2 → 0.1.3
+- `frontend/package.json`       0.1.2 → 0.1.3
+- `frontend/package-lock.json`  0.1.2 → 0.1.3
+
+---
+
 ## Rev 41 — 2026-04-22 — Explicit copy-URL buttons in Help dialog [dev]
 
 Version: **0.1.2**

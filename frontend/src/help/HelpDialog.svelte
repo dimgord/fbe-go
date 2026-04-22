@@ -118,13 +118,26 @@
       </header>
 
       <section class="about">
-        <p><strong>Version {version}-beta</strong></p>
+        <p><strong>Version {version}-beta</strong> · MIT-licensed ·
+          <a href="https://github.com/dimgord/fbe-go/blob/main/LICENSE"
+             on:click={(e) => openExternal(e, "https://github.com/dimgord/fbe-go/blob/main/LICENSE")}
+             target="_blank" rel="noreferrer noopener">LICENSE</a>
+          ·
+          <a href="https://github.com/dimgord/fbe-go/blob/main/NOTICE.md"
+             on:click={(e) => openExternal(e, "https://github.com/dimgord/fbe-go/blob/main/NOTICE.md")}
+             target="_blank" rel="noreferrer noopener">NOTICE</a>
+        </p>
         <p>
           A Go + <a href="https://wails.io" on:click={(e) => openExternal(e, "https://wails.io")} target="_blank" rel="noreferrer noopener">Wails v2</a> port of the
           classic Windows FictionBook Editor, targeting macOS and Linux.
           Edits FB2 (FictionBook 2.x) documents in a ProseMirror-backed
           WYSIWYG editor; full round-trip fidelity including unknown
           elements, XSD validation (libxml2), and HTML export.
+        </p>
+        <p class="credits">
+          Independent rewrite — thanks to Dmitry Gribov (FB2 spec + XSD),
+          the classic FBE team, and the Wails / ProseMirror / libxml2
+          maintainers. Full credits in NOTICE.
         </p>
       </section>
 
@@ -233,6 +246,7 @@
   .close:hover { background: #e8e4d8; color: #111; }
 
   .about p { margin: 0.35rem 0; line-height: 1.45; }
+  .about p.credits { font-size: 0.82rem; color: #555; }
   .about a, section a {
     color: #1a5490;
     text-decoration: none;
