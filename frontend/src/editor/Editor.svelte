@@ -41,24 +41,30 @@
    * Scroll the editor to the section identified by an outline path like
    * [bodyIdx, sectionIdx, subIdx, ...]. Uses ProseMirror's coordsAtPos so it
    * works even when the section has no DOM id.
+   *
+   * Delta is measured from the scrollable container's rect (not view.dom's),
+   * because when view.dom is NOT itself the scrollable element its rect moves
+   * with each scroll — using it would cause second-and-later clicks to land
+   * above the visible area.
    */
   export function scrollToPath(path: number[]): void {
     if (!view || path.length === 0) return;
     const pos = findNodePos(view.state.doc, path);
     if (pos == null) return;
     const coords = view.coordsAtPos(pos);
-    const rootRect = (view.dom as HTMLElement).getBoundingClientRect();
-    // Scroll the nearest scrollable ancestor so the coord is visible at the top.
     let el: HTMLElement | null = view.dom as HTMLElement;
     while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement;
     if (el) {
-      el.scrollTop += coords.top - rootRect.top - 12;
+      const elRect = el.getBoundingClientRect();
+      el.scrollTop += coords.top - elRect.top - 12;
     }
-    // Brief highlight.
-    const node = view.domAtPos(pos).node as HTMLElement | null;
-    if (node && node instanceof HTMLElement) {
-      node.classList.add("outline-flash");
-      setTimeout(() => node.classList.remove("outline-flash"), 700);
+    // Brief highlight on the nearest enclosing element (domAtPos may return a Text node).
+    const dom = view.domAtPos(pos);
+    const flashTarget =
+      dom.node instanceof HTMLElement ? dom.node : dom.node.parentElement;
+    if (flashTarget) {
+      flashTarget.classList.add("outline-flash");
+      setTimeout(() => flashTarget.classList.remove("outline-flash"), 700);
     }
   }
 
