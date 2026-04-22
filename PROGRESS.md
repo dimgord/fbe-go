@@ -6,6 +6,227 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 43 — 2026-04-22 — New app icon (blue squircle + book + code brackets) [dev]
+
+Version: **0.1.4**
+
+### What
+
+`build/appicon.png` replaced with a new 1024×1024 RGBA master: a
+dark-blue squircle holding an open book with inline `<>` code
+brackets on the right page. The glyph says "book editor with
+structured/XML underpinnings" without the "AI-assistant" or
+"generic notes" ambiguity the two alternatives carried.
+
+### Pipeline
+
+The source PNG from the image generator came at 1254×1254 **without
+an alpha channel** — corners were filled with srgb(232,232,231), an
+off-white that would show as a visible square on dark-mode docks.
+ImageMagick pass (via `nix-shell -p imagemagick`) floodfills from
+(0,0) with 12% fuzz to match the near-white corners, replaces them
+with transparency, then downscales to 1024×1024:
+
+```
+magick input.png \
+  -alpha set \
+  -fuzz 12% -fill none -floodfill +0+0 "srgb(232,232,231)" \
+  -resize 1024x1024 \
+  build/appicon.png
+```
+
+Result is RGBA with proper transparent corners around the squircle
+silhouette, ready for both macOS (bundle generates `.icns` from it
+during `wails build`) and Linux (GTK launcher picks up the PNG
+directly).
+
+### Verification
+
+- `file build/appicon.png` → `PNG image data, 1024 x 1024, 8-bit/color RGBA`.
+- `sips` reports `hasAlpha: yes`.
+- `wails build -tags xsd` regenerated
+  `build/bin/fbe-go.app/Contents/Resources/iconfile.icns` (987 KB,
+  timestamp post-build). Bundle launches.
+- UI un-touched; `go test` and `npm test` not re-run — purely an
+  asset swap.
+
+### Files added / modified
+
+- `build/appicon.png` — the 1024×1024 master (binary, tracked).
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.1.3 → 0.1.4
+- `frontend/package.json`       0.1.3 → 0.1.4
+- `frontend/package-lock.json`  0.1.3 → 0.1.4
+
+---
+
+## Rev 42 — 2026-04-22 — MIT LICENSE + NOTICE.md + credits [dev]
+
+Version: **0.1.3**
+
+### What
+
+Closes the licensing story the beta release left at "TBD".
+
+- `LICENSE` at repo root — full MIT License text, © 2026 Dmitry
+  Gordiyevsky.
+- `NOTICE.md` — exhaustive third-party attribution: bundled FB2 XSD
+  schemas (© 2004 Dmitry Gribov, 2-clause BSD, full text reproduced
+  inline to satisfy the "binary redistribution must reproduce notice"
+  clause), Go deps (Wails v2, lestrrat-go/libxml2, golang.org/x/*),
+  native C libs (libxml2, GTK 3, WebKitGTK, Cocoa), frontend deps
+  (Svelte, Vite, ProseMirror, Vitest, svelte-check, TypeScript), Nix
+  flake dependencies, and an inspiration-not-code-reuse note for the
+  classic FBE.
+- `README.md` — replaced the "TBD" license placeholder with a real
+  License section + a "Legacy & acknowledgements" section that
+  thanks Gribov, evpobr + FBE team, Wails (Lea Anthony), ProseMirror
+  (Marijn Haverbeke), libxml2 (Daniel Veillard), and
+  lestrrat-go/libxml2 (Daisuke Maki). Points at NOTICE for the
+  formal list.
+- `frontend/package.json` — `"license": "MIT"` field added.
+- `HelpDialog.svelte` — header line extended to
+  `Version X.Y.Z-beta · MIT-licensed · LICENSE · NOTICE` with the
+  two links opening via the existing `openExternal(url)` helper
+  (points at the main branch on GitHub). Added a small credits
+  footer in the About section.
+
+### No code changes
+
+Pure docs / metadata. No behavior changes. Version bump is the
+standard rev-cadence discipline per CLAUDE.md.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 58/58.
+- LICENSE + NOTICE render correctly on github.com once pushed.
+
+### Files added / modified
+
+- `LICENSE` (new), `NOTICE.md` (new)
+- `README.md` — License + Legacy & acknowledgements sections
+- `frontend/src/help/HelpDialog.svelte` — license line + credits
+- `frontend/package.json` — `license` field
+- `PROGRESS.md`, `wails.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.1.2 → 0.1.3
+- `frontend/package.json`       0.1.2 → 0.1.3
+- `frontend/package-lock.json`  0.1.2 → 0.1.3
+
+---
+
+## Rev 41 — 2026-04-22 — Explicit copy-URL buttons in Help dialog [dev]
+
+Version: **0.1.2**
+
+### Symptom
+
+After Rev 40 the Help links OPEN externally (BrowserOpenURL works),
+but users can't COPY a link URL. Right-click → "Copy Link Address"
+is unreliable in Wails webviews: WKWebView's context menu is
+suppressed in release bundles, and WebKitGTK's default menu on
+NixOS doesn't always include the link-copy entry.
+
+### Fix
+
+Each Resources link in HelpDialog.svelte now has an inline
+`[ copy ]` button to its right that writes the URL to the clipboard
+via `navigator.clipboard.writeText()`, with a
+`document.execCommand("copy")` textarea fallback for older webviews
+that lack the async Clipboard API. Success flashes the button to
+`✓ copied` for 1.5s.
+
+Resources list refactored into a Svelte `{#each}` over a
+`[{label, url}, …]` array so the markup is DRY; 3-column flex row
+keeps the `copy` button aligned right even when the label wraps
+on a narrow dialog.
+
+Left the inline "Wails v2" link in the prose untouched — prose
+links don't warrant the copy-button chrome, and their URL is short
+enough to paste from the rendered href anyway.
+
+### Verification
+
+- `npm run check` 0/0.
+- `npm run test` 58/58.
+- UI: Dmitry to verify on NixOS that clicking `copy` copies the URL
+  into the system clipboard (paste-test in another app).
+
+### Files modified
+
+- `frontend/src/help/HelpDialog.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.1.1 → 0.1.2
+- `frontend/package.json`       0.1.1 → 0.1.2
+- `frontend/package-lock.json`  0.1.1 → 0.1.2
+
+---
+
+## Rev 40 — 2026-04-22 — Help-dialog links open externally, text is selectable [dev]
+
+Version: **0.1.1**
+
+### Symptoms (beta feedback, Dmitry)
+
+1. Links in the Help modal didn't do anything on click — no new tab,
+   no Go-side action.
+2. Text inside the modal (version string, link text, kbd labels)
+   couldn't be selected or copied.
+
+### Root causes
+
+1. Wails' WKWebView / WebKitGTK doesn't route `<a href="http…">`
+   clicks to the system browser. That's deliberate — if it did,
+   random links in user content would open browser windows. The
+   contract is: the frontend intercepts the click and calls
+   `runtime.BrowserOpenURL(url)`, which on macOS fires `open`, on
+   Linux fires `xdg-open`.
+2. Chromed-up dialogs inherited `cursor: auto` weirdly + `user-select`
+   wasn't explicitly set on `.dialog`. WebKit on macOS sometimes treats
+   descendants of `role="button"` elements (the backdrop) as
+   non-selectable by default, and our backdrop is `role="button"`.
+
+### Fixes
+
+- `openExternal(e, url)` in HelpDialog.svelte: `preventDefault`, then
+  dynamic-import `wailsjs/runtime/runtime` and call `BrowserOpenURL`.
+  If Wails isn't running (plain vite dev), falls back to
+  `window.open(url, "_blank", "noopener,noreferrer")`. Every `<a>`
+  in the dialog wires an `on:click={...openExternal(…)}` handler.
+- `.dialog` CSS now declares `user-select: text` and
+  `-webkit-user-select: text` explicitly, plus `cursor: auto` to
+  reset from the inherited `cursor: pointer` the `role="button"`
+  backdrop was bleeding in.
+- All link `rel` attributes bumped to `noreferrer noopener` (browser
+  fallback hardening).
+
+### Verification
+
+- `npm run check` — 0/0.
+- `npm run test` — 58/58 (no test for Wails-side link flow; manual
+  on Dmitry's NixOS box needed).
+
+### Files modified
+
+- `frontend/src/help/HelpDialog.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.1.0 → 0.1.1
+- `frontend/package.json`       0.1.0 → 0.1.1
+- `frontend/package-lock.json`  0.1.0 → 0.1.1
+
+---
+
 ## Rev 39 — 2026-04-22 — Help dialog + v0.1.0-beta milestone [dev → main]
 
 Version: **0.1.0** (product); git tag: **v0.1.0-beta**
