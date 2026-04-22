@@ -19,7 +19,7 @@ export interface Stylesheet {
 }
 
 export interface Description {
-  TitleInfo: TitleInfo;
+  TitleInfo?: TitleInfo | null;
   SrcTitleInfo?: TitleInfo | null;
   DocumentInfo: DocumentInfo;
   PublishInfo?: PublishInfo | null;
