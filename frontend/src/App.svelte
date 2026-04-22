@@ -130,9 +130,27 @@
 
   onMount(() => {
     document.title = "FictionBook Editor (Go)";
-    fb = SAMPLE_BOOK;
-    filename = "blank.fb2 (sample)";
     window.addEventListener("keydown", onKeyDown);
+    // Pick up whatever Go already has open (so opening :34115 in a browser
+    // tab while a file is loaded in the native window shows that file
+    // instead of the sample). Path is intentionally NOT synced — Save in
+    // the dev-tab should land in Save-As to avoid two contexts racing on
+    // the same path.
+    void (async () => {
+      const App = await wailsApp();
+      if (App) {
+        try {
+          const current = await App.CurrentDocument();
+          if (current && current.Bodies && current.Bodies.length > 0) {
+            fb = current as FictionBook;
+            filename = "(opened in native window)";
+            return;
+          }
+        } catch { /* fall through to sample */ }
+      }
+      fb = SAMPLE_BOOK;
+      filename = "blank.fb2 (sample)";
+    })();
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 </script>

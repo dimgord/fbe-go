@@ -6,6 +6,62 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 24 — 2026-04-21 — Sync browser dev-tab with native window's open document [dev]
+
+Version: **0.0.24**
+
+### Symptom
+
+Opening `http://localhost:34115` in a regular browser while a file was loaded
+in the native Wails window showed `SAMPLE_BOOK` (Kobzar) instead of the file.
+Same for any second JS context. The Wails dev-server hint *"To develop in
+the browser and call your bound Go methods from Javascript, navigate to:
+http://localhost:34115"* implies the browser tab should be useful for working
+on the live document — but the tab always started from a fresh sample.
+
+### Root cause
+
+The Go-side `*App` struct (`app.go`) holds `current *doc.FictionBook` —
+this state is shared across all JS contexts because they all hit the same
+Go process. But the Svelte `fb` variable lives in each tab's JS heap
+independently, and `App.svelte::onMount` unconditionally seeded
+`fb = SAMPLE_BOOK` without ever asking Go what was open. So the second
+context never saw the document already loaded by the first.
+
+### Fix
+
+`onMount` now opportunistically calls `App.CurrentDocument()` (already
+exposed at `app.go:146`) when the Wails runtime is available. If Go
+returns a document with at least one body, it becomes the initial `fb`;
+otherwise we fall back to `SAMPLE_BOOK` as before.
+
+`currentPath` is intentionally NOT synced. Two tabs holding the same
+path could race on Save — last write wins, silently clobbering the
+other context's edits. Without a path, the dev-tab's Save falls
+through to `PickFB2ToSave` (Save-As), which is the safe default.
+
+### Caveat
+
+This syncs only on tab open / refresh, and reads only what's been
+committed to Go (i.e., after Open or Save → `UpdateDocument`). Unsaved
+edits made in the native window's PM-editor live in that window's
+Svelte state and do NOT round-trip to Go until Save. Bridging unsaved
+edits would need a different mechanism (Wails events on edit), out of
+scope for this rev.
+
+### Files modified
+
+- `frontend/src/App.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.23 → 0.0.24
+- `frontend/package.json`       0.0.23 → 0.0.24
+- `frontend/package-lock.json`  0.0.23 → 0.0.24
+
+---
+
 ## Rev 23 — 2026-04-21 — A11y warning + 5 long-standing TS errors [dev]
 
 Version: **0.0.23**
