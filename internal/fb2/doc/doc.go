@@ -376,6 +376,16 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 // MarshalXML emits attributes and then re-serializes Children as mixed content.
+//
+// We don't attempt to suppress Go's encoder indent around the mixed-content
+// children from here — `xml.Encoder.Indent("", "")` would produce visually
+// correct output for this <p>'s children, but it leaves the encoder's
+// *internal* depth counter out of sync with the tag stack (writeIndent with
+// both strings empty short-circuits before decrementing the counter), which
+// then over-indents every following sibling block by the number of toggles.
+// The mixed-content whitespace cleanup is done once in `writer.Write` as a
+// targeted regex pass — see the comment there for the regex and the set of
+// affected container names.
 func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	addAttrIfSet(&start, "id", p.ID)
 	addAttrIfSet(&start, "style", p.Style)
@@ -571,8 +581,16 @@ func (s StyleInline) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 }
 
 // Link = FB2 <a> — note references use type="note".
+//
+// Href uses `xml:"-"` and a manually-emitted `l:href` attribute literal
+// (colon-in-local-name) in MarshalXML. Using `xml:"http://…/xlink href,attr"`
+// would trigger Go's encoding/xml namespace handler, which re-declares
+// `xmlns:xlink="http://…/xlink"` on every `<a>` element instead of reusing
+// the `xmlns:l` prefix declared once on the FictionBook root. The
+// unmarshal side accepts any of `l:href`, `xlink:href`, bare `href`, or
+// the parser's namespace-resolved variant with Space == NSXLink.
 type Link struct {
-	Href     string   `xml:"http://www.w3.org/1999/xlink href,attr"`
+	Href     string   `xml:"-"`
 	Type     string   `xml:"type,attr,omitempty"`
 	Children []Inline `xml:"-"`
 }
@@ -591,9 +609,13 @@ func (l *Link) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 // MarshalXML emits l:href (xlink) and type attribute, plus mixed content.
+// The `l:href` attribute name is emitted as a literal local name (colon
+// included) so Go's default namespace machinery doesn't kick in and
+// re-declare `xmlns:xlink` on every <a>. The FictionBook root (emitted by
+// writer.Write) is responsible for declaring `xmlns:l` once.
 func (l Link) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if l.Href != "" {
-		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Space: NSXLink, Local: "href"}, Value: l.Href})
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "l:href"}, Value: l.Href})
 	}
 	addAttrIfSet(&start, "type", l.Type)
 	if err := e.EncodeToken(start); err != nil {
@@ -675,6 +697,11 @@ func (c *Cell) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 // `xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"`. Fall back to the
 // incoming start.Name.Local when c.XMLName is zero (shouldn't happen in
 // practice since it's populated during unmarshal and by the frontend).
+//
+// Mixed-content whitespace (text + inline marks inside the cell) is
+// normalized by the writer's post-process pass, not here. See the long
+// comment on Paragraph.MarshalXML for why toggling encoder indent from a
+// nested MarshalXML corrupts the encoder's depth counter.
 func (c Cell) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	local := c.XMLName.Local
 	if local == "" {
