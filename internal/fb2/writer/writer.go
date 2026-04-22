@@ -115,15 +115,6 @@ func compactMixedContent(src []byte) []byte {
 		m := mixedContentTagRE.FindSubmatch(match)
 		tag, attrs, content := m[1], m[2], m[3]
 		content = innerNewlineIndentRE.ReplaceAll(content, nil)
-		out := make([]byte, 0, len(match))
-		out = append(out, '<')
-		out = append(out, tag...)
-		out = append(out, attrs...)
-		out = append(out, '>')
-		out = append(out, content...)
-		out = append(out, '<', '/')
-		out = append(out, tag...)
-		out = append(out, '>')
-		return out
+		return fmt.Appendf(nil, "<%s%s>%s</%s>", tag, attrs, content, tag)
 	})
 }

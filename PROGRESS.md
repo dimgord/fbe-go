@@ -6,6 +6,33 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 36 — 2026-04-22 — Cleanup: compactMixedContent tag assembly via fmt.Appendf [dev]
+
+Version: **0.0.36**
+
+Cosmetic: Rev 35's `compactMixedContent` assembled each rewritten tag
+as a 9-line sequence of `out = append(out, …)` calls — readable but
+C-ish. Replaced with a single `fmt.Appendf(nil, "<%s%s>%s</%s>", …)`
+call. `fmt.Appendf` (Go 1.19+) appends formatted output directly to a
+nil byte slice, returning the grown slice — one allocation, zero
+intermediate strings. Idiomatic Go, same output, easier to review.
+
+`text/template` considered and rejected for this use — it's the right
+tool when there's user-facing template text, loops, or conditionals,
+not for four positional interpolations inside one function. Would
+have added an import, a package-level `*template.Template`, and two
+lookups per call without saving any real lines.
+
+No behaviour change. Tests unchanged and still green.
+
+### Versions bumped
+
+- `wails.json`                  0.0.35 → 0.0.36
+- `frontend/package.json`       0.0.35 → 0.0.36
+- `frontend/package-lock.json`  0.0.35 → 0.0.36
+
+---
+
 ## Rev 35 — 2026-04-22 — Writer fidelity: xmlns:l prefix + mixed-content whitespace [dev]
 
 Version: **0.0.35**
