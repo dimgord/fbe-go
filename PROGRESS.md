@@ -6,6 +6,67 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 25 — 2026-04-21 — Bump Wails v2.9.2 → v2.12.0; re-verify UTType crash; README status refresh [dev]
+
+Version: **0.0.25**
+
+### Upgrade
+
+Bumped `github.com/wailsapp/wails/v2` from `v2.9.2` to `v2.12.0` in `go.mod`,
+pulling in the usual transitive updates (`labstack/echo` v4.10.2 → v4.13.3,
+`golang.org/x/*`, `go-webview2` 1.0.16 → 1.0.22, `samber/lo` v1.38.1 → v1.49.1,
+new `git.sr.ht/~jackmordaunt/go-toast/v2` for the notifications API, etc.).
+
+### Verification
+
+- `go build -tags xsd ./...` — clean (CGo against v2.12.0 Obj-C sources compiles).
+- `go vet ./...` — clean.
+- `go test ./...` and `go test -tags xsd ./...` — all existing tests pass.
+- `cd frontend && npm run check` — svelte-check: 0 errors, 0 warnings.
+- `cd frontend && npm run test` — vitest: 54/54 green.
+- `wails build -tags xsd` — full production bundle.
+
+### Multi-dot dialog crash — **still present in v2.12.0**
+
+Investigated whether the bump lets us restore `*.fb2.zip` in `PickFB2ToOpen`.
+**It does not.** The `USE_NEW_FILTERS` code path in
+`internal/frontend/desktop/darwin/WailsContext.m` (lines 594–607 of v2.12.0)
+is byte-identical to v2.9.2:
+
+```objc
+UTType *t = [UTType typeWithFilenameExtension:filter];  // nil for "fb2.zip"
+[contentTypes addObject:t];                              // NSInvalidArgumentException
+```
+
+No nil-guard was added upstream. Restoring the multi-dot pattern would
+reintroduce the Rev 21 crash. Current workaround (`*.fb2` only; archives via
+"All files") stays.
+
+### Docs
+
+- `README.md` — replaced the stale "Skeleton only" status with a reflection
+  of actual Phase 3 MVP completion state; points readers at `PROGRESS.md`,
+  `docs/PHASES.md`, `docs/OPERATIONS.md`.
+- `CLAUDE.md` — widened the platform-note version range from "Wails v2.9.2"
+  to "Wails v2.9.2–v2.12.0"; generalised the dialog-wrapper bullet to
+  "Wails v2" (not version-specific); added a re-verified-on-v2.12.0 note so
+  a future bump to v2.13+ triggers another check instead of silently assuming
+  the bug got fixed.
+
+### Files modified
+
+- `go.mod`, `go.sum`
+- `README.md`, `CLAUDE.md`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.24 → 0.0.25
+- `frontend/package.json`       0.0.24 → 0.0.25
+- `frontend/package-lock.json`  0.0.24 → 0.0.25
+
+---
+
 ## Rev 24 — 2026-04-21 — Sync browser dev-tab with native window's open document [dev]
 
 Version: **0.0.24**
