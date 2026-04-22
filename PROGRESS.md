@@ -6,6 +6,78 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 39 — 2026-04-22 — Help dialog + v0.1.0-beta milestone [dev → main]
+
+Version: **0.1.0** (product); git tag: **v0.1.0-beta**
+
+### What
+
+Toolbar gains a `Help` button right after `Export HTML…`. Clicking it
+opens a modal (`frontend/src/help/HelpDialog.svelte`) with:
+
+- App name + version (read from `frontend/package.json` via JSON
+  import so the value stays in sync with the semver-bumped file).
+  Displayed as "Version 0.1.0-beta" with the `-beta` suffix hardcoded
+  in the template until we cut `0.1.0` final.
+- A short "what this is" paragraph.
+- A keyboard-shortcuts table (Save / Save As / Undo / Redo / Bold /
+  Italic / Strikethrough / Sub / Sup). Modifier key resolves to ⌘ on
+  macOS, Ctrl elsewhere. **Table is hand-maintained** — if
+  `Editor.svelte`'s keymap or `App.svelte`'s Cmd-S handler change,
+  the table must change too.
+- Resource links (repo, FB2 spec, original FBE).
+
+Modal pattern copied from `TableDialog.svelte` for consistency:
+backdrop click / Escape / × button all close. Scoped keydown with
+`if (!open)` so Escape doesn't steal focus globally.
+
+### Milestone — v0.1.0-beta
+
+First release cut. Version bumped 0.0.38 → 0.1.0 in `wails.json`,
+`frontend/package.json`, `frontend/package-lock.json`. Git tag
+`v0.1.0-beta` annotates the main-branch merge commit (the `-beta`
+prerelease marker lives only in the tag, not in the version files,
+so npm and wails both stay semver-happy).
+
+Release scope — everything landed by Rev 38 plus this Help dialog:
+full FB2 round-trip (including Raw fallback, mixed section content,
+exact block/section interleaving), writer fidelity (xmlns:l prefix,
+mixed-content whitespace), XSD validation with clickable errors and
+XML source panel, supplementary unknown-element scanner, Nix flake
+for macOS + Linux (NixOS-ready shell), description form with rich
+annotation editor, HTML export, paste cleanup, native-webview
+spellcheck.
+
+Status line in `README.md` and `CLAUDE.md` updated from "Phase 3 MVP
++ Phase 4 polish in progress" to "v0.1.0-beta shipped". See
+`docs/PHASES.md` for what's deferred to 0.2.0 (structured libxml2
+errors, Section.Children order-preserving parent refactor, editable
+XML view, Hunspell wiring).
+
+### Verification
+
+- `npm run check` — 0 errors, 0 warnings.
+- `npm run test` — 58/58.
+- `wails build -tags xsd` — clean production bundle.
+- UI flow not clicked-through from dev env; Dmitry to verify Help
+  opens, shortcut table renders with correct modifier per OS,
+  Escape/backdrop/× all close the modal.
+
+### Files added / modified
+
+- `frontend/src/help/HelpDialog.svelte` (new)
+- `frontend/src/App.svelte` — import + toolbar button + state + mount
+- `README.md`, `CLAUDE.md` — status line updates
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.38 → 0.1.0
+- `frontend/package.json`       0.0.38 → 0.1.0
+- `frontend/package-lock.json`  0.0.38 → 0.1.0
+
+---
+
 ## Rev 38 — 2026-04-22 — Supplementary unknown-element scanner [dev]
 
 Version: **0.0.38**

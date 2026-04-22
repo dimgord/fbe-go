@@ -5,6 +5,7 @@
   import Toolbar from "./editor/Toolbar.svelte";
   import DescriptionPanel from "./description/DescriptionPanel.svelte";
   import ValidationPanel from "./validation/ValidationPanel.svelte";
+  import HelpDialog from "./help/HelpDialog.svelte";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
 
@@ -22,6 +23,8 @@
   let showPanel = false;
   let xmlSource = "";
   let validationErrors: { line: number; column: number; message: string }[] = [];
+
+  let showHelp = false;
 
   async function wailsApp() {
     return await import("../wailsjs/go/main/App").catch(() => null);
@@ -184,6 +187,7 @@
     <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
     <button on:click={validate} disabled={!fb}>Validate</button>
     <button on:click={exportHTML} disabled={!editor}>Export HTML…</button>
+    <button on:click={() => (showHelp = true)} title="Keyboard shortcuts and about">Help</button>
     <div class="view-toggle" role="tablist" aria-label="View">
       <button
         class:active={view === "body"}
@@ -230,6 +234,8 @@
     </div>
   {/if}
 </div>
+
+<HelpDialog bind:open={showHelp} />
 
 <style>
   :global(body), :global(html) {
