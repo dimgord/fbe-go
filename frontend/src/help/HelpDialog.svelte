@@ -11,23 +11,10 @@
   const mod = isMac ? "⌘" : "Ctrl";
   const shift = isMac ? "⇧" : "Shift";
 
-  // Wails' webview doesn't route `<a href>` clicks to the system browser by
-  // default, and middle-click / Cmd-click / right-click → "Open Link" are
-  // all no-ops inside WKWebView. Intercept the click and hand the URL to
-  // runtime.BrowserOpenURL (which macOS sends to `open`, Linux to xdg-open).
-  // Outside Wails (plain vite dev) the import resolves but the call is a
-  // no-op; fall back to window.open so the link still works there.
-  async function openExternal(e: MouseEvent, url: string) {
-    e.preventDefault();
-    try {
-      const rt = await import("../../wailsjs/runtime/runtime");
-      if (typeof rt.BrowserOpenURL === "function") {
-        rt.BrowserOpenURL(url);
-        return;
-      }
-    } catch { /* not running under Wails */ }
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
+  // External-link routing lives in src/runtime/externalLink.ts; App.svelte
+  // installs a document-wide capture-phase handler, so every <a href> click
+  // in this dialog (and anywhere else in the app) already routes through
+  // Wails runtime.BrowserOpenURL without a per-link on:click wrapper.
 
   // Native right-click → "Copy Link Address" is unreliable in WKWebView /
   // WebKitGTK production builds (context menu behavior varies by OS and is
@@ -120,15 +107,13 @@
       <section class="about">
         <p><strong>Version {version}-beta</strong> · MIT-licensed ·
           <a href="https://github.com/dimgord/fbe-go/blob/main/LICENSE"
-             on:click={(e) => openExternal(e, "https://github.com/dimgord/fbe-go/blob/main/LICENSE")}
              target="_blank" rel="noreferrer noopener">LICENSE</a>
           ·
           <a href="https://github.com/dimgord/fbe-go/blob/main/NOTICE.md"
-             on:click={(e) => openExternal(e, "https://github.com/dimgord/fbe-go/blob/main/NOTICE.md")}
              target="_blank" rel="noreferrer noopener">NOTICE</a>
         </p>
         <p>
-          A Go + <a href="https://wails.io" on:click={(e) => openExternal(e, "https://wails.io")} target="_blank" rel="noreferrer noopener">Wails v2</a> port of the
+          A Go + <a href="https://wails.io" target="_blank" rel="noreferrer noopener">Wails v2</a> port of the
           classic Windows FictionBook Editor, targeting macOS and Linux.
           Edits FB2 (FictionBook 2.x) documents in a ProseMirror-backed
           WYSIWYG editor; full round-trip fidelity including unknown
@@ -164,7 +149,6 @@
             <li>
               <a
                 href={link.url}
-                on:click={(e) => openExternal(e, link.url)}
                 target="_blank"
                 rel="noreferrer noopener">{link.label}</a>
               <button
