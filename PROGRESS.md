@@ -6,6 +6,148 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 35 — 2026-04-22 — Writer fidelity: xmlns:l prefix + mixed-content whitespace [dev]
+
+Version: **0.0.35**
+
+### Why
+
+Diff between Dmitry's on-disk `book-broken.fb2` and the XML-source pane
+(which reflects `writer.Write(a.current)`) showed two byte-level drifts
+that survived even faithful content round-trip:
+
+1. Source used `xmlns:l="http://www.w3.org/1999/xlink"` at the root and
+   `<a l:href="...">` in content. Writer output dropped the `l` prefix
+   declaration, then re-emitted `xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="..."`
+   on every single `<a>`. Functionally equivalent XML, but different
+   bytes per save and uglier on inspection.
+2. `<p>before <strong>bold</strong>, <emphasis>italic</emphasis> tail</p>`
+   in the source became
+   ```
+   <p>before 
+     <strong>bold</strong>, 
+     <emphasis>italic</emphasis> tail
+   </p>
+   ```
+   in writer output. Go's `xml.Encoder.Indent` inserts `\n` + indent
+   before every child element, regardless of whether the surrounding
+   context is block or inline. Browsers collapse the whitespace so
+   visual rendering is unchanged, but file bytes change on every save.
+
+### Fix 1 — xmlns:l prefix preserved
+
+- `doc.Link.Href` struct tag changed from
+  `xml:"http://www.w3.org/1999/xlink href,attr"` to `xml:"-"`. The
+  Go-namespace-aware tag was what triggered `xmlns:xlink` auto-decl
+  on each `<a>`.
+- `doc.Link.MarshalXML` now emits `xml.Attr{Name: xml.Name{Local: "l:href"}, Value: l.Href}`
+  — a literal attribute name with the `l:` prefix baked into the local
+  name, bypassing Go's namespace machinery entirely. This is correct
+  only because the FictionBook root declares `xmlns:l` up-front.
+- `writer.Write` bypasses Go's default root-element emission (which
+  would insist on auto-picking `xmlns:xlink`). It emits the root tag
+  literally:
+  `<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">\n`,
+  then uses `EncodeElement` on each top-level child (Stylesheets,
+  Description, Bodies, Binaries) with a Local-only StartElement so Go
+  doesn't redeclare the default xmlns on each child either. Closes
+  with a manual `\n</FictionBook>\n`.
+- Link unmarshal still accepts any of `l:href`, `xlink:href`, bare
+  `href`, or a namespace-resolved variant with `a.Name.Space == NSXLink`.
+  So any real-world file parses fine regardless of prefix choice.
+
+### Fix 2 — mixed-content whitespace collapsed
+
+Tried the "clean" approach first — toggle `e.Indent("", "")` around
+inline children inside `Paragraph.MarshalXML` / `Cell.MarshalXML`, then
+restore. Discovered a `encoding/xml` quirk: `writeIndent` short-circuits
+when both prefix and indent are empty, and that short-circuit **skips
+the depth-- bookkeeping** on the closing tag. Toggling mid-marshal thus
+desyncs the encoder's internal `p.depth` counter from its tag stack,
+and every subsequent block sibling renders one indent level too deep
+per toggle. Since `p.depth` isn't exposed, there's no clean reset.
+
+Reverted the toggle and went with a narrowly-scoped post-process
+regex pass in `writer.Write` instead:
+
+- `mixedContentTagRE` matches a leaf mixed-content container
+  (`<p>`, `<subtitle>`, `<th>`, `<td>`, `<v>`, `<text-author>`, `<date>`)
+  including its attributes and inner content, using a non-greedy match
+  plus an end-tag backreference pattern. These containers never nest
+  another of the same type, so non-greedy is safe.
+- `innerNewlineIndentRE` inside the match strips every `\n[ \t]*`
+  occurrence. That's exactly the shape Go's encoder indent inserts
+  before each child. Other whitespace (e.g. a literal space between
+  text and `<strong>`) isn't matched because the pattern requires a
+  newline; single-line spaces are preserved.
+
+Trade-off: a literal `\n` inside `<p>` chardata (rare — FB2 uses
+`<empty-line/>` for paragraph breaks) would also be collapsed. If we
+ever find real-world files that rely on that, revisit with a
+token-aware pass.
+
+### Why not do it as a custom MarshalXML
+
+Documented in a comment on `Paragraph.MarshalXML`: the toggle approach
+is appealing but `xml.Encoder` doesn't support it without reflection
+into private state. The post-process pass is localized (one function,
+two regexes) and runs once on the finished buffer — easy to audit,
+easy to test.
+
+### New tests
+
+`internal/fb2/writer/fidelity_test.go`:
+
+- `TestXLinkPrefixRoundTrip` — asserts root declares `xmlns:l`,
+  `<a l:href="...">` uses `l:` prefix, and no per-element
+  `xmlns:xlink=` redecl nor `xlink:href=` attribute.
+- `TestMixedContentInlineWhitespace` — asserts three mixed-content
+  fragments (`<p>...`, `<th>...`, `<td>...`) appear with text and
+  inline marks all on the same line, plus regression guards against
+  the old `before\n` / `\n        <strong>` / `\n      </p>` shapes.
+- `TestBlockLevelIndentStillWorks` — sanity that the post-process
+  pass doesn't swallow block-level indent. Pins each known nesting
+  level (`\n  <description>`, `\n    <title-info>`, `\n  <body>`,
+  etc.) so a future regex tweak can't accidentally flatten the
+  whole doc.
+
+### Out of scope
+
+- **Exact interleaving preservation of `section` / `block` siblings
+  within a section** — still requires the `doc.Section.Children
+  []SectionChild` refactor tracked in Rev 34 notes. Unrelated to
+  writer fidelity.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `go test -tags xsd ./...` — all packages green; three new
+  `TestXLinkPrefix…` / `TestMixedContent…` / `TestBlockLevelIndent…`
+  tests pass.
+- `npm run check` 0/0, `npm run test` 58/58.
+- Manual sanity dump of a small parse→write round-trip confirms the
+  expected shape (xmlns:l declared once at root; `<a l:href=...>` on
+  its own; mixed-content paragraphs on one line; block-level nesting
+  preserved).
+
+### Files modified
+
+- `internal/fb2/doc/doc.go` — Link struct tag + MarshalXML change; reverted
+  the Paragraph/Cell indent-toggle experiment with a comment explaining
+  why we didn't take that path
+- `internal/fb2/writer/writer.go` — manual root emission, buffer +
+  post-process pass, inline helpers + comments
+- `internal/fb2/writer/fidelity_test.go` (new) — three fidelity tests
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.34 → 0.0.35
+- `frontend/package.json`       0.0.34 → 0.0.35
+- `frontend/package-lock.json`  0.0.34 → 0.0.35
+
+---
+
 ## Rev 34 — 2026-04-22 — Allow mixed section content (section + block siblings) [dev]
 
 Version: **0.0.34**
