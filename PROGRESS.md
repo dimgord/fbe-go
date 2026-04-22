@@ -6,6 +6,43 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 48 — 2026-04-22 — Dark mode: final hex sweep (outline items) [dev]
+
+Version: **0.1.9**
+
+### What
+
+After Rev 46 + 47, only 4 hardcoded hex colors remained outside
+the palette: all in `tree/OutlineItem.svelte`. Converted:
+
+- `#333`    → `var(--fg)`
+- `#e5e5da` → `var(--bg-hover)`
+- `#1a5490` → `var(--fg-link)`
+- `#444`    → `var(--fg-secondary)`
+
+After this rev: every hex in the frontend lives inside the
+palette block in `App.svelte`. Components reference only
+`var(--xxx)`. Adding / tuning a color now means editing one place.
+
+### Verification
+
+- `grep -rE '#[0-9a-fA-F]{3,8}' src/ | grep -v App.svelte | grep -v '{#each…'` → empty.
+- `npm run check` 0/0, `npm run test` 58/58.
+
+### Files modified
+
+- `frontend/src/tree/OutlineItem.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.8 → 0.1.9
+- `frontend/package.json`       0.1.8 → 0.1.9
+- `frontend/package-lock.json`  0.1.8 → 0.1.9
+
+---
+
 ## Rev 47 — 2026-04-22 — Dark mode sweep: description-form sub-components [dev]
 
 Version: **0.1.8**
