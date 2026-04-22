@@ -87,6 +87,51 @@ describe("Raw block round-trip", () => {
   });
 });
 
+describe("Raw block inside a section mixed with a nested <section>", () => {
+  // Regression for Rev 34: FictionBook.xsd strictly requires section content
+  // to be (section+ | block+) — not mixed. A real .fb2 that violates this
+  // used to round-trip via PM with the block-level raw elements silently
+  // dropped (PM schema had the same strict choice). We relaxed PM to
+  // (section | block)+ so the round-trip preserves what the file actually
+  // contained, and the validator is the one flagging the XSD breach.
+  const raw = (name: string): RawElement => ({
+    XMLName: { Local: name },
+    Attrs: [],
+    Items: [],
+  });
+
+  it("preserves raw blocks flanking a nested section (was Rev 34 regression)", () => {
+    const src: FictionBook = {
+      Description: {
+        TitleInfo: { Genres: [], Authors: [], BookTitle: "T", Lang: "en" },
+        DocumentInfo: { Authors: [], Date: { Value: "2026-04-22", Text: "x" }, ID: "x", Version: "1.0" },
+      },
+      Bodies: [{
+        Sections: [{
+          Title: { Children: [{ Paragraph: { Children: [{ Text: "outer" }] } }] },
+          Blocks: [
+            { Raw: raw("empty-lane") },
+          ],
+          Sections: [{
+            Blocks: [{ Paragraph: { Children: [{ Text: "inner" }] } }],
+          }],
+        }],
+      }],
+    } as unknown as FictionBook;
+    // The Go side allows storing Blocks AND Sections on the same section
+    // (both fields exist on doc.Section) — the XSD choice is enforced at
+    // validation time, not at struct level. We lean on that here: feed the
+    // frontend a section whose Blocks and Sections are both non-empty, and
+    // expect the round-trip not to lose either.
+    const out = pmDocToFB2(fb2ToPMDoc(src), src);
+    const outer = out.Bodies[0].Sections![0];
+    expect(outer.Blocks?.length, "flanking raw block should survive").toBeGreaterThan(0);
+    expect(outer.Sections?.length, "nested section should survive").toBeGreaterThan(0);
+    const rawBlocks = (outer.Blocks ?? []).filter((b) => b.Raw);
+    expect(rawBlocks.map((b) => b.Raw!.XMLName.Local)).toContain("empty-lane");
+  });
+});
+
 describe("Raw inline round-trip", () => {
   const raw: RawElement = {
     XMLName: { Local: "ruby" },
