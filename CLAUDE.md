@@ -32,10 +32,11 @@ go test   -tags xsd ./internal/fb2/xsd
 FBE_CORPUS_DIR=~/Documents/books go test -tags 'corpus xsd' -v ./internal/fb2/ -run TestCorpus
 
 # Frontend (cd frontend/)
-npm run dev     # vite dev server (used by wails dev)
-npm run build   # vite build → frontend/dist (embedded into Go binary via go:embed)
-npm run check   # svelte-check typecheck — run this after frontend edits
-npm run test    # vitest (unit tests for editor/parse, editor/serialize, tree/outline)
+npm run dev         # vite dev server (used by wails dev)
+npm run build       # vite build → frontend/dist (embedded into Go binary via go:embed)
+npm run check       # svelte-check typecheck — run this after frontend edits
+npm run check:theme # lint: all colors must flow through the palette (see scripts/check-theme-hygiene.sh)
+npm run test        # vitest (unit tests for editor/parse, editor/serialize, tree/outline)
 ```
 
 Single-test runs:

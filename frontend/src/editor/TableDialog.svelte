@@ -94,7 +94,7 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.35);
+    background: var(--backdrop);
     display: grid;
     place-items: center;
     z-index: 100;
