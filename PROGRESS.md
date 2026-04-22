@@ -6,6 +6,70 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 49 — 2026-04-22 — External `<a href>` clicks route through BrowserOpenURL [dev]
+
+Version: **0.1.10**
+
+### Symptom (long-standing)
+
+Clicking a link in the editor (an FB2 `<a l:href="https://…">`)
+navigated the webview away from the editor. No back button on
+desktop — the app was essentially dead until restart. The Help
+dialog was handled with per-link `on:click={openExternal}`
+wrappers (Rev 40), but editor content didn't have that.
+
+### Fix
+
+New `frontend/src/runtime/externalLink.ts`:
+
+- `isExternalUrl(href)` — true for `http(s)`, `ftp`, `mailto`,
+  `file:`, and protocol-relative `//…`. Fragment-only (`#note`),
+  relative (`../foo`), and `javascript:` hrefs pass through to
+  default behavior — we don't want to hijack internal navigation
+  (future citation scroll, etc.) or execute JS URLs externally.
+- `openExternalUrl(url)` — routes via Wails
+  `runtime.BrowserOpenURL`; falls back to `window.open` outside
+  Wails (plain vite dev / dev-server tab).
+- `installExternalLinkHandler()` — document-level capture-phase
+  click listener. One install at app bootstrap catches every
+  external `<a>` click anywhere: editor content, Help modal,
+  future UI. Returns a disposer.
+
+`App.svelte::onMount` installs the handler; cleanup in the
+returned destructor. HelpDialog's local `openExternal` + per-link
+`on:click` wrappers removed — global handler covers them.
+
+Capture phase chosen so we run before component-level handlers;
+only `preventDefault()` (not `stopPropagation()`) so ProseMirror
+can still do its cursor-placement thing when the click lands
+inside an editor link.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 58/58.
+- UI not clicked-through from dev env; Dmitry to verify:
+  (a) editor link → opens in system browser, editor stays put.
+  (b) Help dialog links still open.
+  (c) Hypothetical `href="#foo"` still behaves as fragment nav
+  (no interception).
+
+### Files added / modified
+
+- `frontend/src/runtime/externalLink.ts` (new)
+- `frontend/src/App.svelte` — import + onMount install + cleanup.
+- `frontend/src/help/HelpDialog.svelte` — removed local
+  `openExternal` + per-link wrappers.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.9 → 0.1.10
+- `frontend/package.json`       0.1.9 → 0.1.10
+- `frontend/package-lock.json`  0.1.9 → 0.1.10
+
+---
+
 ## Rev 48 — 2026-04-22 — Dark mode: final hex sweep (outline items) [dev]
 
 Version: **0.1.9**

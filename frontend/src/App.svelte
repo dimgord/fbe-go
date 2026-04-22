@@ -6,6 +6,7 @@
   import DescriptionPanel from "./description/DescriptionPanel.svelte";
   import ValidationPanel from "./validation/ValidationPanel.svelte";
   import HelpDialog from "./help/HelpDialog.svelte";
+  import { installExternalLinkHandler } from "./runtime/externalLink";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
 
@@ -216,6 +217,9 @@
   onMount(() => {
     document.title = "FictionBook Editor (Go)";
     window.addEventListener("keydown", onKeyDown);
+    // Route every external <a href> click (editor content, Help, …) through
+    // Wails runtime so the webview doesn't navigate away from the editor.
+    const detachExternalLinks = installExternalLinkHandler();
     void refreshRecent();
 
     // Live-follow OS color-scheme changes while theme === "system".
@@ -258,6 +262,7 @@
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       mq.removeEventListener("change", onSystemChange);
+      detachExternalLinks();
     };
   });
 </script>
