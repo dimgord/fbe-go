@@ -627,6 +627,14 @@ type Row struct {
 }
 
 // Cell = <th> or <td>.
+//
+// Children uses `xml:"-"` + custom (Un)MarshalXML — same pattern as Paragraph.
+// With `xml:",any"` Go's default marshaller would emit `<Children>` as the
+// element name (from the field name) and serialize each Inline struct field
+// (Text/Strong/…) with its Go name, producing invalid FB2 like
+// `<th><Children><Text>…</Text></Children></th>`. Instead we dispatch inline
+// content through `marshalInlineContent` so nested marks and text interleave
+// directly inside <th>/<td>.
 type Cell struct {
 	XMLName  xml.Name // local name "th" or "td"
 	ID       string   `xml:"id,attr,omitempty"`
@@ -635,7 +643,58 @@ type Cell struct {
 	RowSpan  string   `xml:"rowspan,attr,omitempty"`
 	Align    string   `xml:"align,attr,omitempty"`
 	VAlign   string   `xml:"valign,attr,omitempty"`
-	Children []Inline `xml:",any"`
+	Children []Inline `xml:"-"`
+}
+
+// UnmarshalXML reads th/td attributes and mixed inline content.
+func (c *Cell) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	c.XMLName = start.Name
+	for _, a := range start.Attr {
+		switch a.Name.Local {
+		case "id":
+			c.ID = a.Value
+		case "style":
+			c.Style = a.Value
+		case "colspan":
+			c.ColSpan = a.Value
+		case "rowspan":
+			c.RowSpan = a.Value
+		case "align":
+			c.Align = a.Value
+		case "valign":
+			c.VAlign = a.Value
+		}
+	}
+	return unmarshalInlineContent(d, start, &c.Children)
+}
+
+// MarshalXML emits <th|td> with attributes and inline mixed content.
+//
+// Uses only the local name — not c.XMLName in full — so the parent's xmlns
+// default namespace applies without each cell re-emitting
+// `xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"`. Fall back to the
+// incoming start.Name.Local when c.XMLName is zero (shouldn't happen in
+// practice since it's populated during unmarshal and by the frontend).
+func (c Cell) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	local := c.XMLName.Local
+	if local == "" {
+		local = start.Name.Local
+	}
+	start.Name = xml.Name{Local: local}
+	start.Attr = nil
+	addAttrIfSet(&start, "id", c.ID)
+	addAttrIfSet(&start, "style", c.Style)
+	addAttrIfSet(&start, "colspan", c.ColSpan)
+	addAttrIfSet(&start, "rowspan", c.RowSpan)
+	addAttrIfSet(&start, "align", c.Align)
+	addAttrIfSet(&start, "valign", c.VAlign)
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if err := marshalInlineContent(e, c.Children); err != nil {
+		return err
+	}
+	return e.EncodeToken(start.End())
 }
 
 // Binary holds a base64-encoded binary (typically an image).
