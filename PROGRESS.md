@@ -6,6 +6,70 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 30 — 2026-04-22 — Draggable resizer between XML and errors panes [dev]
+
+Version: **0.0.30**
+
+### Symptom
+
+Rev 29's ValidationPanel capped the errors section at `max-height: 42%`
+with no way to grow it. With a long error list (or a long first-line
+message that wraps to many visual lines), the errors pane felt cramped
+and half the rows were hidden behind an inner scrollbar, even though
+the XML pane above had empty space to spare.
+
+### Fix
+
+Horizontal drag-handle between the XML pane and the errors pane:
+
+- **Pointer events** (not old mouse events) with `setPointerCapture` so
+  the drag follows the cursor even outside the handle, and touch / pen
+  input work the same way. `touch-action: none` disables native scroll
+  on touch.
+- **Grid layout** changed from `2rem 1fr auto` to
+  `2rem 1fr auto auto` (title, XML, resizer, errors). Errors pane keeps
+  a CSS default of `height: 35%` with `min-height: 60px`; once the user
+  drags, an inline `style="height: Npx"` takes over.
+- **Keyboard support** — the handle is `role="separator"` +
+  `aria-orientation="horizontal"` + `tabindex="0"`. Focus it and use
+  ↑ / ↓ (10px step, or 40px with Shift) to adjust. `aria-label`
+  explains the contract.
+- **Body-level cursor / user-select** are forced to `ns-resize` / `none`
+  during drag so the cursor stays consistent and text doesn't accidentally
+  get selected if the pointer leaves the handle mid-drag. Reset on drag
+  end and in `onDestroy`.
+- Default errors-pane height raised from 42% max to 35% default (still
+  user-adjustable). Worth re-tuning if it feels off in practice.
+
+### A11y lint
+
+Svelte's `a11y-no-noninteractive-tabindex` and
+`a11y-no-noninteractive-element-interactions` fire on `<div role="separator">`.
+The role is explicitly interactive per WAI-ARIA when paired with
+keyboard handling — the lint is over-strict. Suppressed with two
+`<!-- svelte-ignore -->` directives (same precedent as Rev 23's
+TableDialog). Rest of the file still passes unsilenced.
+
+### Verification
+
+- `npm run check` — 0 errors, 0 warnings.
+- `npm run test` — 54/54.
+- UI not clicked-through from dev env (same limitation as Rev 29);
+  Dmitry to sanity-test the drag on NixOS.
+
+### Files modified
+
+- `frontend/src/validation/ValidationPanel.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.29 → 0.0.30
+- `frontend/package.json`       0.0.29 → 0.0.30
+- `frontend/package-lock.json`  0.0.29 → 0.0.30
+
+---
+
 ## Rev 29 — 2026-04-22 — XML source panel + clickable validation errors [dev]
 
 Version: **0.0.29**

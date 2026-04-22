@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, tick } from "svelte";
+  import { createEventDispatcher, onDestroy, tick } from "svelte";
 
   export let xmlSource: string = "";
   export let errors: { line: number; column: number; message: string }[] = [];
@@ -7,7 +7,13 @@
   const dispatch = createEventDispatcher<{ close: void }>();
 
   let xmlPane: HTMLDivElement | undefined;
+  let panelEl: HTMLDivElement | undefined;
   let highlightedLine: number | null = null;
+
+  // Errors-pane height in pixels. `null` = "use default CSS" (35% of panel).
+  // Switches to a concrete number once the user starts dragging the resizer.
+  let errorsHeight: number | null = null;
+  let dragging = false;
 
   $: xmlLines = xmlSource.split("\n");
 
@@ -21,9 +27,63 @@
     }, 2500);
   }
 
+  function clamp(v: number, lo: number, hi: number) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  function panelBounds() {
+    if (!panelEl) return null;
+    const r = panelEl.getBoundingClientRect();
+    // Leave room for title (2rem ≈ 32px) and at least 60px for the XML pane.
+    return { top: r.top, bottom: r.bottom, min: 60, max: r.height - 32 - 60 };
+  }
+
+  function startDrag(e: PointerEvent) {
+    e.preventDefault();
+    dragging = true;
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    document.body.style.cursor = "ns-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  function onDrag(e: PointerEvent) {
+    if (!dragging) return;
+    const b = panelBounds();
+    if (!b) return;
+    errorsHeight = clamp(b.bottom - e.clientY, b.min, b.max);
+  }
+
+  function endDrag(e: PointerEvent) {
+    if (!dragging) return;
+    dragging = false;
+    const target = e.currentTarget as HTMLElement;
+    if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }
+
+  function onResizerKey(e: KeyboardEvent) {
+    const b = panelBounds();
+    if (!b) return;
+    const current = errorsHeight ?? Math.round(panelEl!.getBoundingClientRect().height * 0.35);
+    const step = e.shiftKey ? 40 : 10;
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      errorsHeight = clamp(current + step, b.min, b.max);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      errorsHeight = clamp(current - step, b.min, b.max);
+    }
+  }
+
+  onDestroy(() => {
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  });
 </script>
 
-<div class="panel">
+<div class="panel" bind:this={panelEl}>
   <div class="panel-title">
     <span>XML source{xmlLines.length > 0 ? ` · ${xmlLines.length} lines` : ""}</span>
     <button on:click={() => dispatch("close")} title="Close panel">×</button>
@@ -43,7 +103,26 @@
   </div>
 
   {#if errors.length > 0}
-    <div class="errors">
+    <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div
+      class="resizer"
+      class:dragging
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize errors pane (drag, or arrow keys when focused; Shift = larger step)"
+      tabindex="0"
+      on:pointerdown={startDrag}
+      on:pointermove={onDrag}
+      on:pointerup={endDrag}
+      on:pointercancel={endDrag}
+      on:keydown={onResizerKey}
+    ></div>
+
+    <div
+      class="errors"
+      style={errorsHeight !== null ? `height: ${errorsHeight}px;` : ""}
+    >
       <div class="errors-title">
         <span class="dot">●</span>
         {errors.length} XSD error{errors.length === 1 ? "" : "s"}
@@ -73,7 +152,7 @@
 <style>
   .panel {
     display: grid;
-    grid-template-rows: 2rem 1fr auto;
+    grid-template-rows: 2rem 1fr auto auto;
     height: 100%;
     min-height: 0;
     border-left: 1px solid #d5d5cb;
@@ -138,10 +217,44 @@
     font-weight: 600;
   }
 
+  .resizer {
+    position: relative;
+    height: 6px;
+    background: #d5d5cb;
+    cursor: ns-resize;
+    border-top: 1px solid #bfbfb2;
+    border-bottom: 1px solid #bfbfb2;
+    touch-action: none;
+  }
+  .resizer::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 32px;
+    height: 2px;
+    background: #888;
+    border-radius: 1px;
+    box-shadow: 0 3px 0 #888;
+  }
+  .resizer:hover,
+  .resizer.dragging,
+  .resizer:focus-visible {
+    background: #c4c4b5;
+    outline: none;
+  }
+  .resizer:focus-visible::before {
+    background: #5a5a48;
+    box-shadow: 0 3px 0 #5a5a48;
+  }
+
   .errors {
-    max-height: 42%;
+    /* Default size when the user hasn't dragged the resizer. Inline `height`
+       on the element overrides this once drag starts. */
+    height: 35%;
+    min-height: 60px;
     overflow: auto;
-    border-top: 1px solid #d5d5cb;
     background: #fffaf0;
     font-family: -apple-system, "Segoe UI", sans-serif;
     font-size: 0.8rem;
@@ -162,6 +275,7 @@
   .errors .dot { margin-right: 0.25rem; }
 
   .errors.ok {
+    height: auto;
     color: #2a7;
     padding: 0.5rem 0.75rem;
     background: #f2faf4;
