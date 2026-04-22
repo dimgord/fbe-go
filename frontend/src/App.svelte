@@ -6,6 +6,7 @@
   import DescriptionPanel from "./description/DescriptionPanel.svelte";
   import ValidationPanel from "./validation/ValidationPanel.svelte";
   import HelpDialog from "./help/HelpDialog.svelte";
+  import SettingsDialog from "./settings/SettingsDialog.svelte";
   import { installExternalLinkHandler } from "./runtime/externalLink";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
@@ -43,6 +44,15 @@
   const PANEL_MIN = 260;
 
   let showHelp = false;
+  let showSettings = false;
+
+  function onSettingsApplied(e: CustomEvent<{ theme: Theme }>) {
+    // Sync live runtime state with what the dialog just wrote to disk.
+    // Theme is the one field whose visual effect is immediate.
+    theme = e.detail.theme;
+    // Refresh recent-files list in case the dialog cleared it.
+    void refreshRecent();
+  }
 
   // Most-recently-used files, fed from settings.json on the Go side.
   let recentFiles: string[] = [];
@@ -477,6 +487,7 @@
     <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
     <button on:click={validate} disabled={!fb}>Validate</button>
     <button on:click={exportHTML} disabled={!editor}>Export HTML…</button>
+    <button on:click={() => (showSettings = true)} title="Settings" aria-label="Open settings">⚙</button>
     <button on:click={() => (showHelp = true)} title="Keyboard shortcuts and about">Help</button>
     <button
       class="theme-toggle"
@@ -590,6 +601,7 @@
 </div>
 
 <HelpDialog bind:open={showHelp} />
+<SettingsDialog bind:open={showSettings} on:apply={onSettingsApplied} />
 
 <style>
   /* Theme palette. Applied via [data-theme="light|dark"] on <html>; the

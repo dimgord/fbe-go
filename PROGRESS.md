@@ -6,6 +6,92 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 54 — 2026-04-22 — Settings dialog (Phase 2 A4) [dev]
+
+Version: **0.1.15**
+
+### What
+
+Toolbar gains a ⚙ button before Help. Clicking opens a modal
+editor for the subset of `settings.Settings` that has a real
+effect today:
+
+- **Appearance → Theme** — radio (System / Light / Dark), mirror of
+  the existing toolbar toggle. Toolbar toggle stays as the quick
+  shortcut; the dialog is for when the user wants to pin an
+  explicit choice.
+- **Editor → Font family** — text input, seeds `Font.Family`.
+- **Editor → Font size** — number (8–32), `Font.Size`.
+- **Editor → NBSP char** — single-character input for
+  `NBSPChar`. Used by paste cleanup for whitespace runs.
+- **Interface → Language** — read-only "English" dropdown, for
+  parity with FBE's settings layout. Live translations aren't in
+  yet; input is disabled with help text.
+- **Layout → Reset panes to defaults** — one-shot button. Clears
+  `settings.panes.{outlineWidth, validationWidth,
+  validationErrorsHeight}` so Rev 52/53's persisted sizes fall
+  back to CSS defaults on next launch.
+- **Privacy → Clear recent files** — one-shot button. Empties
+  `settings.RecentFiles`. Label shows the current count.
+
+### Edit model
+
+Fields use an Apply/Cancel draft pattern (matches original FBE):
+
+- Opening the dialog loads the current settings into a local
+  `draft` state.
+- Typing in fields mutates only the draft; disk isn't touched
+  yet.
+- Apply → `App.SaveSettings(draft)` + dispatches an `apply` event
+  with the new theme so the parent updates live runtime state.
+- Cancel / Escape / backdrop-click / × → discards the draft.
+
+The two "action" buttons (Reset panes, Clear recent) DON'T go
+through the draft — they execute immediately against disk,
+then reload the draft so the dialog stays in sync. Documented
+inline: if the user clicks Cancel after resetting, the reset
+still sticks. Matches their one-shot nature.
+
+### Not implemented here
+
+- **Font + NBSP plumbing** — the values are saved but the editor
+  doesn't yet react to them. Editor.svelte still uses
+  `font-family: "Trebuchet MS"` hard-coded and paste cleanup
+  doesn't consult `NBSPChar`. Wiring those is a separate follow-up
+  rev so this one stays self-contained.
+- **Hotkey editor** — deferred to Phase 4 B (needs key-capture
+  input + conflict detection + runtime rebinding).
+- **Interface language** — no i18n layer yet; input disabled.
+
+### Keyboard
+
+- `Escape` — cancel.
+- `Cmd/Ctrl + Enter` — apply without clicking.
+
+### Verification
+
+- `npm run check` 0/0.
+- `npm run check:theme` clean.
+- `npm run test` 58/58.
+- UI flow not clicked-through from dev env — Dmitry to open the
+  dialog, tweak each field, Apply, relaunch, confirm fields stuck.
+
+### Files added / modified
+
+- `frontend/src/settings/SettingsDialog.svelte` (new)
+- `frontend/src/App.svelte` — import + state + toolbar button +
+  `onSettingsApplied` handler.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.14 → 0.1.15
+- `frontend/package.json`       0.1.14 → 0.1.15
+- `frontend/package-lock.json`  0.1.14 → 0.1.15
+
+---
+
 ## Rev 53 — 2026-04-22 — Draggable outline + validation-panel width resizers [dev]
 
 Version: **0.1.14**
