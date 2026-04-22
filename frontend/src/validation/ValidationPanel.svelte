@@ -3,16 +3,25 @@
 
   export let xmlSource: string = "";
   export let errors: { line: number; column: number; message: string }[] = [];
+  // Initial height from persisted settings (px). `null` / `0` = use CSS
+  // default (45%). Not bound — parent only seeds the initial value; the
+  // panel reports changes via the `resize` event.
+  export let initialErrorsHeight: number | null = null;
 
-  const dispatch = createEventDispatcher<{ close: void }>();
+  const dispatch = createEventDispatcher<{
+    close: void;
+    resize: { height: number };
+  }>();
 
   let xmlPane: HTMLDivElement | undefined;
   let panelEl: HTMLDivElement | undefined;
   let highlightedLine: number | null = null;
 
-  // Errors-pane height in pixels. `null` = "use default CSS" (35% of panel).
+  // Errors-pane height in pixels. `null` = "use default CSS" (45% of panel).
   // Switches to a concrete number once the user starts dragging the resizer.
-  let errorsHeight: number | null = null;
+  let errorsHeight: number | null = initialErrorsHeight && initialErrorsHeight > 0
+    ? initialErrorsHeight
+    : null;
   let dragging = false;
 
   $: xmlLines = xmlSource.split("\n");
@@ -61,19 +70,28 @@
     if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
+    if (errorsHeight !== null) {
+      dispatch("resize", { height: errorsHeight });
+    }
   }
 
   function onResizerKey(e: KeyboardEvent) {
     const b = panelBounds();
     if (!b) return;
-    const current = errorsHeight ?? Math.round(panelEl!.getBoundingClientRect().height * 0.35);
+    const current = errorsHeight ?? Math.round(panelEl!.getBoundingClientRect().height * 0.45);
     const step = e.shiftKey ? 40 : 10;
+    let changed = false;
     if (e.key === "ArrowUp") {
       e.preventDefault();
       errorsHeight = clamp(current + step, b.min, b.max);
+      changed = true;
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
       errorsHeight = clamp(current - step, b.min, b.max);
+      changed = true;
+    }
+    if (changed && errorsHeight !== null) {
+      dispatch("resize", { height: errorsHeight });
     }
   }
 
