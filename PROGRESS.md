@@ -6,6 +6,117 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 32 — 2026-04-22 — Table cells: fix `<Children><Text>` ghost tags [dev]
+
+Version: **0.0.32**
+
+### Symptom
+
+Running Validate on the bundled SAMPLE_BOOK produced six XSD errors, all
+pointing at a `<Children>` element inside `<th>` / `<td>`:
+
+    L67:13  Element '{…}Children': This element is not expected.
+    Expected is one of ( strong, emphasis, style, a, strikethrough,
+    sub, sup, code, image ).
+
+XML source pane showed:
+
+```xml
+<th>
+  <Children>
+    <Text>Елемент</Text>
+  </Children>
+</th>
+```
+
+Capital-C `<Children>` and capital-T `<Text>` — Go struct field names
+leaking into the XML, not valid FB2.
+
+### Root cause
+
+`doc.Cell` had `Children []Inline xml:",any"` and no custom
+`MarshalXML` / `UnmarshalXML`. Go's default encoder for a `,any`-tagged
+slice of structs **uses the field name as the element tag** (there's no
+XMLName on the nested `Inline`), and then for each `Inline` value it
+emits every non-zero field as a nested element using the Go field name
+— so `Text string` became `<Text>`, `Strong *Paragraph` would have
+become `<Strong>`, etc.
+
+The existing inline containers (`Paragraph`, `StyleInline`, `Link`)
+sidestep this by carrying `Children []Inline xml:"-"` and providing a
+pair of `(Un)MarshalXML` methods that route through
+`marshalInlineContent` / `unmarshalInlineContent`. `Cell` was added
+later and skipped that pattern.
+
+### Fix
+
+Applied the same pattern to `Cell`:
+
+- `Children []Inline xml:",any"` → `Children []Inline xml:"-"`.
+- New `(*Cell).UnmarshalXML` — captures `th`/`td` from `start.Name`,
+  reads six attributes explicitly, delegates mixed content to
+  `unmarshalInlineContent`.
+- New `(Cell).MarshalXML` — emits only the local name (`xml.Name{Local:
+  "th"}` or `{Local: "td"}`) so the parent's default namespace applies
+  and we don't re-declare `xmlns=".../fictionbook/2.0"` on every cell.
+  Clears `start.Attr` before re-adding attrs so nothing inherited from
+  the caller leaks through. Uses `marshalInlineContent` for children.
+
+### Test
+
+New `TestTableRoundTripPreservesThTdTags` parses a minimal doc with one
+header row (`<th colspan="2">` with nested `<strong>`) and two data
+cells, round-trips through parser→writer, and asserts:
+
+- `<th colspan="2">` / `</th>` present
+- `<td>`, `cell one`, `cell two` present
+- `<strong>bold</strong>` preserved inside the header
+- **No `<Children>` / `</Children>` / `<Text>` / `</Text>` in the output**
+  (direct regression guard for the old bug)
+- **No `<th xmlns=…>` / `<td xmlns=…>`** (parent namespace must apply;
+  catches the secondary issue I hit mid-fix when I initially copied the
+  full `xml.Name` including `Space`)
+
+### Why existing writer tests missed this
+
+The pre-existing writer-level tests (`TestRoundTrip`,
+`TestRawFallback*`, `TestWriterOutputIsSchemaValid`) exercise sections,
+paragraphs, and raw-element fallback but none of them touch `<table>`.
+The schema-validity test could have caught it if its fixtures included
+tables — worth adding a table in that corpus as a follow-up.
+
+### Why it was only visible in the SAMPLE_BOOK flow
+
+On the Wails side, `App.OpenFile` parses a real `.fb2` from disk using
+Go's `parser.Parse`, which calls `Cell.UnmarshalXML` — BUT pre-fix that
+path *also* relied on `xml:",any"`, and `,any`-based unmarshal happens
+to work reasonably for Inlines because Go matches sub-elements by their
+struct field tags. So reading a real `.fb2` round-trips correctly in
+memory. The bug manifested only on the *marshal* side.
+
+The frontend-SAMPLE path stresses only the marshal side:
+`Editor.currentFB()` → `App.UpdateDocument(fb)` → `writer.Write(fb)` for
+the XML preview. No parse-from-XML step in between, so marshal ran on
+a doc where every Cell was a fresh Go struct built by
+`editor/serialize.ts::buildTable` — no XMLName namespace baggage, just
+the plain `{XMLName: {Local: "th"}, Children: [...]}` JSON. That fed
+directly into the buggy marshal path and produced the `<Children>`
+output Dmitry screenshotted.
+
+### Files modified
+
+- `internal/fb2/doc/doc.go` — Cell (Un)MarshalXML + rationale comments
+- `internal/fb2/writer/table_test.go` (new) — regression guard
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.31 → 0.0.32
+- `frontend/package.json`       0.0.31 → 0.0.32
+- `frontend/package-lock.json`  0.0.31 → 0.0.32
+
+---
+
 ## Rev 31 — 2026-04-22 — Validation line numbers + title-info faithful round-trip [dev]
 
 Version: **0.0.31**
