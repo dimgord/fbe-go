@@ -19,7 +19,7 @@ export interface Stylesheet {
 }
 
 export interface Description {
-  TitleInfo: TitleInfo;
+  TitleInfo?: TitleInfo | null;
   SrcTitleInfo?: TitleInfo | null;
   DocumentInfo: DocumentInfo;
   PublishInfo?: PublishInfo | null;
@@ -96,8 +96,10 @@ export interface Section {
   Epigraph?: Epigraph[] | null;
   Image?: Image | null;
   Annotation?: Annotation | null;
-  Sections?: Section[] | null;
-  Blocks?: Block[] | null;
+  // Rev 37: Sections+Blocks collapsed into a single ordered Body list so
+  // real-world interleaving survives round-trip. A Block whose Section field
+  // is non-null is a nested subsection; everything else is a flat block.
+  Body?: Block[] | null;
 }
 
 export interface Title { ID?: string; Children?: Block[] }
@@ -119,6 +121,18 @@ export interface Stanza {
   Verses: Paragraph[];
 }
 
+/**
+ * A RawElement preserves an unknown XML element verbatim for lossless
+ * round-trip (FB2 extensions, misspelled tags, future-version elements).
+ * Shape mirrors `doc.RawElement` in Go so Wails can unmarshal it directly
+ * back into `[]byte`-level XML on save.
+ */
+export interface RawElement {
+  XMLName: { Space?: string; Local: string };
+  Attrs?: Array<{ Name: { Space?: string; Local: string }; Value: string }> | null;
+  Items?: Array<{ Text?: string; Elem?: RawElement | null }> | null;
+}
+
 /** A Block is a discriminated union — only one of the child fields is non-null. */
 export interface Block {
   XMLName?: { Space?: string; Local?: string };
@@ -129,6 +143,8 @@ export interface Block {
   EmptyLine?: EmptyLine | null;
   Table?: Table | null;
   Image?: Image | null;
+  Section?: Section | null;
+  Raw?: RawElement | null;
 }
 
 export interface EmptyLine { ID?: string }
@@ -149,6 +165,7 @@ export interface Inline {
   Sup?: Paragraph | null;
   Code?: Paragraph | null;
   Image?: Image | null;
+  Raw?: RawElement | null;
 }
 
 export interface StyleInline { Name: string; Children?: Inline[] }

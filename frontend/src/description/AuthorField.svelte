@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Author } from "../fb2/types";
   import { createEventDispatcher } from "svelte";
+  import { uid } from "../lib/uid";
 
   export let author: Author;
   /** "primary" shows all fields; "compact" hides nick/email/home behind a disclosure. */
@@ -8,11 +9,16 @@
 
   let open = variant === "primary" || !!(author.Nickname || author.Email?.length || author.HomePage?.length);
 
+  const id_ = uid("author");
   const dispatch = createEventDispatcher<{ remove: void; clone: void }>();
 
-  // Ensure optional arrays exist for two-way binding.
+  // Ensure optional arrays exist for two-way binding, then expose
+  // narrowed locals — Svelte's template parser rejects `!` inside
+  // `bind:value={…}`, so the assertion has to live in <script>.
   $: if (!author.Email)    author.Email    = [];
   $: if (!author.HomePage) author.HomePage = [];
+  $: emails    = author.Email!;
+  $: homepages = author.HomePage!;
 
   function addEmail() {
     author.Email = [...(author.Email ?? []), ""];
@@ -41,19 +47,19 @@
   </button>
   {#if open}
     <div class="row">
-      <label>Nick</label>
-      <input bind:value={author.Nickname} />
+      <label for={`${id_}-nick`}>Nick</label>
+      <input id={`${id_}-nick`} bind:value={author.Nickname} />
     </div>
     <div class="row">
-      <label>ID</label>
-      <input bind:value={author.ID} />
+      <label for={`${id_}-id`}>ID</label>
+      <input id={`${id_}-id`} bind:value={author.ID} />
     </div>
     <div class="multi">
-      <label>Email</label>
+      <label for={`${id_}-email-0`}>Email</label>
       <div class="stack">
-        {#each author.Email ?? [] as _, i}
+        {#each emails as _, i}
           <div class="inline">
-            <input bind:value={author.Email[i]} />
+            <input id={i === 0 ? `${id_}-email-0` : undefined} bind:value={emails[i]} />
             <button class="aux" type="button" on:click={() => removeEmail(i)}>×</button>
           </div>
         {/each}
@@ -61,11 +67,11 @@
       </div>
     </div>
     <div class="multi">
-      <label>Home page</label>
+      <label for={`${id_}-home-0`}>Home page</label>
       <div class="stack">
-        {#each author.HomePage ?? [] as _, i}
+        {#each homepages as _, i}
           <div class="inline">
-            <input bind:value={author.HomePage[i]} />
+            <input id={i === 0 ? `${id_}-home-0` : undefined} bind:value={homepages[i]} />
             <button class="aux" type="button" on:click={() => removeHomePage(i)}>×</button>
           </div>
         {/each}

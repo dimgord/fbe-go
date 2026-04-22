@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { Sequence } from "../fb2/types";
   import { createEventDispatcher } from "svelte";
+  import { uid } from "../lib/uid";
 
   export let seq: Sequence;
+  const id_ = uid("seq");
   const dispatch = createEventDispatcher<{ remove: void; clone: void; addChild: void }>();
 
   function addChild() {
@@ -19,10 +21,10 @@
 
 <div class="seq">
   <div class="row">
-    <label>Name</label>
-    <input placeholder="Series name" bind:value={seq.Name} />
-    <label>№</label>
-    <input class="num" placeholder="3" bind:value={seq.Number} />
+    <label for={`${id_}-name`}>Name</label>
+    <input id={`${id_}-name`} placeholder="Series name" bind:value={seq.Name} />
+    <label for={`${id_}-num`}>№</label>
+    <input id={`${id_}-num`} class="num" placeholder="3" bind:value={seq.Number} />
     <button class="aux" type="button" on:click={addChild} title="Nested series">↳</button>
     <button class="aux" type="button" on:click={() => dispatch("clone")} title="Clone">＋</button>
     <button class="aux" type="button" on:click={() => dispatch("remove")} title="Remove">×</button>
