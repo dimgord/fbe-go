@@ -112,6 +112,7 @@ func (a *App) OpenFile(path string) (fb *doc.FictionBook, err error) {
 	}
 	a.current = fb
 	a.path = path
+	recordRecentFile(path)
 	return fb, nil
 }
 
@@ -132,7 +133,71 @@ func (a *App) SaveFile(path string) error {
 		return err
 	}
 	a.path = path
+	recordRecentFile(path)
 	return nil
+}
+
+// recentFilesCap is the maximum length of the Most-Recently-Used list.
+// Chosen to match what the original FBE used (see Settings.h::recentFiles).
+const recentFilesCap = 10
+
+// recordRecentFile prepends `path` to settings.RecentFiles, dedupes earlier
+// occurrences, caps the list at recentFilesCap, and persists. Silent on
+// error — recent-files tracking is a convenience, not a correctness path;
+// we'd rather continue the primary flow than fail Open/Save because
+// settings.json couldn't be written.
+func recordRecentFile(path string) {
+	if path == "" {
+		return
+	}
+	s, err := settings.Load()
+	if err != nil || s == nil {
+		return
+	}
+	out := make([]string, 0, len(s.RecentFiles)+1)
+	out = append(out, path)
+	for _, p := range s.RecentFiles {
+		if p == path {
+			continue
+		}
+		out = append(out, p)
+		if len(out) == recentFilesCap {
+			break
+		}
+	}
+	s.RecentFiles = out
+	_ = settings.Save(s)
+}
+
+// RecentFiles returns the persisted most-recently-used file paths
+// (most-recent first). On read error returns an empty list rather than
+// propagating — the frontend just shows no history in that case.
+func (a *App) RecentFiles() []string {
+	s, err := settings.Load()
+	if err != nil || s == nil {
+		return []string{}
+	}
+	if s.RecentFiles == nil {
+		return []string{}
+	}
+	return s.RecentFiles
+}
+
+// RemoveFromRecent drops a path from the MRU list (e.g. when it no longer
+// exists on disk). No-op if absent.
+func (a *App) RemoveFromRecent(path string) error {
+	s, err := settings.Load()
+	if err != nil || s == nil {
+		return err
+	}
+	out := s.RecentFiles[:0]
+	for _, p := range s.RecentFiles {
+		if p != path {
+			out = append(out, p)
+		}
+	}
+	s.RecentFiles = out
+	return settings.Save(s)
 }
 
 // UpdateDocument replaces the current document with a new version from the frontend.

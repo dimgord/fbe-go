@@ -26,16 +26,30 @@
 
   let showHelp = false;
 
+  // Most-recently-used files, fed from settings.json on the Go side.
+  let recentFiles: string[] = [];
+  let recentMenuOpen = false;
+
   async function wailsApp() {
     return await import("../wailsjs/go/main/App").catch(() => null);
   }
 
-  async function openFile() {
+  async function refreshRecent() {
+    const App = await wailsApp();
+    if (!App) return;
+    try { recentFiles = (await App.RecentFiles()) ?? []; } catch { /* ignore */ }
+  }
+
+  // `preset` lets the Recent-files menu call openFile with a specific path
+  // (skipping the native file-picker). When omitted we fall back to
+  // `App.PickFB2ToOpen()` as before.
+  async function openFile(preset?: string) {
     error = ""; status = "";
+    recentMenuOpen = false;
     try {
       const App = await wailsApp();
       if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
-      const path = await App.PickFB2ToOpen();
+      const path = preset ?? await App.PickFB2ToOpen();
       if (!path) return;
       console.log(`[fbe] opening ${path}`);
       status = `Opening ${path.split(/[\\/]/).pop()}…`;
@@ -53,13 +67,23 @@
       filename = path.split(/[\\/]/).pop() ?? path;
       status = `Opened ${filename}`;
       setTimeout(() => (status = ""), 3000);
+      void refreshRecent();
     } catch (e) {
       const msg = (e as Error).message || String(e);
       console.error("[fbe] openFile failed:", e);
       error = `Open failed: ${msg}`;
-      fb = SAMPLE_BOOK;
-      currentPath = "";
-      filename = "blank.fb2 (sample)";
+      if (preset) {
+        // Recent-file pointed at something that no longer exists (or is
+        // unreadable) — purge it so the menu doesn't keep offering a dead
+        // entry.
+        const App = await wailsApp();
+        try { await App?.RemoveFromRecent(preset); } catch { /* ignore */ }
+        void refreshRecent();
+      } else {
+        fb = SAMPLE_BOOK;
+        currentPath = "";
+        filename = "blank.fb2 (sample)";
+      }
     }
   }
 
@@ -85,6 +109,7 @@
       filename = path.split(/[\\/]/).pop() ?? path;
       status = `Saved ${filename}`;
       setTimeout(() => (status = ""), 3000);
+      void refreshRecent();
     } catch (e) {
       error = (e as Error).message;
     }
@@ -156,6 +181,7 @@
   onMount(() => {
     document.title = "FictionBook Editor (Go)";
     window.addEventListener("keydown", onKeyDown);
+    void refreshRecent();
     // Pick up whatever Go already has open (so opening :34115 in a browser
     // tab while a file is loaded in the native window shows that file
     // instead of the sample). Path is intentionally NOT synced — Save in
@@ -182,7 +208,35 @@
 
 <div class="layout">
   <header>
-    <button on:click={openFile}>Open…</button>
+    <div class="open-group">
+      <button on:click={() => openFile()}>Open…</button>
+      <button
+        class="recent-toggle"
+        title="Recent files"
+        disabled={recentFiles.length === 0}
+        on:click={() => (recentMenuOpen = !recentMenuOpen)}
+      >▾</button>
+      {#if recentMenuOpen}
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="recent-backdrop" on:click={() => (recentMenuOpen = false)}></div>
+        <ul class="recent-menu" role="menu">
+          {#each recentFiles as path}
+            <li role="menuitem">
+              <button
+                type="button"
+                class="recent-item"
+                on:click={() => openFile(path)}
+                title={path}
+              >
+                <span class="basename">{path.split(/[\\/]/).pop() ?? path}</span>
+                <span class="dir">{path.slice(0, -((path.split(/[\\/]/).pop() ?? path).length))}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
     <button on:click={() => save(false)} disabled={!editor}>Save</button>
     <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
     <button on:click={validate} disabled={!fb}>Validate</button>
@@ -267,6 +321,68 @@
   }
   header button:hover:not(:disabled) { background: #fff8e5; }
   header button:disabled { opacity: 0.5; cursor: default; }
+
+  /* Recent-files split-button: Open…<dropdown-caret>. Visually the two
+     buttons share a border so they read as one control. */
+  .open-group {
+    position: relative;
+    display: inline-flex;
+    gap: 0;
+  }
+  .open-group > button:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .open-group > button.recent-toggle {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left-width: 0;
+    padding: 0.25rem 0.45rem;
+    font-size: 0.7rem;
+    line-height: 1;
+  }
+  .recent-backdrop {
+    position: fixed;
+    inset: 0;
+    background: transparent;
+    z-index: 49;
+  }
+  .recent-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 50;
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 0.25rem 0;
+    min-width: 22rem;
+    max-width: 38rem;
+    background: #fffdf8;
+    border: 1px solid #d5d5cb;
+    border-radius: 4px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    font-size: 0.85rem;
+  }
+  .recent-menu li { margin: 0; padding: 0; }
+  button.recent-item {
+    all: unset;
+    display: block;
+    width: 100%;
+    padding: 0.3rem 0.7rem;
+    cursor: pointer;
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  button.recent-item:hover { background: #fff8e5; }
+  button.recent-item .basename { font-weight: 600; color: #222; }
+  button.recent-item .dir {
+    color: #888;
+    font-size: 0.78rem;
+    margin-left: 0.4rem;
+  }
+
   .view-toggle {
     display: inline-flex;
     gap: 0;
