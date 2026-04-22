@@ -6,6 +6,112 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 38 — 2026-04-22 — Supplementary unknown-element scanner [dev]
+
+Version: **0.0.38**
+
+### Why
+
+After Rev 37 the UI correctly showed 3 XSD errors for Dmitry's
+`book-broken.fb2` — matching the CLI's output on disk bytes. But one of
+the three misspelled empty-lines (`<empty-lyne/>`, inside the second
+section right after a subsection) was silently absent from the errors
+list despite being present in the XML source pane. libxml2's
+content-model recovery: after the first violation in a content group
+it enters "don't cascade" mode and stops reporting later unknowns in
+that group. Not our bug — but the user experience is "the editor lost
+one of my errors".
+
+### Fix
+
+Added a supplementary scanner (`xsd.FindUnknownElements`) that regexes
+the serialized source for opening tags and flags any name outside the
+bundled FictionBook 2.0 vocabulary. Structure-agnostic, so libxml2's
+DFA recovery can't hide any unknown — every occurrence shows up.
+
+Combined with libxml2's output via `xsd.MergeXSDAndUnknown`, which
+dedupes by `(line, tag-name)`: if libxml2 already reported an element
+at a given line, our scanner's entry is dropped (libxml2's message is
+richer, including the full `Expected is one of (…)` list).
+
+### Implementation
+
+- `internal/fb2/xsd/unknown.go` (new, no build tag so it works in stub
+  builds too):
+  - `knownFB2Elements` — hand-maintained set of ~55 valid FB2 tags.
+  - `FindUnknownElements(src []byte) []ValidationError` — regex
+    `<([a-zA-Z][\w-]*)` scans src, filters by the vocab map, emits one
+    entry per occurrence. Skips closing tags / PIs / comments via the
+    alphabetic-first-char requirement.
+  - `MergeXSDAndUnknown(xsdErrs, unknowns)` — builds a
+    `(line, tag)` seen-set from libxml2 messages (tag via the regex
+    `Element '(?:\{[^}]*\})?([^']+)'`), then filters unknowns against it.
+  - `byteOffsetToLineCol` — small helper for 1-based positions.
+
+- `app.go::ValidateCurrent` — after `xsd.Validate`, calls
+  `xsd.FindUnknownElements(src)` and merges via `MergeXSDAndUnknown`.
+
+### Tests
+
+`internal/fb2/xsd/unknown_test.go` — 5 cases (build-tag-agnostic, so
+they run in both plain and `-tags xsd` modes):
+
+1. Reports every occurrence of three distinct misspellings (the exact
+   scenario Dmitry hit on `book-broken.fb2`).
+2. Skips known tags — a legit document produces zero entries.
+3. Skips comments and processing instructions — no false positives.
+4. Line/column are 1-based, pointing at the `<` of the tag.
+5. `MergeXSDAndUnknown` correctly dedupes the libxml2/scanner overlap:
+   libxml2 entry preserved, same-line same-tag scanner entry dropped,
+   different-line scanner entry kept.
+
+### Vocabulary maintenance
+
+`knownFB2Elements` is hand-maintained. Keep it in sync with
+`SchemaFiles` (`FictionBook.xsd` + friends) — if a new element is
+legitimized in a future FB2 revision, add it to the map or it'll get
+flagged as unknown. An XSD-introspection pass was considered and
+rejected: the schema is ~60 elements total, hand-maintenance is
+cheaper than shipping runtime XSD walking on every Validate.
+
+### Out of scope
+
+- **Unknown attribute scan.** Same idea but for attribute names
+  instead of elements. FB2 files rarely have unknown attributes in
+  practice; revisit if a real case surfaces.
+- **Deeper error categorization.** We currently expose a flat
+  `[]ValidationError`. A future UI pass could render libxml2 entries
+  (red) distinctly from scanner entries (orange) so users can tell
+  "this element fits somewhere but not here" from "this element
+  doesn't exist at all".
+
+### Verification
+
+- `go build ./...` and `go build -tags xsd ./...` clean.
+- `go test ./...` / `go test -tags xsd ./...` — all packages green;
+  5 new tests in the xsd package pass.
+- `npm run check` 0/0, `npm run test` 58/58.
+- UI flow not clicked-through from dev env. Dmitry to re-open
+  `book-broken.fb2` and confirm: error list now contains an entry for
+  `empty-lyne` (in addition to the libxml2 entries for title-info,
+  empty-lune, empty-lane) — total 4 items, matching the three
+  misspellings plus the missing title-info.
+
+### Files modified
+
+- `internal/fb2/xsd/unknown.go` (new) — scanner + merger
+- `internal/fb2/xsd/unknown_test.go` (new) — 5 unit tests
+- `app.go` — ValidateCurrent call-chain expanded
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.37 → 0.0.38
+- `frontend/package.json`       0.0.37 → 0.0.38
+- `frontend/package-lock.json`  0.0.37 → 0.0.38
+
+---
+
 ## Rev 37 — 2026-04-22 — doc.Section.Body — ordered children (sections + blocks) [dev]
 
 Version: **0.0.37**

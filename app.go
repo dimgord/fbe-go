@@ -232,10 +232,23 @@ func (a *App) SerializeCurrent() (string, error) {
 	return buf.String(), nil
 }
 
-// ValidateCurrent validates the in-memory document against the bundled XSD.
-// Unlike Validate(path), this reflects unsaved edits — it serializes first
-// and validates the result, so line numbers in the returned errors map
-// directly to the output of SerializeCurrent.
+// ValidateCurrent validates the in-memory document against the bundled XSD
+// and supplements libxml2's findings with a structure-agnostic unknown-
+// element scan. Unlike Validate(path), this reflects unsaved edits.
+//
+// Two error sources are merged:
+//
+//   - libxml2 schema validation (xsd.Validate) — reports XSD content-model
+//     violations with rich "Expected is one of (...)" messages. Subject to
+//     libxml2's recovery quirks, which can drop later unknown-element
+//     errors after the first in a content group.
+//   - Our own unknown-element scanner (xsd.FindUnknownElements) — regexes
+//     through the serialized source and flags any tag outside the
+//     FictionBook 2.0 vocabulary. Structure-agnostic, so every occurrence
+//     shows up regardless of libxml2's DFA recovery.
+//
+// Dedup is handled in xsd.MergeXSDAndUnknown: if both sources cover the same
+// element at the same line, only libxml2's richer entry is kept.
 func (a *App) ValidateCurrent() ([]xsd.ValidationError, error) {
 	if a.current == nil {
 		return nil, fmt.Errorf("no document open")
@@ -244,7 +257,12 @@ func (a *App) ValidateCurrent() ([]xsd.ValidationError, error) {
 	if err := writer.Write(&buf, a.current); err != nil {
 		return nil, err
 	}
-	return xsd.Validate(&buf)
+	src := buf.Bytes()
+	xsdErrs, err := xsd.Validate(bytes.NewReader(src))
+	if err != nil {
+		return nil, err
+	}
+	return xsd.MergeXSDAndUnknown(xsdErrs, xsd.FindUnknownElements(src)), nil
 }
 
 // --- Settings ---
