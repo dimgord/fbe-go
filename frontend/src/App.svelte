@@ -402,6 +402,7 @@
 
     --highlight:       #fce6a0;
     --shadow:          rgba(0, 0, 0, 0.25);
+    --backdrop:        rgba(0, 0, 0, 0.35);   /* modal dim */
   }
 
   :global([data-theme="dark"]) {
@@ -442,6 +443,7 @@
 
     --highlight:       #5a4a10;
     --shadow:          rgba(0, 0, 0, 0.6);
+    --backdrop:        rgba(0, 0, 0, 0.55);   /* modal dim — stronger in dark mode */
   }
 
   :global(body), :global(html) {

@@ -6,6 +6,87 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 51 — 2026-04-22 — `check-theme-hygiene.sh` lint + `--backdrop` palette var [dev]
+
+Version: **0.1.12**
+
+### What
+
+New `scripts/check-theme-hygiene.sh`: fails if any file under
+`frontend/src/` contains a hardcoded color literal outside the
+palette block in `App.svelte`. Catches three things the ad-hoc sed
+passes of Rev 46/47/50 each missed:
+
+1. **Hex literals** `#RGB` / `#RRGGBB` / `#RRGGBBAA` — same pattern
+   Rev 47 used, but script-driven so regressions get caught fast.
+2. **Named CSS colors** (`white`, `black`, `red`, …) used as values
+   on color-carrying properties (`background`, `border`, `color`,
+   `outline`, `fill`, `shadow` …). Anchoring on a property name
+   avoids flagging the word "black" in prose.
+3. **`rgb()` / `rgba()` / `hsl()` / `hsla()` literals** — tolerated
+   only inside the palette (e.g. `--shadow: rgba(0,0,0,0.6)`).
+
+Allowed keywords everywhere: `transparent`, `inherit`,
+`currentColor`, `none`, `auto`, `initial`, `unset`, `revert`.
+
+`.test.ts` / `.test.js` files are excluded — they carry HTML/CSS
+fixtures fed to paste parsers, not app styles.
+
+### Output of the initial run
+
+Surfaced three true-positives and zero false-positives:
+
+- `editor/TableDialog.svelte` and `help/HelpDialog.svelte` modal
+  backdrops used `rgba(0, 0, 0, 0.35)` literally. Fixed by promoting
+  that value into the palette as `--backdrop` (with a slightly
+  darker `0.55` opacity in dark mode for stronger dim).
+- `paste.test.ts` had `color:red` inside a parser fixture — correctly
+  ignored after the `*.test.*` exclude pattern went in.
+
+After the two backdrop fixes, script exits 0.
+
+### Wiring
+
+- `scripts/check-theme-hygiene.sh` — executable bash, uses
+  `git rev-parse --show-toplevel` so it works from anywhere.
+- `frontend/package.json` gains a `check:theme` script calling
+  `../scripts/check-theme-hygiene.sh`.
+- `CLAUDE.md` Commands section lists it alongside the existing
+  `check` / `test` scripts.
+
+Not wired into `npm run check` automatically — kept separate so the
+typecheck path stays fast and the theme check remains an explicit
+pre-commit step for anyone touching styles. Ready to be added to CI
+when the github-actions pipeline lands (Rev 48-range of the
+roadmap).
+
+### Verification
+
+- `scripts/check-theme-hygiene.sh` exits 0 with
+  "clean — all colors reference palette variables."
+- `npm run check`, `npm run test`, `npm run check:theme` — all green.
+
+### Files added / modified
+
+- `scripts/check-theme-hygiene.sh` (new, executable)
+- `frontend/package.json` — `check:theme` npm script.
+- `frontend/src/App.svelte` — `--backdrop` var in both light and
+  dark palette blocks.
+- `frontend/src/editor/TableDialog.svelte`,
+  `frontend/src/help/HelpDialog.svelte` — backdrop rgba() →
+  `var(--backdrop)`.
+- `CLAUDE.md` — commands list.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.11 → 0.1.12
+- `frontend/package.json`       0.1.11 → 0.1.12
+- `frontend/package-lock.json`  0.1.11 → 0.1.12
+
+---
+
 ## Rev 50 — 2026-04-22 — Dark mode: `background: white` named-color sweep [dev]
 
 Version: **0.1.11**
