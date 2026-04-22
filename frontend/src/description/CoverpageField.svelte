@@ -56,7 +56,7 @@
     border-radius: 3px;
   }
   .custom { flex: 1; padding: 0.25rem 0.4rem; border: 1px solid var(--border-input); border-radius: 3px; font: inherit; }
-  .aux { background: white; border: 1px solid var(--border-button); border-radius: 3px; padding: 0 0.4rem; cursor: pointer; }
+  .aux { background: var(--bg-surface); border: 1px solid var(--border-button); border-radius: 3px; padding: 0 0.4rem; cursor: pointer; }
   .aux:hover { background: var(--bg-hover); }
   .link {
     background: none; border: none; color: var(--fg-link);
