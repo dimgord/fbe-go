@@ -6,6 +6,58 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 45 — 2026-04-22 — Validation errors pane: larger default [dev]
+
+Version: **0.1.6**
+
+### Symptom (beta feedback, Dmitry)
+
+With two XSD errors, only the first was visible in the validation
+panel at default layout — the second hid behind a scrollbar and
+users had to drag the resizer up to see it. Screenshot confirmed
+the errors pane at 35% of panel was ~180px, and two multi-line
+libxml2 messages (each wraps to 3+ lines once the namespace URI
+is inlined in the string) exceed that.
+
+### Fix
+
+Bumped `.errors` default height in `ValidationPanel.svelte` from
+35% to 45% of panel height. Leaves `min-height: 60px` unchanged so
+the drag resizer's `panelBounds.min` (60) isn't fought by the CSS
+clamp when the user wants to shrink the pane manually.
+
+### Not done here
+
+- Didn't switch to `height: auto; max-height: 45%;` even though it
+  would give better UX for single-error cases (pane hugs content,
+  no wasted space). Problem: grid-template-rows `auto` + content
+  max-height doesn't cap the grid track itself — the row is sized
+  by the content's max-content, and max-height only clips the
+  element's visible box inside. Plus the drag path sets inline
+  `height: Npx` which would have to also disable `max-height` via
+  JS. Not worth the complexity for the marginal gain.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 58/58.
+- Manual eyeball: two-error case now shows both rows without
+  scrolling on a typical 1080p window; third error would still
+  scroll.
+
+### Files modified
+
+- `frontend/src/validation/ValidationPanel.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.5 → 0.1.6
+- `frontend/package.json`       0.1.5 → 0.1.6
+- `frontend/package-lock.json`  0.1.5 → 0.1.6
+
+---
+
 ## Rev 44 — 2026-04-22 — Recent files (Phase 2 gap) [dev]
 
 Version: **0.1.5**
