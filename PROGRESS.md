@@ -6,6 +6,102 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 52 — 2026-04-22 — Persistence: window geom + last-view + errors-pane height [dev]
+
+Version: **0.1.13**
+
+### What
+
+Phase 2 A3 — remembers UI state across launches:
+
+- **Window size + position.** Restored on launch, saved on clean
+  shutdown.
+- **Last-open view** (Body / Description). Restored so the user
+  doesn't have to click Description again after restart.
+- **Validation errors pane height** (the drag-resizer in
+  `ValidationPanel`). Persisted after any drag or keyboard adjust.
+
+### Go side
+
+`settings.Settings` grows three fields + two helper types:
+
+```go
+LastView string      `json:"lastView"`  // "body" | "description"
+Window   WindowGeom  `json:"window"`    // {X, Y, W, H}
+Panes    PaneSizes   `json:"panes"`     // {ValidationErrorsHeight}
+```
+
+`main.go`:
+- Reads `settings.Window.{W,H}` before `wails.Run`; falls back to
+  1280×800 when zero/unset. Wails v2's options.App accepts Width
+  and Height but not initial X/Y — position is restored in
+  OnStartup instead.
+
+`app.go`:
+- `OnStartup`: calls `runtime.WindowSetPosition(X, Y)` if settings
+  has a non-zero coord.
+- `OnShutdown` (new wire-up in main.go's options): reads current
+  `runtime.WindowGetPosition` + `WindowGetSize` and writes them to
+  settings. Errors swallowed — a settings-save hiccup shouldn't
+  delay shutdown.
+
+### Frontend
+
+- `App.svelte`:
+  - `patchSettings(mutate)` helper — load / mutate / save, used by
+    theme, view, panel-resize.
+  - `switchView(v)` replaces the raw toggle-button handlers; the
+    view change is saved alongside the UI update.
+  - `initialErrorsHeight` state populated from
+    `settings.panes.validationErrorsHeight` on mount; fed to
+    `ValidationPanel` as a one-way prop.
+  - `onPanelResize(e)` saves the new height when the panel emits a
+    `resize` event.
+- `ValidationPanel.svelte`:
+  - New `initialErrorsHeight` prop seeds the internal
+    `errorsHeight` state.
+  - `endDrag` and `onResizerKey` now dispatch a typed
+    `resize: { height }` event so persistence lives upstream; the
+    panel stays decoupled from settings.
+
+### Explicit non-goals for this rev
+
+- No persistence for outline-sidebar width or validation-panel
+  horizontal width — those aren't user-draggable yet. Their
+  resizers deserve their own rev if demand shows up.
+- No persistence of `recentFiles` sort order, opened-tab state
+  (we don't have tabs), or scroll positions inside the editor.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `wails build -tags xsd` — regen picked up the new settings
+  fields in TS models automatically.
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 58/58.
+- Dmitry to verify on NixOS: resize window + drag validation
+  resizer + toggle view → quit → relaunch → layout restored.
+
+### Files modified
+
+- `internal/fb2/settings/settings.go` — new fields + helper types.
+- `main.go` — read Window.{W,H} at startup, wire OnShutdown.
+- `app.go` — OnStartup position restore, new OnShutdown method.
+- `frontend/src/App.svelte` — load/save plumbing, switchView,
+  onPanelResize, initialErrorsHeight plumbing.
+- `frontend/src/validation/ValidationPanel.svelte` —
+  `initialErrorsHeight` prop, `resize` event dispatch.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.12 → 0.1.13
+- `frontend/package.json`       0.1.12 → 0.1.13
+- `frontend/package-lock.json`  0.1.12 → 0.1.13
+
+---
+
 ## Rev 51 — 2026-04-22 — `check-theme-hygiene.sh` lint + `--backdrop` palette var [dev]
 
 Version: **0.1.12**

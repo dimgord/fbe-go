@@ -24,6 +24,10 @@
   let showPanel = false;
   let xmlSource = "";
   let validationErrors: { line: number; column: number; message: string }[] = [];
+  // Initial errors-pane height in px (null = CSS default 45%). Populated
+  // from settings.panes.validationErrorsHeight on mount; updated when
+  // ValidationPanel dispatches `resize`.
+  let initialErrorsHeight: number | null = null;
 
   let showHelp = false;
 
@@ -47,15 +51,35 @@
   async function cycleTheme() {
     const next: Theme = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
     theme = next;
+    await patchSettings((s) => { s.theme = next; });
+  }
+
+  // patchSettings: load, mutate, save. Used by theme cycle, view toggle,
+  // and validation-pane resize. Silent on error — persistence is a
+  // convenience, not correctness.
+  async function patchSettings(mutate: (s: any) => void) {
     const App = await wailsApp();
     if (!App) return;
     try {
       const s = await App.LoadSettings();
-      s.theme = next;
+      mutate(s);
       await App.SaveSettings(s);
     } catch (e) {
-      console.warn("[fbe] theme save failed:", e);
+      console.warn("[fbe] settings save failed:", e);
     }
+  }
+
+  function switchView(v: View) {
+    view = v;
+    void patchSettings((s) => { s.lastView = v; });
+  }
+
+  function onPanelResize(e: CustomEvent<{ height: number }>) {
+    const h = Math.max(0, Math.round(e.detail.height));
+    void patchSettings((s) => {
+      if (!s.panes) s.panes = { validationErrorsHeight: 0 };
+      s.panes.validationErrorsHeight = h;
+    });
   }
 
   function themeIcon(t: Theme): string {
@@ -227,7 +251,9 @@
     const onSystemChange = (e: MediaQueryListEvent) => { systemDark = e.matches; };
     mq.addEventListener("change", onSystemChange);
 
-    // Load persisted theme preference.
+    // Load persisted preferences: theme, last-open view, validation-pane
+    // errors-height. Settings-read errors are swallowed — we'd rather use
+    // in-memory defaults than block mount.
     void (async () => {
       const App = await wailsApp();
       if (!App) return;
@@ -237,7 +263,14 @@
         if (t === "light" || t === "dark" || t === "system") {
           theme = t;
         }
-      } catch { /* leave as default system */ }
+        if (s?.lastView === "body" || s?.lastView === "description") {
+          view = s.lastView;
+        }
+        const h = s?.panes?.validationErrorsHeight;
+        if (typeof h === "number" && h > 0) {
+          initialErrorsHeight = h;
+        }
+      } catch { /* leave defaults */ }
     })();
     // Pick up whatever Go already has open (so opening :34115 in a browser
     // tab while a file is loaded in the native window shows that file
@@ -312,12 +345,12 @@
     <div class="view-toggle" role="tablist" aria-label="View">
       <button
         class:active={view === "body"}
-        on:click={() => (view = "body")}
+        on:click={() => switchView("body")}
         role="tab"
         aria-selected={view === "body"}>Body</button>
       <button
         class:active={view === "description"}
-        on:click={() => (view = "description")}
+        on:click={() => switchView("description")}
         role="tab"
         aria-selected={view === "description"}>Description</button>
     </div>
@@ -337,7 +370,9 @@
         <ValidationPanel
           {xmlSource}
           errors={validationErrors}
+          {initialErrorsHeight}
           on:close={() => (showPanel = false)}
+          on:resize={onPanelResize}
         />
       {/if}
     </main>
@@ -349,7 +384,9 @@
         <ValidationPanel
           {xmlSource}
           errors={validationErrors}
+          {initialErrorsHeight}
           on:close={() => (showPanel = false)}
+          on:resize={onPanelResize}
         />
       {/if}
     </div>

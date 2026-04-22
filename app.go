@@ -33,9 +33,37 @@ type App struct {
 // NewApp constructs the app.
 func NewApp() *App { return &App{} }
 
-// OnStartup is called by Wails once the webview is ready.
+// OnStartup is called by Wails once the webview is ready. It restores the
+// last-seen window position from settings.json (size is already applied via
+// options.App in main.go — position can't be, per Wails v2's API).
 func (a *App) OnStartup(ctx context.Context) {
 	a.ctx = ctx
+
+	if s, err := settings.Load(); err == nil && s != nil {
+		// Only restore a non-zero, non-negative position. First-run (zeros)
+		// keeps the OS default.
+		if s.Window.X != 0 || s.Window.Y != 0 {
+			wailsrt.WindowSetPosition(ctx, s.Window.X, s.Window.Y)
+		}
+	}
+}
+
+// OnShutdown is called by Wails just before the webview tears down. We grab
+// the final window position and size and persist them, so the next launch
+// restores the layout the user left us with. Read/write errors are
+// swallowed — a settings-save hiccup shouldn't delay shutdown.
+func (a *App) OnShutdown(ctx context.Context) {
+	x, y := wailsrt.WindowGetPosition(ctx)
+	w, h := wailsrt.WindowGetSize(ctx)
+	s, err := settings.Load()
+	if err != nil || s == nil {
+		return
+	}
+	s.Window.X = x
+	s.Window.Y = y
+	s.Window.W = w
+	s.Window.H = h
+	_ = settings.Save(s)
 }
 
 // --- Native dialogs (Wails' runtime.OpenFileDialog / SaveFileDialog are Go-only;
