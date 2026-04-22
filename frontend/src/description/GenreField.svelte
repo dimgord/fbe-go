@@ -25,19 +25,19 @@
   }
   input {
     padding: 0.25rem 0.4rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-input);
     border-radius: 3px;
     font: inherit;
   }
   .name { flex: 1; }
   .match { width: 3.5rem; text-align: center; }
-  label { font-size: 0.8rem; color: #666; }
+  label { font-size: 0.8rem; color: var(--fg-secondary); }
   .aux {
     background: white;
-    border: 1px solid #bbb;
+    border: 1px solid var(--border-button);
     border-radius: 3px;
     padding: 0 0.4rem;
     cursor: pointer;
   }
-  .aux:hover { background: #fff8e5; }
+  .aux:hover { background: var(--bg-hover); }
 </style>
