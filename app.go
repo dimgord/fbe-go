@@ -218,6 +218,35 @@ func (a *App) Validate(path string) ([]xsd.ValidationError, error) {
 	return xsd.Validate(f)
 }
 
+// SerializeCurrent returns the canonical FB2 XML of the in-memory document as
+// a string. Frontend uses this for the read-only XML source panel — the
+// output reflects any unsaved edits that were pushed via UpdateDocument.
+func (a *App) SerializeCurrent() (string, error) {
+	if a.current == nil {
+		return "", fmt.Errorf("no document open")
+	}
+	var buf bytes.Buffer
+	if err := writer.Write(&buf, a.current); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// ValidateCurrent validates the in-memory document against the bundled XSD.
+// Unlike Validate(path), this reflects unsaved edits — it serializes first
+// and validates the result, so line numbers in the returned errors map
+// directly to the output of SerializeCurrent.
+func (a *App) ValidateCurrent() ([]xsd.ValidationError, error) {
+	if a.current == nil {
+		return nil, fmt.Errorf("no document open")
+	}
+	var buf bytes.Buffer
+	if err := writer.Write(&buf, a.current); err != nil {
+		return nil, err
+	}
+	return xsd.Validate(&buf)
+}
+
 // --- Settings ---
 
 // LoadSettings returns the persisted settings (or defaults).
