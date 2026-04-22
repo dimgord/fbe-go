@@ -6,6 +6,56 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 41 — 2026-04-22 — Explicit copy-URL buttons in Help dialog [dev]
+
+Version: **0.1.2**
+
+### Symptom
+
+After Rev 40 the Help links OPEN externally (BrowserOpenURL works),
+but users can't COPY a link URL. Right-click → "Copy Link Address"
+is unreliable in Wails webviews: WKWebView's context menu is
+suppressed in release bundles, and WebKitGTK's default menu on
+NixOS doesn't always include the link-copy entry.
+
+### Fix
+
+Each Resources link in HelpDialog.svelte now has an inline
+`[ copy ]` button to its right that writes the URL to the clipboard
+via `navigator.clipboard.writeText()`, with a
+`document.execCommand("copy")` textarea fallback for older webviews
+that lack the async Clipboard API. Success flashes the button to
+`✓ copied` for 1.5s.
+
+Resources list refactored into a Svelte `{#each}` over a
+`[{label, url}, …]` array so the markup is DRY; 3-column flex row
+keeps the `copy` button aligned right even when the label wraps
+on a narrow dialog.
+
+Left the inline "Wails v2" link in the prose untouched — prose
+links don't warrant the copy-button chrome, and their URL is short
+enough to paste from the rendered href anyway.
+
+### Verification
+
+- `npm run check` 0/0.
+- `npm run test` 58/58.
+- UI: Dmitry to verify on NixOS that clicking `copy` copies the URL
+  into the system clipboard (paste-test in another app).
+
+### Files modified
+
+- `frontend/src/help/HelpDialog.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.1.1 → 0.1.2
+- `frontend/package.json`       0.1.1 → 0.1.2
+- `frontend/package-lock.json`  0.1.1 → 0.1.2
+
+---
+
 ## Rev 40 — 2026-04-22 — Help-dialog links open externally, text is selectable [dev]
 
 Version: **0.1.1**
