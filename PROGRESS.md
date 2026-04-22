@@ -6,6 +6,84 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 44 — 2026-04-22 — Recent files (Phase 2 gap) [dev]
+
+Version: **0.1.5**
+
+### What
+
+Toolbar's "Open…" button grows a split-button dropdown: click the main
+button for the native file picker, click the `▾` caret for the last 10
+opened/saved files. Click an item → opens directly, no picker round-trip.
+
+### Go side
+
+`app.go` gains three things:
+
+- `recordRecentFile(path)` — prepends `path` to `settings.RecentFiles`,
+  dedupes earlier occurrences, caps at 10 (const `recentFilesCap`,
+  matches FBE's `Settings.h`). Silent on error — recent-list is a
+  convenience, not a correctness path, so a settings-write failure
+  doesn't block `OpenFile` / `SaveFile`.
+- `App.RecentFiles()` — Wails binding returning the MRU list for the
+  frontend.
+- `App.RemoveFromRecent(path)` — frontend calls this when a recent-menu
+  click fails (file moved or deleted) so the menu doesn't keep
+  offering a dead entry.
+
+Both `App.OpenFile` and `App.SaveFile` call `recordRecentFile` after
+their primary success path.
+
+### Frontend
+
+- `App.svelte`: `recentFiles: string[]` + `recentMenuOpen: boolean`.
+  `refreshRecent()` fetches the list; called on mount and after every
+  successful Open/Save.
+- `openFile()` now accepts an optional `preset?: string` — when set,
+  skips `PickFB2ToOpen()` and opens that path directly. On failure
+  with a preset, purges the dead entry via `RemoveFromRecent`.
+- Split-button UI: main "Open…" + `▾` caret sharing a border. Caret
+  is disabled when the list is empty. Clicking the caret toggles a
+  positioned dropdown; a transparent full-viewport backdrop closes
+  it on outside-click.
+- Menu items show basename (bold) + directory (dim, small) so the
+  user sees both without hovering for the tooltip.
+
+### What's deferred
+
+- **Thumbnails** next to each item — needs `GetBinaryDataURL` per file
+  (a re-parse of every recent .fb2 on menu open). Worth doing but
+  wants caching first; out of scope for this rev.
+- **"Clear recent" menu item** — simple, skipped for now. Add if beta
+  users ask.
+- **Keyboard navigation of the dropdown** (arrow keys, Enter) — nice
+  a11y polish, deferred.
+
+### Verification
+
+- `go build -tags xsd ./...` — clean.
+- `wails build -tags xsd` — regen pulled `RecentFiles` and
+  `RemoveFromRecent` into `frontend/wailsjs/go/main/App.d.ts`
+  automatically.
+- `npm run check` 0/0, `npm run test` 58/58.
+
+### Files added / modified
+
+- `app.go` — three new methods + `recordRecentFile` helper + integrate
+  into OpenFile/SaveFile success paths.
+- `frontend/src/App.svelte` — state, refresh wiring, split-button UI,
+  dropdown menu, styles.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.4 → 0.1.5
+- `frontend/package.json`       0.1.4 → 0.1.5
+- `frontend/package-lock.json`  0.1.4 → 0.1.5
+
+---
+
 ## Rev 43 — 2026-04-22 — New app icon (blue squircle + book + code brackets) [dev]
 
 Version: **0.1.4**
