@@ -6,6 +6,147 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 33 — 2026-04-22 — Lossless fallback in PM (raw_block / raw_inline) [dev]
+
+Version: **0.0.33**
+
+### Why
+
+Rev 31 validation debugging on `book-broken.fb2` (renamed every
+`<empty-line/>` to misspellings `<empty-lune/>`, `<empty-lane/>`,
+`<empty-lyne/>`) hit a silent-drop bug in the desktop round-trip:
+
+- `./build/fbe validate book-broken.fb2` (CLI, raw bytes) reported the
+  three unknown elements as expected.
+- Opening the same file in the app and clicking Validate showed **none
+  of them** — they weren't in the errors, not in the XML pane either.
+
+Root cause: the CLAUDE.md "Lossless fallback invariant" held on the Go
+side (`Block.UnmarshalXML` / `unmarshalInlineContent` routed unknown
+elements into `Block.Raw` / `Inline.Raw`; `writer.Write` re-emitted
+them), but `frontend/src/editor/parse.ts::buildBlock` and `pushInline`
+never read the `.Raw` field. They returned `null` for blocks without a
+typed match and skipped `Inline` entries without a recognized child —
+so Raw got dropped the moment the doc went through the PM editor.
+When `validate()` in `App.svelte` pushed the PM-round-tripped doc back
+to Go via `UpdateDocument`, Raw was already gone; `writer.Write(a.current)`
+produced a clean FB2 with no ghost elements; the validator saw no
+errors about them.
+
+### Fix
+
+Two new PM schema nodes — `raw_block` and `raw_inline` — that stash the
+full `RawElement` as a JSON-stringified attribute:
+
+```
+raw_block: atom, group: "block",   attrs: { raw, localName }
+raw_inline: atom, group: "inline", attrs: { raw, localName }, inline: true
+```
+
+They render as a hatched-yellow placeholder with the element's local
+name (`<empty-lune/>`) and a tooltip explaining the element is unknown
+and preserved verbatim for save. Non-editable (`contenteditable="false"`,
+`atom: true`) but selectable — user can delete them if they really want
+to strip the unknown content.
+
+### Wiring
+
+`parse.ts`:
+
+- `buildBlock` — new trailing case `if (b.Raw) return buildRawBlock(b)`.
+- `buildBlockList` (`titleOnly` path) — also handles Raw so title-level
+  extensions survive.
+- `pushInline` — new trailing case handling `i.Raw`.
+- Helper `buildRawBlock` returns an `N.raw_block.create({ raw, localName })`
+  node with `JSON.stringify(b.Raw!)` in the attr.
+
+`serialize.ts`:
+
+- `buildBlock` — new case `"raw_block"` calls `decodeRaw(node.attrs.raw, "Block")`.
+- `buildInlines` — handles `raw_inline` the same way.
+- New helper `decodeRaw` — JSON.parses the attr with defensive guards;
+  returns null if the blob is missing / malformed (block silently
+  dropped rather than corrupting the document — but practically never
+  happens since `parse.ts` always stringifies a valid shape).
+
+`schema.ts`:
+
+- New `raw_block` / `raw_inline` nodes.
+- Extended content models to allow `raw_block` in `title`, `epigraph`,
+  `cite`, `annotation` — matching every container that holds `Block[]`
+  on the Go side. `section` already allows it via `block+` (raw_block is
+  in the "block" group). Inline containers (`paragraph`, `subtitle`,
+  `verse`, `text_author`, `date`, `table_cell`) already use `inline*`,
+  and `raw_inline` is in the "inline" group, so those auto-include it.
+
+`types.ts`:
+
+- New `RawElement` interface (XMLName, Attrs, Items) mirroring the Go
+  struct so Wails unmarshals cleanly.
+- `Block.Raw?` and `Inline.Raw?` fields added.
+
+`Editor.svelte`:
+
+- New `.raw-block` / `.raw-inline` styles — hatched yellow background,
+  dashed ocher border, monospace font. Also a selected-node outline
+  variant for the PM `ProseMirror-selectednode` class.
+
+### Test
+
+New `frontend/src/editor/raw.test.ts` (3 cases):
+
+1. A block with `Raw` survives PM round-trip and keeps its local name
+   between two Paragraphs.
+2. A complex Raw block preserves attributes (`data-source="Flibusta"`)
+   and nested Elem items (`<b>content</b>`) exactly.
+3. An inline Raw (`<ruby rb="漢" rt="kan">漢</ruby>`) inside a paragraph
+   survives with both attrs and inner text, and the surrounding text
+   segments (`"before "`, `" after"`) still flank it.
+
+### Out of scope
+
+- No XSD-valid editing of raw blocks from inside PM. They're a
+  preservation mechanism, not an editing one. Editing requires the
+  (future) raw-XML editing pane.
+- No UI affordance to promote a raw_block into a typed node. If a
+  misspelled `<empty-lune/>` is fixed, it happens externally (text
+  editor or future XML view).
+- Raw-block positions that would violate the FB2 XSD (e.g., at body
+  level) still violate. We only promise *loss-less round-trip of what
+  was in the source file*, not *schema-validity of arbitrary content*.
+
+### Verification
+
+- Go tests 56/56 (unchanged, no Go code touched this rev).
+- `npm run check` — 0 errors, 0 warnings.
+- `npm run test` — 57/57 (54 old + 3 new in raw.test.ts).
+- UI placeholder rendering not clicked-through from dev env; Dmitry to
+  re-open `book-broken.fb2` and confirm: (a) XML source pane now shows
+  `<empty-lune/>`, `<empty-lane/>`, `<empty-lyne/>` in the output (not
+  silently stripped); (b) errors list includes them with proper line
+  numbers (via Rev 31 heuristic); (c) the misspelled elements appear in
+  the editor as hatched-yellow `<empty-lune/>` placeholders instead of
+  vanishing.
+
+### Files added / modified
+
+- `frontend/src/fb2/types.ts` — RawElement interface + Raw on Block/Inline
+- `frontend/src/editor/schema.ts` — raw_block / raw_inline nodes + content-model
+- `frontend/src/editor/parse.ts` — buildRawBlock + inline Raw handling
+- `frontend/src/editor/serialize.ts` — decodeRaw + raw_block / raw_inline cases
+- `frontend/src/editor/Editor.svelte` — `.raw-block` / `.raw-inline` CSS
+- `frontend/src/editor/raw.test.ts` (new) — 3 round-trip tests
+- `CLAUDE.md` — frontend side of the Lossless invariant
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.32 → 0.0.33
+- `frontend/package.json`       0.0.32 → 0.0.33
+- `frontend/package-lock.json`  0.0.32 → 0.0.33
+
+---
+
 ## Rev 32 — 2026-04-22 — Table cells: fix `<Children><Text>` ghost tags [dev]
 
 Version: **0.0.32**

@@ -237,8 +237,25 @@ function buildBlock(node: PMNode): Block | null {
       return { Table: buildTable(node) };
     case "image_block":
       return { Image: buildImage(node) };
+    case "raw_block":
+      return decodeRaw(node.attrs.raw, "Block");
   }
   return null;
+}
+
+// decodeRaw parses the JSON blob stashed in a raw_{block,inline} node back
+// into the wrapper shape the Go writer expects. Returns null if the attr is
+// empty or malformed — the block is silently dropped rather than corrupting
+// the whole document.
+function decodeRaw(raw: unknown, kind: "Block" | "Inline"): Block | Inline | null {
+  if (typeof raw !== "string" || raw === "") return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return { Raw: parsed } as Block | Inline;
+  } catch {
+    return null;
+  }
 }
 
 function buildParagraph(node: PMNode): Paragraph {
@@ -261,6 +278,9 @@ function buildInlines(node: PMNode): Inline[] {
           Alt: child.attrs.alt || undefined,
         },
       });
+    } else if (child.type.name === "raw_inline") {
+      const raw = decodeRaw(child.attrs.raw, "Inline") as Inline | null;
+      if (raw) out.push(raw);
     }
   });
   return out;
