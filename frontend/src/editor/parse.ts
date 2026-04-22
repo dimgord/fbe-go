@@ -69,17 +69,14 @@ function buildSection(s: Section): PMNode | null {
     if (n) children.push(n);
   }
 
-  // FB2: section has either nested sections OR flat block content, not both.
-  if (s.Sections && s.Sections.length > 0) {
-    for (const sub of s.Sections) {
-      const n = buildSection(sub);
-      if (n) children.push(n);
-    }
-  } else {
-    for (const b of s.Blocks ?? []) {
-      const n = buildBlock(b);
-      if (n) children.push(n);
-    }
+  // Rev 37: Section.Body is a single ordered list of Block values —
+  // a Block with a non-null Section field is a nested subsection, everything
+  // else is a flat block. Walk the list in order so on-disk interleaving
+  // survives the PM round-trip. The PM `section` content model is
+  // (section | block)+ so a mix of the two variants is legal.
+  for (const b of s.Body ?? []) {
+    const n = buildBlock(b);
+    if (n) children.push(n);
   }
 
   if (children.length === 0) {
@@ -216,6 +213,7 @@ function buildBlockList(blocks: Block[], opts: { titleOnly?: boolean } = {}): PM
       // Titles may only contain paragraphs and empty-lines per FictionBook.xsd.
       if (b.Paragraph) out.push(buildParagraph(b.Paragraph));
       else if (b.EmptyLine) out.push(N.empty_line.create());
+      else if (b.Raw) out.push(buildRawBlock(b));
       continue;
     }
     const n = buildBlock(b);
@@ -232,7 +230,19 @@ function buildBlock(b: Block): PMNode | null {
   if (b.Cite)      return buildCite(b.Cite);
   if (b.Table)     return buildTable(b.Table);
   if (b.Image)     return buildBlockImage(b.Image);
+  if (b.Section)   return buildSection(b.Section);
+  if (b.Raw)       return buildRawBlock(b);
   return null;
+}
+
+// buildRawBlock stashes the full RawElement JSON as an attribute so serialize.ts
+// can reconstruct it on save. The PM node is an atom with a placeholder label.
+function buildRawBlock(b: Block): PMNode {
+  const raw = b.Raw!;
+  return N.raw_block.create({
+    raw: JSON.stringify(raw),
+    localName: raw.XMLName?.Local ?? "?",
+  });
 }
 
 function buildParagraph(p: Paragraph): PMNode {
@@ -272,6 +282,13 @@ function pushInline(i: Inline, marks: Mark[], out: PMNode[]): void {
       href: i.Image.Href,
       title: i.Image.Title ?? "",
       alt: i.Image.Alt ?? "",
+    }));
+  }
+
+  if (i.Raw) {
+    out.push(N.raw_inline.create({
+      raw: JSON.stringify(i.Raw),
+      localName: i.Raw.XMLName?.Local ?? "?",
     }));
   }
 }

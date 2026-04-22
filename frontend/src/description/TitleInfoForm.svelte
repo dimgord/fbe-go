@@ -7,14 +7,17 @@
   import CoverpageField from "./CoverpageField.svelte";
   import AnnotationEditor from "./AnnotationEditor.svelte";
   import type { Annotation } from "../fb2/types";
+  import { uid } from "../lib/uid";
 
   export let info: TitleInfo;
+  /** For the coverpage dropdown — IDs of binaries available on the book. */
+  export let availableBinaryIDs: string[] = [];
+
+  const id_ = uid("ti");
 
   function onAnnotationChange(e: CustomEvent<Annotation>) {
     info.Annotation = e.detail;
   }
-  /** For the coverpage dropdown — IDs of binaries available on the book. */
-  export let availableBinaryIDs: string[] = [];
 
   // Ensure optional arrays exist so two-way binding has a stable target.
   $: if (!info.Translators) info.Translators = [];
@@ -69,26 +72,26 @@
 
   <h3>Book</h3>
   <div class="row">
-    <label>Title</label>
-    <input class="wide" bind:value={info.BookTitle} />
+    <label for={`${id_}-title`}>Title</label>
+    <input id={`${id_}-title`} class="wide" bind:value={info.BookTitle} />
   </div>
   <div class="row">
-    <label>Keywords</label>
-    <input class="wide" bind:value={info.Keywords} placeholder="comma, separated, keywords" />
+    <label for={`${id_}-kw`}>Keywords</label>
+    <input id={`${id_}-kw`} class="wide" bind:value={info.Keywords} placeholder="comma, separated, keywords" />
   </div>
   <DateField bind:date={info.Date} label="Date" />
   <div class="row">
-    <label>Lang</label>
-    <input class="short" bind:value={info.Lang} placeholder="uk" maxlength="10" />
-    <label>Source lang</label>
-    <input class="short" bind:value={info.SrcLang} placeholder="ru" maxlength="10" />
+    <label for={`${id_}-lang`}>Lang</label>
+    <input id={`${id_}-lang`} class="short" bind:value={info.Lang} placeholder="uk" maxlength="10" />
+    <label for={`${id_}-src-lang`}>Source lang</label>
+    <input id={`${id_}-src-lang`} class="short" bind:value={info.SrcLang} placeholder="ru" maxlength="10" />
   </div>
 
   <h3>Annotation</h3>
   <AnnotationEditor annotation={info.Annotation ?? { Children: [] }} on:change={onAnnotationChange} />
 
   <h3>Coverpage</h3>
-  <CoverpageField bind:cover={info.Coverpage} {availableBinaryIDs} />
+  <CoverpageField bind:cover={info.Coverpage} availableIDs={availableBinaryIDs} />
 
   <h3>Translators</h3>
   {#if info.Translators}
@@ -146,6 +149,4 @@
     cursor: pointer; padding: 0.15rem 0; font-size: 0.85rem; text-align: left;
     align-self: flex-start;
   }
-  .hint { color: #888; font-size: 0.85rem; margin: 0.2rem 0; }
-  code { background: #f5f5ef; padding: 0.05em 0.3em; border-radius: 3px; }
 </style>

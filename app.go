@@ -14,12 +14,13 @@ import (
 
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
-	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
+	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
+	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App holds per-session state.
@@ -37,17 +38,75 @@ func (a *App) OnStartup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+// --- Native dialogs (Wails' runtime.OpenFileDialog / SaveFileDialog are Go-only;
+// expose wrappers so the frontend can open dialogs without a direct window.runtime
+// dependency, which in Wails v2 doesn't ship dialog helpers to JS). ---
+
+// PickFB2ToOpen shows a native "open file" dialog filtered for .fb2 files.
+// Returns an empty string if the user cancels.
+//
+// Note: Wails v2.9.2 on macOS crashes with `NSInvalidArgumentException` when a
+// filter pattern contains multi-dot extensions like `*.fb2.zip`, because its
+// native code feeds each split token to `[UTType typeWithFilenameExtension:]`
+// without a nil check — multi-dot extensions return nil and then
+// `[NSArray addObject:nil]` throws. We stick to the single `*.fb2` extension
+// and let users pick `.fb2.zip` archives via "All files" instead.
+func (a *App) PickFB2ToOpen() (string, error) {
+	return wailsrt.OpenFileDialog(a.ctx, wailsrt.OpenDialogOptions{
+		Title: "Open FB2 file",
+		Filters: []wailsrt.FileFilter{
+			{DisplayName: "FictionBook (*.fb2)", Pattern: "*.fb2"},
+		},
+	})
+}
+
+// PickFB2ToSave shows a native "save file" dialog defaulted to a .fb2 extension.
+func (a *App) PickFB2ToSave(suggested string) (string, error) {
+	if suggested == "" {
+		suggested = "untitled.fb2"
+	}
+	return wailsrt.SaveFileDialog(a.ctx, wailsrt.SaveDialogOptions{
+		Title:           "Save FB2",
+		DefaultFilename: suggested,
+		Filters: []wailsrt.FileFilter{
+			{DisplayName: "FictionBook (*.fb2)", Pattern: "*.fb2"},
+		},
+	})
+}
+
+// PickHTMLToSave shows a native "save file" dialog for the HTML exporter.
+func (a *App) PickHTMLToSave(suggested string) (string, error) {
+	if suggested == "" {
+		suggested = "untitled.html"
+	}
+	return wailsrt.SaveFileDialog(a.ctx, wailsrt.SaveDialogOptions{
+		Title:           "Export HTML",
+		DefaultFilename: suggested,
+		Filters: []wailsrt.FileFilter{
+			{DisplayName: "HTML (*.html)", Pattern: "*.html"},
+		},
+	})
+}
+
 // --- File operations exposed to the frontend ---
 
 // OpenFile reads an FB2 (or FB2.zip) file and returns the parsed document as JSON.
-func (a *App) OpenFile(path string) (*doc.FictionBook, error) {
+// Panics are recovered so a bad document surfaces as a normal JS-side error
+// instead of killing the webview.
+func (a *App) OpenFile(path string) (fb *doc.FictionBook, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fb = nil
+			err = fmt.Errorf("OpenFile panic: %v", r)
+		}
+	}()
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	fb, err := parser.Parse(f)
+	fb, err = parser.Parse(f)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +216,53 @@ func (a *App) Validate(path string) ([]xsd.ValidationError, error) {
 	}
 	defer f.Close()
 	return xsd.Validate(f)
+}
+
+// SerializeCurrent returns the canonical FB2 XML of the in-memory document as
+// a string. Frontend uses this for the read-only XML source panel — the
+// output reflects any unsaved edits that were pushed via UpdateDocument.
+func (a *App) SerializeCurrent() (string, error) {
+	if a.current == nil {
+		return "", fmt.Errorf("no document open")
+	}
+	var buf bytes.Buffer
+	if err := writer.Write(&buf, a.current); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// ValidateCurrent validates the in-memory document against the bundled XSD
+// and supplements libxml2's findings with a structure-agnostic unknown-
+// element scan. Unlike Validate(path), this reflects unsaved edits.
+//
+// Two error sources are merged:
+//
+//   - libxml2 schema validation (xsd.Validate) — reports XSD content-model
+//     violations with rich "Expected is one of (...)" messages. Subject to
+//     libxml2's recovery quirks, which can drop later unknown-element
+//     errors after the first in a content group.
+//   - Our own unknown-element scanner (xsd.FindUnknownElements) — regexes
+//     through the serialized source and flags any tag outside the
+//     FictionBook 2.0 vocabulary. Structure-agnostic, so every occurrence
+//     shows up regardless of libxml2's DFA recovery.
+//
+// Dedup is handled in xsd.MergeXSDAndUnknown: if both sources cover the same
+// element at the same line, only libxml2's richer entry is kept.
+func (a *App) ValidateCurrent() ([]xsd.ValidationError, error) {
+	if a.current == nil {
+		return nil, fmt.Errorf("no document open")
+	}
+	var buf bytes.Buffer
+	if err := writer.Write(&buf, a.current); err != nil {
+		return nil, err
+	}
+	src := buf.Bytes()
+	xsdErrs, err := xsd.Validate(bytes.NewReader(src))
+	if err != nil {
+		return nil, err
+	}
+	return xsd.MergeXSDAndUnknown(xsdErrs, xsd.FindUnknownElements(src)), nil
 }
 
 // --- Settings ---

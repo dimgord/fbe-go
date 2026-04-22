@@ -31,8 +31,13 @@ type Stylesheet struct {
 }
 
 // Description aggregates all descriptive metadata sections.
+//
+// TitleInfo is a pointer with `,omitempty` (rather than a value type) so that
+// a document whose source lacks `<title-info>` round-trips as "absent" rather
+// than materializing a ghost element with empty `<book-title>`/`<lang>` on the
+// writer side. Callers must nil-check before dereferencing.
 type Description struct {
-	TitleInfo    TitleInfo     `xml:"title-info"`
+	TitleInfo    *TitleInfo    `xml:"title-info,omitempty"`
 	SrcTitleInfo *TitleInfo    `xml:"src-title-info,omitempty"`
 	DocumentInfo DocumentInfo  `xml:"document-info"`
 	PublishInfo  *PublishInfo  `xml:"publish-info,omitempty"`
@@ -152,16 +157,122 @@ type Body struct {
 }
 
 // Section is a recursive structural block.
+//
+// Body holds the post-header content in source order — each entry is a
+// `Block`, and a Block whose `Section` field is non-nil represents a nested
+// subsection. FictionBook.xsd strictly requires this tail to be either all
+// blocks or all subsections (no mixing), but real-world files sometimes
+// violate that. Using a single ordered slice keeps their on-disk
+// interleaving intact across round-trip. See Block.UnmarshalXML /
+// MarshalXML for the `<section>` dispatch that makes this work.
 type Section struct {
-	ID       string    `xml:"id,attr,omitempty"`
-	Title    *Title    `xml:"title,omitempty"`
-	Epigraph []Epigraph `xml:"epigraph,omitempty"`
-	Image    *Image    `xml:"image,omitempty"`
+	ID         string      `xml:"id,attr,omitempty"`
+	Title      *Title      `xml:"title,omitempty"`
+	Epigraph   []Epigraph  `xml:"epigraph,omitempty"`
+	Image      *Image      `xml:"image,omitempty"`
 	Annotation *Annotation `xml:"annotation,omitempty"`
 
-	// Either nested sections OR inline block content (paragraphs, poems, etc.).
-	Sections []Section `xml:"section,omitempty"`
-	Blocks   []Block   `xml:",any"`
+	// Ordered tail: blocks and/or nested subsections as they appear in the source.
+	Body []Block `xml:"-"`
+}
+
+// UnmarshalXML reads the fixed-order header (title?, epigraph*, image?,
+// annotation?) and then collects every remaining child — be it a `<section>`
+// or any block-level element — into Body in the order they appear. This
+// replaces Go's default reflection-based unmarshal, which would have split
+// sections and blocks into two disjoint slices and lost their interleaving.
+func (s *Section) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	for _, a := range start.Attr {
+		if a.Name.Local == "id" {
+			s.ID = a.Value
+		}
+	}
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "title":
+				s.Title = &Title{}
+				if err := d.DecodeElement(s.Title, &t); err != nil {
+					return err
+				}
+			case "epigraph":
+				var ep Epigraph
+				if err := d.DecodeElement(&ep, &t); err != nil {
+					return err
+				}
+				s.Epigraph = append(s.Epigraph, ep)
+			case "image":
+				s.Image = &Image{}
+				if err := d.DecodeElement(s.Image, &t); err != nil {
+					return err
+				}
+			case "annotation":
+				s.Annotation = &Annotation{}
+				if err := d.DecodeElement(s.Annotation, &t); err != nil {
+					return err
+				}
+			default:
+				// Everything else — including `<section>` — goes into Body.
+				// Block.UnmarshalXML dispatches on the element name.
+				var b Block
+				if err := b.UnmarshalXML(d, t); err != nil {
+					return err
+				}
+				s.Body = append(s.Body, b)
+			}
+		case xml.EndElement:
+			return nil
+		}
+	}
+}
+
+// MarshalXML emits the header fields in their XSD-required order, then the
+// Body in source order. Each Body entry goes through Block.MarshalXML, which
+// re-emits `<section>` for nested-section variants.
+func (s Section) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if start.Name.Local == "" {
+		start.Name = xml.Name{Local: "section"}
+	}
+	start.Attr = nil
+	addAttrIfSet(&start, "id", s.ID)
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if s.Title != nil {
+		if err := e.EncodeElement(s.Title, xml.StartElement{Name: xml.Name{Local: "title"}}); err != nil {
+			return err
+		}
+	}
+	for _, ep := range s.Epigraph {
+		if err := e.EncodeElement(ep, xml.StartElement{Name: xml.Name{Local: "epigraph"}}); err != nil {
+			return err
+		}
+	}
+	if s.Image != nil {
+		if err := e.EncodeElement(s.Image, xml.StartElement{Name: xml.Name{Local: "image"}}); err != nil {
+			return err
+		}
+	}
+	if s.Annotation != nil {
+		if err := e.EncodeElement(s.Annotation, xml.StartElement{Name: xml.Name{Local: "annotation"}}); err != nil {
+			return err
+		}
+	}
+	for _, b := range s.Body {
+		// Block.MarshalXML discards the StartElement arg and dispatches on
+		// whichever field is populated (paragraph/poem/.../section/raw), so
+		// we call it directly — passing an empty start to EncodeElement
+		// errors with "missing name" because Block has no XMLName field.
+		if err := b.MarshalXML(e, xml.StartElement{}); err != nil {
+			return err
+		}
+	}
+	return e.EncodeToken(start.End())
 }
 
 // Title is a simple block container of <p> / <empty-line>.
@@ -210,6 +321,10 @@ type Stanza struct {
 //
 // Raw captures any element we don't have a typed representation for (custom
 // FB2 extensions, future-version elements) so the round-trip is lossless.
+//
+// Section is a Block variant too (not just a sibling of Block) so that a
+// parent section's ordered Body can interleave subsections with flat blocks
+// — see Section.Body / Section.UnmarshalXML.
 type Block struct {
 	Paragraph *Paragraph
 	Poem      *Poem
@@ -218,6 +333,7 @@ type Block struct {
 	EmptyLine *EmptyLine
 	Table     *Table
 	Image     *Image
+	Section   *Section
 	Raw       *RawElement
 }
 
@@ -312,6 +428,9 @@ func (b *Block) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	case "image":
 		b.Image = &Image{}
 		return d.DecodeElement(b.Image, &start)
+	case "section":
+		b.Section = &Section{}
+		return d.DecodeElement(b.Section, &start)
 	}
 	b.Raw = &RawElement{}
 	return b.Raw.UnmarshalXML(d, start)
@@ -334,6 +453,8 @@ func (b Block) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		return e.EncodeElement(b.Table, xml.StartElement{Name: xml.Name{Local: "table"}})
 	case b.Image != nil:
 		return e.EncodeElement(b.Image, xml.StartElement{Name: xml.Name{Local: "image"}})
+	case b.Section != nil:
+		return e.EncodeElement(b.Section, xml.StartElement{Name: xml.Name{Local: "section"}})
 	case b.Raw != nil:
 		return b.Raw.MarshalXML(e, xml.StartElement{})
 	}
@@ -371,6 +492,16 @@ func (p *Paragraph) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 // MarshalXML emits attributes and then re-serializes Children as mixed content.
+//
+// We don't attempt to suppress Go's encoder indent around the mixed-content
+// children from here — `xml.Encoder.Indent("", "")` would produce visually
+// correct output for this <p>'s children, but it leaves the encoder's
+// *internal* depth counter out of sync with the tag stack (writeIndent with
+// both strings empty short-circuits before decrementing the counter), which
+// then over-indents every following sibling block by the number of toggles.
+// The mixed-content whitespace cleanup is done once in `writer.Write` as a
+// targeted regex pass — see the comment there for the regex and the set of
+// affected container names.
 func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	addAttrIfSet(&start, "id", p.ID)
 	addAttrIfSet(&start, "style", p.Style)
@@ -566,8 +697,16 @@ func (s StyleInline) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 }
 
 // Link = FB2 <a> — note references use type="note".
+//
+// Href uses `xml:"-"` and a manually-emitted `l:href` attribute literal
+// (colon-in-local-name) in MarshalXML. Using `xml:"http://…/xlink href,attr"`
+// would trigger Go's encoding/xml namespace handler, which re-declares
+// `xmlns:xlink="http://…/xlink"` on every `<a>` element instead of reusing
+// the `xmlns:l` prefix declared once on the FictionBook root. The
+// unmarshal side accepts any of `l:href`, `xlink:href`, bare `href`, or
+// the parser's namespace-resolved variant with Space == NSXLink.
 type Link struct {
-	Href     string   `xml:"http://www.w3.org/1999/xlink href,attr"`
+	Href     string   `xml:"-"`
 	Type     string   `xml:"type,attr,omitempty"`
 	Children []Inline `xml:"-"`
 }
@@ -586,9 +725,13 @@ func (l *Link) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 }
 
 // MarshalXML emits l:href (xlink) and type attribute, plus mixed content.
+// The `l:href` attribute name is emitted as a literal local name (colon
+// included) so Go's default namespace machinery doesn't kick in and
+// re-declare `xmlns:xlink` on every <a>. The FictionBook root (emitted by
+// writer.Write) is responsible for declaring `xmlns:l` once.
 func (l Link) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if l.Href != "" {
-		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Space: NSXLink, Local: "href"}, Value: l.Href})
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "l:href"}, Value: l.Href})
 	}
 	addAttrIfSet(&start, "type", l.Type)
 	if err := e.EncodeToken(start); err != nil {
@@ -622,6 +765,14 @@ type Row struct {
 }
 
 // Cell = <th> or <td>.
+//
+// Children uses `xml:"-"` + custom (Un)MarshalXML — same pattern as Paragraph.
+// With `xml:",any"` Go's default marshaller would emit `<Children>` as the
+// element name (from the field name) and serialize each Inline struct field
+// (Text/Strong/…) with its Go name, producing invalid FB2 like
+// `<th><Children><Text>…</Text></Children></th>`. Instead we dispatch inline
+// content through `marshalInlineContent` so nested marks and text interleave
+// directly inside <th>/<td>.
 type Cell struct {
 	XMLName  xml.Name // local name "th" or "td"
 	ID       string   `xml:"id,attr,omitempty"`
@@ -630,7 +781,63 @@ type Cell struct {
 	RowSpan  string   `xml:"rowspan,attr,omitempty"`
 	Align    string   `xml:"align,attr,omitempty"`
 	VAlign   string   `xml:"valign,attr,omitempty"`
-	Children []Inline `xml:",any"`
+	Children []Inline `xml:"-"`
+}
+
+// UnmarshalXML reads th/td attributes and mixed inline content.
+func (c *Cell) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	c.XMLName = start.Name
+	for _, a := range start.Attr {
+		switch a.Name.Local {
+		case "id":
+			c.ID = a.Value
+		case "style":
+			c.Style = a.Value
+		case "colspan":
+			c.ColSpan = a.Value
+		case "rowspan":
+			c.RowSpan = a.Value
+		case "align":
+			c.Align = a.Value
+		case "valign":
+			c.VAlign = a.Value
+		}
+	}
+	return unmarshalInlineContent(d, start, &c.Children)
+}
+
+// MarshalXML emits <th|td> with attributes and inline mixed content.
+//
+// Uses only the local name — not c.XMLName in full — so the parent's xmlns
+// default namespace applies without each cell re-emitting
+// `xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"`. Fall back to the
+// incoming start.Name.Local when c.XMLName is zero (shouldn't happen in
+// practice since it's populated during unmarshal and by the frontend).
+//
+// Mixed-content whitespace (text + inline marks inside the cell) is
+// normalized by the writer's post-process pass, not here. See the long
+// comment on Paragraph.MarshalXML for why toggling encoder indent from a
+// nested MarshalXML corrupts the encoder's depth counter.
+func (c Cell) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	local := c.XMLName.Local
+	if local == "" {
+		local = start.Name.Local
+	}
+	start.Name = xml.Name{Local: local}
+	start.Attr = nil
+	addAttrIfSet(&start, "id", c.ID)
+	addAttrIfSet(&start, "style", c.Style)
+	addAttrIfSet(&start, "colspan", c.ColSpan)
+	addAttrIfSet(&start, "rowspan", c.RowSpan)
+	addAttrIfSet(&start, "align", c.Align)
+	addAttrIfSet(&start, "valign", c.VAlign)
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if err := marshalInlineContent(e, c.Children); err != nil {
+		return err
+	}
+	return e.EncodeToken(start.End())
 }
 
 // Binary holds a base64-encoded binary (typically an image).

@@ -4,6 +4,8 @@
   import Editor from "./editor/Editor.svelte";
   import Toolbar from "./editor/Toolbar.svelte";
   import DescriptionPanel from "./description/DescriptionPanel.svelte";
+  import ValidationPanel from "./validation/ValidationPanel.svelte";
+  import HelpDialog from "./help/HelpDialog.svelte";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
 
@@ -17,28 +19,44 @@
   let error = "";
   let editor: Editor | undefined = undefined;
 
-  async function wails() {
-    const App = await import("../wailsjs/go/main/App").catch(() => null);
-    const runtime = await import("../wailsjs/runtime/runtime").catch(() => null);
-    return App && runtime ? { App, runtime } : null;
+  // Validation / XML-source panel state.
+  let showPanel = false;
+  let xmlSource = "";
+  let validationErrors: { line: number; column: number; message: string }[] = [];
+
+  let showHelp = false;
+
+  async function wailsApp() {
+    return await import("../wailsjs/go/main/App").catch(() => null);
   }
 
   async function openFile() {
     error = ""; status = "";
     try {
-      const w = await wails();
-      if (!w) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
-      const path: string = await w.runtime.OpenFileDialog({
-        Title: "Open FB2 file",
-        Filters: [{ DisplayName: "FictionBook (*.fb2;*.fb2.zip)", Pattern: "*.fb2;*.fb2.zip" }],
-      });
+      const App = await wailsApp();
+      if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
+      const path = await App.PickFB2ToOpen();
       if (!path) return;
-      // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
-      fb = await w.App.OpenFile(path);
+      console.log(`[fbe] opening ${path}`);
+      status = `Opening ${path.split(/[\\/]/).pop()}…`;
+      const parsed: FictionBook = await App.OpenFile(path);
+      console.log(
+        `[fbe] parsed: ${parsed.Bodies?.length ?? 0} bodies, ` +
+        `${parsed.Binaries?.length ?? 0} binaries, ` +
+        `title "${parsed.Description?.TitleInfo?.BookTitle ?? ""}"`,
+      );
+      // Defer to next tick so the status update renders before we potentially
+      // block the UI thread converting a huge doc into ProseMirror nodes.
+      await new Promise((r) => setTimeout(r, 0));
+      fb = parsed;
       currentPath = path;
       filename = path.split(/[\\/]/).pop() ?? path;
+      status = `Opened ${filename}`;
+      setTimeout(() => (status = ""), 3000);
     } catch (e) {
-      error = (e as Error).message;
+      const msg = (e as Error).message || String(e);
+      console.error("[fbe] openFile failed:", e);
+      error = `Open failed: ${msg}`;
       fb = SAMPLE_BOOK;
       currentPath = "";
       filename = "blank.fb2 (sample)";
@@ -48,28 +66,24 @@
   async function save(saveAs: boolean) {
     error = ""; status = "";
     try {
-      const w = await wails();
-      if (!w) throw new Error("Wails bindings not available — save works only in the desktop app.");
+      const App = await wailsApp();
+      if (!App) throw new Error("Wails bindings not available — save works only in the desktop app.");
       if (!editor) throw new Error("Editor not ready.");
       const current = editor.currentFB();
       if (!current) throw new Error("No document loaded.");
 
       let path = currentPath;
       if (saveAs || !path) {
-        path = await w.runtime.SaveFileDialog({
-          Title: saveAs ? "Save As" : "Save FB2",
-          DefaultFilename: filename.endsWith(".fb2") ? filename : "untitled.fb2",
-          Filters: [{ DisplayName: "FictionBook (*.fb2)", Pattern: "*.fb2" }],
-        });
+        const suggested = filename.endsWith(".fb2") ? filename : "untitled.fb2";
+        path = await App.PickFB2ToSave(suggested);
         if (!path) return;
       }
       // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
-      await w.App.UpdateDocument(current);
-      await w.App.SaveFile(path);
+      await App.UpdateDocument(current);
+      await App.SaveFile(path);
       currentPath = path;
       filename = path.split(/[\\/]/).pop() ?? path;
       status = `Saved ${filename}`;
-      // Clear status after 3s.
       setTimeout(() => (status = ""), 3000);
     } catch (e) {
       error = (e as Error).message;
@@ -79,24 +93,18 @@
   async function exportHTML() {
     error = ""; status = "";
     try {
-      const w = await wails();
-      if (!w) throw new Error("Wails bindings not available.");
+      const App = await wailsApp();
+      if (!App) throw new Error("Wails bindings not available.");
       if (!editor) throw new Error("Editor not ready.");
-      // Refresh the Go-side fb with the current PM doc before export.
       const current = editor.currentFB();
       if (current) {
-        // @ts-expect-error — doc.FictionBook shape
-        await w.App.UpdateDocument(current);
+        // @ts-expect-error
+        await App.UpdateDocument(current);
       }
-      const defaultName = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
-      const path: string = await w.runtime.SaveFileDialog({
-        Title: "Export HTML",
-        DefaultFilename: defaultName,
-        Filters: [{ DisplayName: "HTML (*.html)", Pattern: "*.html" }],
-      });
+      const suggested = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
+      const path = await App.PickHTMLToSave(suggested);
       if (!path) return;
-      // @ts-expect-error
-      await w.App.ExportHTML(path);
+      await App.ExportHTML(path);
       status = `Exported ${path.split(/[\\/]/).pop() ?? path}`;
       setTimeout(() => (status = ""), 3000);
     } catch (e) {
@@ -107,17 +115,31 @@
   async function validate() {
     error = ""; status = "";
     try {
-      const w = await wails();
-      if (!w || !currentPath) throw new Error("Open a saved file first.");
-      // @ts-expect-error
-      const errs: Array<{ Line: number; Column: number; Message: string }> =
-        await w.App.Validate(currentPath);
-      if (!errs || errs.length === 0) {
-        status = "XSD valid ✓";
-      } else {
-        status = `XSD: ${errs.length} error(s) — first: ${errs[0].Message.slice(0, 120)}`;
+      const App = await wailsApp();
+      if (!App) throw new Error("Wails bindings not available.");
+      if (!fb) throw new Error("No document loaded.");
+
+      // Push the latest editor state to Go (if we're in body view) so the
+      // serialized XML and the validation result reflect unsaved edits.
+      const current = (view === "body" && editor) ? editor.currentFB() : fb;
+      if (current) {
+        // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
+        await App.UpdateDocument(current);
       }
-      setTimeout(() => (status = ""), 6000);
+
+      const [xml, errs] = await Promise.all([
+        App.SerializeCurrent(),
+        App.ValidateCurrent(),
+      ]);
+
+      xmlSource = xml ?? "";
+      validationErrors = errs ?? [];
+      showPanel = true;
+
+      status = errs && errs.length > 0
+        ? `XSD: ${errs.length} error(s)`
+        : "XSD valid ✓";
+      setTimeout(() => (status = ""), 4000);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -133,9 +155,27 @@
 
   onMount(() => {
     document.title = "FictionBook Editor (Go)";
-    fb = SAMPLE_BOOK;
-    filename = "blank.fb2 (sample)";
     window.addEventListener("keydown", onKeyDown);
+    // Pick up whatever Go already has open (so opening :34115 in a browser
+    // tab while a file is loaded in the native window shows that file
+    // instead of the sample). Path is intentionally NOT synced — Save in
+    // the dev-tab should land in Save-As to avoid two contexts racing on
+    // the same path.
+    void (async () => {
+      const App = await wailsApp();
+      if (App) {
+        try {
+          const current = await App.CurrentDocument();
+          if (current && current.Bodies && current.Bodies.length > 0) {
+            fb = current as FictionBook;
+            filename = "(opened in native window)";
+            return;
+          }
+        } catch { /* fall through to sample */ }
+      }
+      fb = SAMPLE_BOOK;
+      filename = "blank.fb2 (sample)";
+    })();
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 </script>
@@ -145,8 +185,9 @@
     <button on:click={openFile}>Open…</button>
     <button on:click={() => save(false)} disabled={!editor}>Save</button>
     <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
-    <button on:click={validate} disabled={!currentPath}>Validate</button>
+    <button on:click={validate} disabled={!fb}>Validate</button>
     <button on:click={exportHTML} disabled={!editor}>Export HTML…</button>
+    <button on:click={() => (showHelp = true)} title="Keyboard shortcuts and about">Help</button>
     <div class="view-toggle" role="tablist" aria-label="View">
       <button
         class:active={view === "body"}
@@ -166,19 +207,35 @@
 
   {#if view === "body"}
     <Toolbar {editor} />
-    <main>
+    <main class:with-panel={showPanel}>
       <aside>
         <DocumentTree {fb} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
       <section><Editor bind:this={editor} {fb} /></section>
+      {#if showPanel}
+        <ValidationPanel
+          {xmlSource}
+          errors={validationErrors}
+          on:close={() => (showPanel = false)}
+        />
+      {/if}
     </main>
   {:else if fb}
     <div class="spacer" />
-    <div class="description-wrap">
+    <div class="description-wrap with-panel-maybe" class:with-panel={showPanel}>
       <DescriptionPanel bind:fb />
+      {#if showPanel}
+        <ValidationPanel
+          {xmlSource}
+          errors={validationErrors}
+          on:close={() => (showPanel = false)}
+        />
+      {/if}
     </div>
   {/if}
 </div>
+
+<HelpDialog bind:open={showHelp} />
 
 <style>
   :global(body), :global(html) {
@@ -237,6 +294,9 @@
     grid-template-columns: 260px 1fr;
     overflow: hidden;
   }
+  main.with-panel {
+    grid-template-columns: 260px 1fr minmax(320px, 30%);
+  }
   aside {
     border-right: 1px solid #d5d5cb;
     overflow: auto;
@@ -246,5 +306,9 @@
   section {
     overflow: auto;
     background: white;
+  }
+  .description-wrap.with-panel-maybe.with-panel {
+    display: grid;
+    grid-template-columns: 1fr minmax(320px, 30%);
   }
 </style>

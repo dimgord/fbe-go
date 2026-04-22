@@ -64,6 +64,11 @@
     cursor: pointer;
     font-size: 0.85rem;
     padding: 0 0.4rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    line-height: 1;
   }
   .toolbar button:hover { background: #fff8e5; }
   .toolbar button:active { background: #fce6a0; }

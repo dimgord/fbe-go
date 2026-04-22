@@ -58,8 +58,8 @@
   {#if info.SrcURL}
     {#each info.SrcURL as _, i (i)}
       <div class="row">
-        <label>Source URL</label>
-        <input class="wide" bind:value={info.SrcURL[i]} />
+        <label for={`di-src-url-${i}`}>Source URL</label>
+        <input id={`di-src-url-${i}`} class="wide" bind:value={info.SrcURL[i]} />
         <button class="aux" type="button" on:click={() => removeURL(i)}>×</button>
       </div>
     {/each}

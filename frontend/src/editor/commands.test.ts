@@ -106,7 +106,7 @@ describe("structural commands on SAMPLE_BOOK", () => {
       Description: SAMPLE_BOOK.Description,
       Bodies: [
         {
-          Sections: [{ Blocks: [{ Paragraph: { Children: [{ Text: "body text" }] } }] }],
+          Sections: [{ Body: [{ Paragraph: { Children: [{ Text: "body text" }] } }] }],
         },
       ],
     };
@@ -232,7 +232,7 @@ describe("insertCite / insertPoem", () => {
           Sections: [
             {
               Title: { Children: [{ Paragraph: { Children: [{ Text: "Test" }] } }] },
-              Blocks: texts.map((t) =>
+              Body: texts.map((t) =>
                 t === "empty"
                   ? { EmptyLine: {} }
                   : { Paragraph: { Children: [{ Text: t }] } },
@@ -352,7 +352,7 @@ describe("insertTable", () => {
           Sections: [
             {
               Title: { Children: [{ Paragraph: { Children: [{ Text: "Test" }] } }] },
-              Blocks: texts.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })),
+              Body: texts.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })),
             },
           ],
         },
@@ -415,7 +415,7 @@ describe("insertTable", () => {
     // Force fb2ToPMDoc to produce a body without sections; put cursor in the title.
     const doc = fb2ToPMDoc({
       ...fb,
-      Bodies: [{ ...fb.Bodies[0], Sections: [{ Blocks: [{ Paragraph: { Children: [{ Text: "x" }] } }] }] }],
+      Bodies: [{ ...fb.Bodies[0], Sections: [{ Body: [{ Paragraph: { Children: [{ Text: "x" }] } }] }] }],
     });
     const state = EditorState.create({ schema: fb2Schema, doc });
 
@@ -449,8 +449,8 @@ describe("mergeContainers", () => {
       Bodies: [
         {
           Sections: [
-            { Blocks: cp.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })) },
-            { Blocks: nx.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })) },
+            { Body: cp.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })) },
+            { Body: nx.map((t) => ({ Paragraph: { Children: [{ Text: t }] } })) },
           ],
         },
       ],
@@ -538,11 +538,11 @@ describe("mergeContainers", () => {
       Bodies: [
         {
           Sections: [
-            { Blocks: [{ Paragraph: { Children: [{ Text: "cp1" }] } }] },
+            { Body: [{ Paragraph: { Children: [{ Text: "cp1" }] } }] },
             {
               Title: { Children: [{ Paragraph: { Children: [{ Text: "Next Title" }] } }] },
               Annotation: { Children: [{ Paragraph: { Children: [{ Text: "Ann text" }] } }] },
-              Blocks: [{ Paragraph: { Children: [{ Text: "nx1" }] } }],
+              Body: [{ Paragraph: { Children: [{ Text: "nx1" }] } }],
             },
           ],
         },
@@ -571,11 +571,11 @@ describe("mergeContainers", () => {
             {
               // cp has only nested sections (nested) plus a title to host the cursor.
               Title: { Children: [{ Paragraph: { Children: [{ Text: "cp-title" }] } }] },
-              Sections: [
-                { Blocks: [{ Paragraph: { Children: [{ Text: "inner" }] } }] },
+              Body: [
+                { Section: { Body: [{ Paragraph: { Children: [{ Text: "inner" }] } }] } },
               ],
             },
-            { Blocks: [{ Paragraph: { Children: [{ Text: "flat nx" }] } }] },
+            { Body: [{ Paragraph: { Children: [{ Text: "flat nx" }] } }] },
           ],
         },
       ],
@@ -598,13 +598,13 @@ describe("mergeContainers", () => {
       Bodies: [
         {
           Sections: [
-            { Blocks: [{ Paragraph: { Children: [{ Text: "cp-flat" }] } }] },
+            { Body: [{ Paragraph: { Children: [{ Text: "cp-flat" }] } }] },
             {
-              Sections: [
-                {
+              Body: [
+                { Section: {
                   Title: { Children: [{ Paragraph: { Children: [{ Text: "InnerTitle" }] } }] },
-                  Blocks: [{ Paragraph: { Children: [{ Text: "inner-p" }] } }],
-                },
+                  Body: [{ Paragraph: { Children: [{ Text: "inner-p" }] } }],
+                } },
               ],
             },
           ],
@@ -630,11 +630,11 @@ describe("mergeContainers", () => {
           Sections: [
             {
               Title: { Children: [{ Paragraph: { Children: [{ Text: "cp-title" }] } }] },
-              Sections: [{ Blocks: [{ Paragraph: { Children: [{ Text: "cp-sub1" }] } }] }],
+              Body: [{ Section: { Body: [{ Paragraph: { Children: [{ Text: "cp-sub1" }] } }] } }],
             },
             {
               Title: { Children: [{ Paragraph: { Children: [{ Text: "dropped title" }] } }] },
-              Sections: [{ Blocks: [{ Paragraph: { Children: [{ Text: "nx-sub1" }] } }] }],
+              Body: [{ Section: { Body: [{ Paragraph: { Children: [{ Text: "nx-sub1" }] } }] } }],
             },
           ],
         },
@@ -662,7 +662,7 @@ describe("mergeContainers", () => {
         {
           Sections: [
             {
-              Blocks: [
+              Body: [
                 {
                   Poem: {
                     Stanzas: [
@@ -702,7 +702,7 @@ describe("mergeContainers", () => {
         {
           Sections: [
             {
-              Blocks: [
+              Body: [
                 {
                   Cite: {
                     Children: [{ Paragraph: { Children: [{ Text: "quote1" }] } }],

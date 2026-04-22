@@ -8,17 +8,30 @@ Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project r
 
 ## Project status
 
-🚧 **Skeleton only.** Types, module layout, and a catalog of operations are in place. Nothing runs end-to-end yet. See `docs/PHASES.md` for the roadmap and `docs/OPERATIONS.md` for the full list of FB2 operations to port.
+**v0.1.0-beta — Phase 3 MVP + Phase 4 polish shipped.** End-to-end flow works: open → edit → save → validate → export. All structural commands (clone / merge / insert cite / poem / table / …), inline marks, save cycle, description form with rich annotation editor, HTML export, paste cleanup, native-webview spellcheck, read-only XML-source panel with clickable XSD errors, and lossless round-trip for unknown FB2 elements are wired. See `PROGRESS.md` for the per-revision log, `docs/PHASES.md` for the roadmap, and `docs/OPERATIONS.md` for the full list of FB2 operations.
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - Node 20+ (for the frontend)
 - [Wails v2 CLI](https://wails.io/docs/gettingstarted/installation): `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`)
 - **Linux:** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`
 - For XSD validation (`-tags xsd`): `libxml2` (macOS: bundled in CLT; Linux: `libxml2-dev`)
 - For spellcheck: `hunspell` + dictionaries (CGo path, future)
+
+### Nix / NixOS
+
+A `flake.nix` provides a cross-platform dev shell (Linux + macOS) with Go 1.25, Node 22, and all native deps wired up. Wails CLI is auto-installed into `$GOPATH/bin` on first entry:
+
+```sh
+nix develop                          # enter shell
+wails build -tags 'xsd webkit2_41'   # or: wails dev -tags webkit2_41
+```
+
+`webkit2_41` selects the `webkit2gtk-4.1` ABI (default is still `4.0`, not in modern nixpkgs). The tag is a no-op on macOS.
+
+Works on `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`.
 
 ## Layout
 
