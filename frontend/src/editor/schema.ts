@@ -29,21 +29,21 @@ const nodes: Record<string, NodeSpec> = {
   },
 
   title: {
-    content: "(paragraph | empty_line)+",
+    content: "(paragraph | empty_line | raw_block)+",
     group: "structural",
     toDOM: () => ["div", { class: "title" }, 0],
     parseDOM: [{ tag: "div.title" }],
   },
 
   epigraph: {
-    content: "(paragraph | poem | cite | empty_line)+ text_author*",
+    content: "(paragraph | poem | cite | empty_line | raw_block)+ text_author*",
     group: "structural",
     toDOM: () => ["div", { class: "epigraph" }, 0],
     parseDOM: [{ tag: "div.epigraph" }],
   },
 
   cite: {
-    content: "(paragraph | poem | empty_line | subtitle | table)+ text_author*",
+    content: "(paragraph | poem | empty_line | subtitle | table | raw_block)+ text_author*",
     group: "block",
     toDOM: () => ["div", { class: "cite" }, 0],
     parseDOM: [{ tag: "div.cite" }],
@@ -63,7 +63,7 @@ const nodes: Record<string, NodeSpec> = {
   },
 
   annotation: {
-    content: "(paragraph | poem | cite | subtitle | empty_line | table)+",
+    content: "(paragraph | poem | cite | subtitle | empty_line | table | raw_block)+",
     group: "structural",
     toDOM: () => ["div", { class: "annotation" }, 0],
     parseDOM: [{ tag: "div.annotation" }],
@@ -171,6 +171,43 @@ const nodes: Record<string, NodeSpec> = {
     toDOM: (n) => ["span", { class: "image", "data-href": n.attrs.href, title: n.attrs.title },
       ["img", { src: `fb2://binary${n.attrs.href}`, alt: n.attrs.alt }]],
     parseDOM: [{ tag: "span.image" }],
+  },
+
+  // Lossless fallback for unknown FB2 elements (custom extensions, misspelled
+  // tags, future-version elements). parse.ts stores the full RawElement JSON
+  // in the `raw` attr; serialize.ts decodes it back into `Block.Raw` so the
+  // writer can re-emit verbatim. Shown as a read-only placeholder in the
+  // editor — deletable but not editable. See docs/ARCHITECTURE.md "Lossless
+  // fallback invariant".
+  raw_block: {
+    group: "block",
+    atom: true,
+    selectable: true,
+    attrs: {
+      raw: { default: "" },        // JSON.stringify(RawElement)
+      localName: { default: "" },  // cache for placeholder display
+    },
+    toDOM: (n) => ["div", {
+      class: "raw-block",
+      contenteditable: "false",
+      title: `Unknown FB2 element <${n.attrs.localName}> — preserved verbatim on save. Delete to remove; cannot be edited in the visual editor.`,
+    }, `<${n.attrs.localName}/>`],
+  },
+
+  raw_inline: {
+    group: "inline",
+    inline: true,
+    atom: true,
+    selectable: true,
+    attrs: {
+      raw: { default: "" },
+      localName: { default: "" },
+    },
+    toDOM: (n) => ["span", {
+      class: "raw-inline",
+      contenteditable: "false",
+      title: `Unknown FB2 inline <${n.attrs.localName}> — preserved verbatim on save.`,
+    }, `<${n.attrs.localName}/>`],
   },
 
   text: { group: "inline" },

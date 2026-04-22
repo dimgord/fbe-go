@@ -119,6 +119,18 @@ export interface Stanza {
   Verses: Paragraph[];
 }
 
+/**
+ * A RawElement preserves an unknown XML element verbatim for lossless
+ * round-trip (FB2 extensions, misspelled tags, future-version elements).
+ * Shape mirrors `doc.RawElement` in Go so Wails can unmarshal it directly
+ * back into `[]byte`-level XML on save.
+ */
+export interface RawElement {
+  XMLName: { Space?: string; Local: string };
+  Attrs?: Array<{ Name: { Space?: string; Local: string }; Value: string }> | null;
+  Items?: Array<{ Text?: string; Elem?: RawElement | null }> | null;
+}
+
 /** A Block is a discriminated union — only one of the child fields is non-null. */
 export interface Block {
   XMLName?: { Space?: string; Local?: string };
@@ -129,6 +141,7 @@ export interface Block {
   EmptyLine?: EmptyLine | null;
   Table?: Table | null;
   Image?: Image | null;
+  Raw?: RawElement | null;
 }
 
 export interface EmptyLine { ID?: string }
@@ -149,6 +162,7 @@ export interface Inline {
   Sup?: Paragraph | null;
   Code?: Paragraph | null;
   Image?: Image | null;
+  Raw?: RawElement | null;
 }
 
 export interface StyleInline { Name: string; Children?: Inline[] }

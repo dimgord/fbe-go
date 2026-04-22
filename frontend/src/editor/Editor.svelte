@@ -333,4 +333,44 @@
     transition: background-color 0.3s ease;
     background: #fff2b0;
   }
+
+  /* Lossless fallback placeholders for unknown FB2 elements (see schema.ts
+     raw_block / raw_inline). Content is non-editable but the node can be
+     selected and deleted. Dashed border + hatched background make it
+     obvious these aren't real FB2 elements the editor understands. */
+  :global(.ProseMirror .raw-block) {
+    display: block;
+    margin: 0.75em 0;
+    padding: 0.35em 0.6em;
+    background:
+      repeating-linear-gradient(
+        45deg,
+        #fef7d8 0 6px,
+        #fcebad 6px 12px
+      );
+    border: 1px dashed #b58f00;
+    color: #7a5a10;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85em;
+    border-radius: 3px;
+    user-select: none;
+  }
+  :global(.ProseMirror .raw-inline) {
+    display: inline-block;
+    margin: 0 0.1em;
+    padding: 0 0.35em;
+    background: #fef0bc;
+    border: 1px dashed #b58f00;
+    color: #7a5a10;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85em;
+    border-radius: 3px;
+    user-select: none;
+    vertical-align: baseline;
+  }
+  :global(.ProseMirror .raw-block.ProseMirror-selectednode),
+  :global(.ProseMirror .raw-inline.ProseMirror-selectednode) {
+    outline: 2px solid #b58f00;
+    outline-offset: 1px;
+  }
 </style>
