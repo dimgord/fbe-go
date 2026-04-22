@@ -116,6 +116,7 @@ The corpus test (`-tags 'corpus xsd'`) reports two key metrics:
 
 - **Wails v2.9.2–v2.12.0 macOS file-dialog crash:** never pass multi-dot patterns like `*.fb2.zip` to `OpenFileDialog` — the native code feeds each token to `[UTType typeWithFilenameExtension:]`, `fb2.zip` returns nil, and `[NSArray addObject:nil]` throws `NSInvalidArgumentException` from Obj-C (unrecoverable by Go `recover()`). Use `*.fb2` only; users open archives via "All files". Re-verified on v2.12.0 (Rev 25): the filter block in `WailsContext.m` (`USE_NEW_FILTERS` path) is byte-identical to v2.9.2 — no nil-guard added upstream.
 - **Linux build deps:** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`; `libxml2-dev` for `-tags xsd`.
+- **NixOS / Nix:** `flake.nix` at the repo root provides a `devShells.default` for all four systems (`{x86_64,aarch64}-{linux,darwin}`). `nix develop` drops you into a shell with `go_1_25`, `nodejs_22`, and — on Linux only — `pkg-config`, `gtk3`, `webkitgtk_4_1`, `libxml2`. Wails CLI auto-installs into `$GOPATH/bin` on first entry via `shellHook`. Pinned against `nixpkgs-unstable` via `flake.lock`. When bumping the Wails library version, consider whether to also `nix flake update` to refresh pinned nixpkgs.
 - **Go version:** `go.mod` pins 1.25.0 — do not downgrade.
 
 ## Debugging a hung/crashing .app

@@ -6,6 +6,69 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 26 — 2026-04-22 — Nix flake with cross-platform dev shell [dev]
+
+Version: **0.0.26**
+
+### Why
+
+Dmitry wants to run fbe-go on a NixOS box. Rather than an ad-hoc
+`nix-shell -p …` command, add a reproducible `flake.nix` with a pinned
+`flake.lock` so anyone with Nix/Lix can `nix develop` and get a working
+build environment on Linux or macOS without touching system packages.
+
+### What
+
+New `flake.nix` exposes `devShells.default` for four systems —
+`x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`.
+The shell includes:
+
+- `go_1_25` (matches `go.mod` pin 1.25.0)
+- `nodejs_22` (for the frontend build)
+- On Linux only (via `pkgs.lib.optionals pkgs.stdenv.isLinux`):
+  `pkg-config`, `gtk3`, `webkitgtk_4_1`, `libxml2`. macOS uses the
+  system WKWebView + libxml2 from Xcode CLT, so those aren't needed.
+
+`shellHook` installs the Wails CLI into `$GOPATH/bin` on first entry
+(guarded by `command -v wails` so it's a one-time cost per shell). This
+matches the canonical `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+instruction in `CLAUDE.md`, rather than using the older `wails 2.11.0`
+packaged in nixpkgs.
+
+`flake.lock` pins `nixpkgs-unstable` at commit `b86751bc…` (2026-04-16).
+
+### Verification
+
+- `nix flake check --all-systems` — all four target systems evaluate cleanly.
+- Locally entered the darwin shell; `go`, `node`, `wails` all resolve.
+
+### Docs
+
+- `README.md` — new "Nix / NixOS" section under Prerequisites; bumped
+  Go prerequisite from 1.24+ to 1.25+ (matches `go.mod` pin, was stale).
+- `CLAUDE.md` — new "NixOS / Nix" platform note explaining flake layout
+  and the "consider `nix flake update` after Wails bumps" hint.
+
+### Files added / modified
+
+- `flake.nix` (new), `flake.lock` (new)
+- `README.md`, `CLAUDE.md`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.25 → 0.0.26
+- `frontend/package.json`       0.0.25 → 0.0.26
+- `frontend/package-lock.json`  0.0.25 → 0.0.26
+
+### Out of scope
+
+- A `packages.default` / `apps.default` output for `nix build` / `nix run`
+  — building a Wails app as a pure Nix derivation is non-trivial (CGo +
+  vite-generated frontend + `go:embed`), and dev-shell was the ask.
+
+---
+
 ## Rev 25 — 2026-04-21 — Bump Wails v2.9.2 → v2.12.0; re-verify UTType crash; README status refresh [dev]
 
 Version: **0.0.25**
