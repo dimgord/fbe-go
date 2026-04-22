@@ -6,6 +6,94 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 28 — 2026-04-22 — Pin libxml2 to 2.13.x on Nix (binding vs. 2.15 ABI) [dev]
+
+Version: **0.0.28**
+
+### Symptom
+
+After Rev 27 on NixOS, `wails dev -tags 'xsd webkit2_41'` failed at
+`go mod tidy` / bindings stage:
+
+```
+# github.com/lestrrat-go/libxml2/clib
+clib.go:1889:75: cannot use _cgo4 (variable of type *_Ctype_xmlNodePtr)
+  as **_Ctype_struct__xmlNode value in argument to _Cfunc_xmlParseInNodeContext
+```
+
+(Plus a pair of cosmetic deprecation warnings about `xmlIndentTreeOutput` —
+noise, not the cause.)
+
+### Root cause
+
+nixpkgs-unstable ships libxml2 **2.15.1**. Upstream libxml2 changed the
+C signature of `xmlParseInNodeContext` somewhere in the 2.14 → 2.15 range
+from accepting `xmlNodePtr` to `xmlNodePtr*` (double indirection). The
+Go binding `github.com/lestrrat-go/libxml2` (which `-tags xsd` drags in
+via `internal/fb2/xsd/xsd_libxml2.go`) was written against the old
+signature and passes `&ret` where the new API wants a different shape.
+Result: hard compile error, not just deprecation noise.
+
+The binding itself hasn't been updated to match — its last commit (pseudo
+version `v0.0.0-20260304224138-bb3877930cf7`, ~2026-03-04) still has the
+old calling pattern. Other distros ship libxml2 2.9–2.12 which compiles
+fine, so this is a nixpkgs-unstable / bleeding-edge issue, not a
+universal Linux regression.
+
+### Fix
+
+`flake.nix` — Linux `linuxDeps`: `libxml2` → `libxml2_13` (2.13.9, the
+last release before the ABI break). This lets the binding compile as it
+always did; nothing else needs touching.
+
+### Alternatives considered and rejected
+
+1. **Bump `lestrrat-go/libxml2` in `go.mod`.** There's no newer pseudo-
+   version that fixes the issue; the binding hasn't caught up. Trying a
+   bleeding-edge commit from their main branch would couple us to an
+   unstable ref with no tags.
+2. **`go mod replace` with a local patch.** Would require maintaining a
+   patched fork for an indirect dependency. High ongoing cost, low value.
+3. **Drop XSD validation on Linux.** Breaks feature parity; `-tags xsd`
+   is the canonical way to get real schema validation everywhere.
+4. **Use a pure-Go XSD validator.** No production-grade library exists
+   for full XML Schema 1.0 (what FictionBook.xsd requires). Not happening.
+
+### Doc updates
+
+- `CLAUDE.md` — new Platform-notes bullet "libxml2 pin on Nix" explaining
+  why `libxml2_13` is pinned, when to revisit, and that the pin is
+  Nix-specific (other distros aren't affected).
+- `CLAUDE.md` — NixOS bullet now references `libxml2_13` instead of
+  `libxml2` and cross-links to the pin note.
+
+### Revisit trigger
+
+When `github.com/lestrrat-go/libxml2` lands a commit that fixes
+`xmlParseInNodeContext`'s calling convention for libxml2 2.14+,
+bump `go.mod`, switch the flake back to `pkgs.libxml2`, and drop both
+the inline comment in `flake.nix` and the pin note in `CLAUDE.md`.
+
+### Verification
+
+- `nix flake check --all-systems` — clean on all four target systems.
+- Dmitry to re-run `wails dev -tags 'xsd webkit2_41'` on his NixOS box
+  after `git pull` + `nix develop`.
+
+### Files modified
+
+- `flake.nix`
+- `CLAUDE.md`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.27 → 0.0.28
+- `frontend/package.json`       0.0.27 → 0.0.28
+- `frontend/package-lock.json`  0.0.27 → 0.0.28
+
+---
+
 ## Rev 27 — 2026-04-22 — Linux / NixOS fixes: webkit2_41 tag + GSettings schemas [dev]
 
 Version: **0.0.27**

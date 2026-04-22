@@ -17,7 +17,11 @@
             pkg-config
             gtk3
             webkitgtk_4_1
-            libxml2
+            # Pinned to 2.13.x: lestrrat-go/libxml2 (used by `-tags xsd`) was
+            # written against the pre-2.14 C API. libxml2 2.14+ changed
+            # `xmlParseInNodeContext`'s signature and the binding no longer
+            # compiles. Revisit when upstream catches up.
+            libxml2_13
             gsettings-desktop-schemas
           ]);
 
