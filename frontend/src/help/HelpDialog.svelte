@@ -11,6 +11,24 @@
   const mod = isMac ? "⌘" : "Ctrl";
   const shift = isMac ? "⇧" : "Shift";
 
+  // Wails' webview doesn't route `<a href>` clicks to the system browser by
+  // default, and middle-click / Cmd-click / right-click → "Open Link" are
+  // all no-ops inside WKWebView. Intercept the click and hand the URL to
+  // runtime.BrowserOpenURL (which macOS sends to `open`, Linux to xdg-open).
+  // Outside Wails (plain vite dev) the import resolves but the call is a
+  // no-op; fall back to window.open so the link still works there.
+  async function openExternal(e: MouseEvent, url: string) {
+    e.preventDefault();
+    try {
+      const rt = await import("../../wailsjs/runtime/runtime");
+      if (typeof rt.BrowserOpenURL === "function") {
+        rt.BrowserOpenURL(url);
+        return;
+      }
+    } catch { /* not running under Wails */ }
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
   // Keyboard shortcuts — kept in sync by hand with Editor.svelte's keymap
   // and App.svelte's Cmd-S handler. If you change a binding, update this
   // table too.
@@ -69,7 +87,7 @@
       <section class="about">
         <p><strong>Version {version}-beta</strong></p>
         <p>
-          A Go + <a href="https://wails.io" target="_blank" rel="noreferrer">Wails v2</a> port of the
+          A Go + <a href="https://wails.io" on:click={(e) => openExternal(e, "https://wails.io")} target="_blank" rel="noreferrer noopener">Wails v2</a> port of the
           classic Windows FictionBook Editor, targeting macOS and Linux.
           Edits FB2 (FictionBook 2.x) documents in a ProseMirror-backed
           WYSIWYG editor; full round-trip fidelity including unknown
@@ -92,9 +110,9 @@
       <section>
         <h4>Resources</h4>
         <ul>
-          <li><a href="https://github.com/dimgord/fbe-go" target="_blank" rel="noreferrer">github.com/dimgord/fbe-go</a></li>
-          <li><a href="http://www.fictionbook.org/index.php/Eng:FictionBook" target="_blank" rel="noreferrer">FictionBook 2.x specification</a></li>
-          <li><a href="https://github.com/evpobr/fictionbookeditor" target="_blank" rel="noreferrer">Original FBE (Windows)</a></li>
+          <li><a href="https://github.com/dimgord/fbe-go" on:click={(e) => openExternal(e, "https://github.com/dimgord/fbe-go")} target="_blank" rel="noreferrer noopener">github.com/dimgord/fbe-go</a></li>
+          <li><a href="http://www.fictionbook.org/index.php/Eng:FictionBook" on:click={(e) => openExternal(e, "http://www.fictionbook.org/index.php/Eng:FictionBook")} target="_blank" rel="noreferrer noopener">FictionBook 2.x specification</a></li>
+          <li><a href="https://github.com/evpobr/fictionbookeditor" on:click={(e) => openExternal(e, "https://github.com/evpobr/fictionbookeditor")} target="_blank" rel="noreferrer noopener">Original FBE (Windows)</a></li>
         </ul>
       </section>
 
@@ -127,6 +145,13 @@
     font-family: -apple-system, "Segoe UI", sans-serif;
     font-size: 0.9rem;
     color: #222;
+    /* Explicitly opt-in to text selection so users can copy the version
+       string, kbd labels, and link text. Rest of the app (editor surface,
+       raw-block placeholders, resizer handle) sets `user-select: none` on
+       its chrome; without this override some of that could inherit. */
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: auto;
   }
   header {
     display: flex;
