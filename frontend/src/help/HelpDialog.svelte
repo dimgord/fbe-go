@@ -29,6 +29,39 @@
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  // Native right-click → "Copy Link Address" is unreliable in WKWebView /
+  // WebKitGTK production builds (context menu behavior varies by OS and is
+  // often suppressed in release bundles). Explicit copy buttons next to
+  // each link are the portable answer.
+  let copiedUrl: string | null = null;
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function copyUrl(url: string) {
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+        ok = true;
+      }
+    } catch { /* fall through to textarea fallback */ }
+    if (!ok) {
+      // Fallback for older webviews without the async Clipboard API.
+      const ta = document.createElement("textarea");
+      ta.value = url;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { ok = document.execCommand("copy"); } catch { ok = false; }
+      document.body.removeChild(ta);
+    }
+    if (ok) {
+      copiedUrl = url;
+      if (copiedTimer) clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => { copiedUrl = null; }, 1500);
+    }
+  }
+
   // Keyboard shortcuts — kept in sync by hand with Editor.svelte's keymap
   // and App.svelte's Cmd-S handler. If you change a binding, update this
   // table too.
@@ -109,10 +142,27 @@
 
       <section>
         <h4>Resources</h4>
-        <ul>
-          <li><a href="https://github.com/dimgord/fbe-go" on:click={(e) => openExternal(e, "https://github.com/dimgord/fbe-go")} target="_blank" rel="noreferrer noopener">github.com/dimgord/fbe-go</a></li>
-          <li><a href="http://www.fictionbook.org/index.php/Eng:FictionBook" on:click={(e) => openExternal(e, "http://www.fictionbook.org/index.php/Eng:FictionBook")} target="_blank" rel="noreferrer noopener">FictionBook 2.x specification</a></li>
-          <li><a href="https://github.com/evpobr/fictionbookeditor" on:click={(e) => openExternal(e, "https://github.com/evpobr/fictionbookeditor")} target="_blank" rel="noreferrer noopener">Original FBE (Windows)</a></li>
+        <ul class="links">
+          {#each [
+            { label: "Source — github.com/dimgord/fbe-go", url: "https://github.com/dimgord/fbe-go" },
+            { label: "FictionBook 2.x specification",       url: "http://www.fictionbook.org/index.php/Eng:FictionBook" },
+            { label: "Original FBE (Windows)",              url: "https://github.com/evpobr/fictionbookeditor" },
+          ] as link}
+            <li>
+              <a
+                href={link.url}
+                on:click={(e) => openExternal(e, link.url)}
+                target="_blank"
+                rel="noreferrer noopener">{link.label}</a>
+              <button
+                type="button"
+                class="copy-url"
+                title="Copy URL to clipboard"
+                on:click={() => copyUrl(link.url)}
+                aria-label={`Copy URL: ${link.url}`}
+              >{copiedUrl === link.url ? "✓ copied" : "copy"}</button>
+            </li>
+          {/each}
         </ul>
       </section>
 
@@ -218,6 +268,37 @@
     padding: 0;
     line-height: 1.55;
   }
+  ul.links {
+    list-style: none;
+    margin-left: 0;
+  }
+  ul.links li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.1rem 0;
+  }
+  ul.links li a {
+    flex: 1;
+    min-width: 0;
+    word-break: break-all;
+  }
+  button.copy-url {
+    flex: none;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.72rem;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    color: #555;
+    background: #f5f3ea;
+    border: 1px solid #c9c9bd;
+    border-radius: 3px;
+    cursor: pointer;
+    line-height: 1.3;
+    min-width: 4.5rem;
+    text-align: center;
+  }
+  button.copy-url:hover { background: #efe9d2; color: #222; }
+  button.copy-url:active { background: #e3dcb8; }
   .actions {
     display: flex;
     justify-content: flex-end;
