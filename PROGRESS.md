@@ -6,6 +6,63 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 43 — 2026-04-22 — New app icon (blue squircle + book + code brackets) [dev]
+
+Version: **0.1.4**
+
+### What
+
+`build/appicon.png` replaced with a new 1024×1024 RGBA master: a
+dark-blue squircle holding an open book with inline `<>` code
+brackets on the right page. The glyph says "book editor with
+structured/XML underpinnings" without the "AI-assistant" or
+"generic notes" ambiguity the two alternatives carried.
+
+### Pipeline
+
+The source PNG from the image generator came at 1254×1254 **without
+an alpha channel** — corners were filled with srgb(232,232,231), an
+off-white that would show as a visible square on dark-mode docks.
+ImageMagick pass (via `nix-shell -p imagemagick`) floodfills from
+(0,0) with 12% fuzz to match the near-white corners, replaces them
+with transparency, then downscales to 1024×1024:
+
+```
+magick input.png \
+  -alpha set \
+  -fuzz 12% -fill none -floodfill +0+0 "srgb(232,232,231)" \
+  -resize 1024x1024 \
+  build/appicon.png
+```
+
+Result is RGBA with proper transparent corners around the squircle
+silhouette, ready for both macOS (bundle generates `.icns` from it
+during `wails build`) and Linux (GTK launcher picks up the PNG
+directly).
+
+### Verification
+
+- `file build/appicon.png` → `PNG image data, 1024 x 1024, 8-bit/color RGBA`.
+- `sips` reports `hasAlpha: yes`.
+- `wails build -tags xsd` regenerated
+  `build/bin/fbe-go.app/Contents/Resources/iconfile.icns` (987 KB,
+  timestamp post-build). Bundle launches.
+- UI un-touched; `go test` and `npm test` not re-run — purely an
+  asset swap.
+
+### Files added / modified
+
+- `build/appicon.png` — the 1024×1024 master (binary, tracked).
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.1.3 → 0.1.4
+- `frontend/package.json`       0.1.3 → 0.1.4
+- `frontend/package-lock.json`  0.1.3 → 0.1.4
+
+---
+
 ## Rev 42 — 2026-04-22 — MIT LICENSE + NOTICE.md + credits [dev]
 
 Version: **0.1.3**
