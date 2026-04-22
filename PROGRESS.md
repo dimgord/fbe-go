@@ -6,6 +6,81 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 23 — 2026-04-21 — A11y warning + 5 long-standing TS errors [dev]
+
+Version: **0.0.23**
+
+### A11y — `TableDialog.svelte`
+
+`vite-plugin-svelte` warned: *Non-interactive element `<div>` should not be
+assigned mouse or keyboard event listeners*. Real target was the inner
+`<div role="dialog" on:click|stopPropagation on:keydown|stopPropagation>` —
+Svelte-a11y treats `role="dialog"` as non-interactive. The two
+`stopPropagation` handlers are still useful (they stop clicks/keys inside the
+dialog from reaching the backdrop's dismiss handler), so we silence the
+warning rather than restructure:
+
+```svelte
+<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+<div class="dialog" role="dialog" …>
+```
+
+### 5 TS errors flushed out by `npm run check`
+
+Pre-existing, unrelated to Rev 22 — discovered when re-running svelte-check.
+
+1. **`App.svelte:33`** — `// @ts-expect-error` on `App.OpenFile()` was unused
+   (Wails-generated `doc.FictionBook` is now structurally compatible with
+   our local `FictionBook` type). Removed. The two remaining
+   `@ts-expect-error` markers on `UpdateDocument` (lines 73, 93) are still
+   needed — that direction (our → Wails) still mismatches.
+
+2. **`App.svelte:112`** — `App.Validate()` returns `xsd.ValidationError[]`
+   with **lowercase** `line / column / message` fields. Local code declared
+   `Array<{ Line, Column, Message }>` (PascalCase, never matched). Dropped
+   the bogus annotation, switched the access to `errs[0].message`.
+
+3. **`AuthorField.svelte:58 / :70`** — `bind:value={author.Email[i]}` /
+   `…HomePage[i]` failed because both fields are `string[] | null | undefined`
+   in `fb2/types.ts`. The reactive guards on lines 16–17 ensure they're set
+   at runtime, but TS doesn't track Svelte reactivity. Tried
+   `bind:value={author.Email![i]}` first — Svelte 4 template parser rejects
+   `!` inside `bind:` directives ("Expected }"). Workaround: lift the
+   non-null assertion to `<script>` via reactive locals:
+
+   ```ts
+   $: if (!author.Email)    author.Email    = [];
+   $: if (!author.HomePage) author.HomePage = [];
+   $: emails    = author.Email!;
+   $: homepages = author.HomePage!;
+   ```
+
+   Template then uses `bind:value={emails[i]}` / `…homepages[i]`. Mutation
+   propagates because `emails`/`homepages` are the same array references as
+   `author.Email`/`author.HomePage`.
+
+4. **`TitleInfoForm.svelte:94`** — passed prop `availableBinaryIDs` to
+   `<CoverpageField>`, but the component expects `availableIDs`. Renamed at
+   call site: `availableIDs={availableBinaryIDs}`.
+
+After the fixes: `svelte-check` reports `0 errors and 0 warnings`.
+
+### Files modified
+
+- `frontend/src/editor/TableDialog.svelte`
+- `frontend/src/App.svelte`
+- `frontend/src/description/AuthorField.svelte`
+- `frontend/src/description/TitleInfoForm.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`              0.0.22 → 0.0.23
+- `frontend/package.json`   0.0.22 → 0.0.23
+- `frontend/package-lock.json` 0.0.22 → 0.0.23
+
+---
+
 ## Rev 22 — 2026-04-21 — Toolbar text wrap + outline navigation after first click [dev]
 
 Version: **0.0.22**

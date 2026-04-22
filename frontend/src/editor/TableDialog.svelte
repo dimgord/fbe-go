@@ -55,6 +55,7 @@
     aria-label="Dismiss dialog"
     on:click={cancel}
     on:keydown={(e) => e.key === "Escape" && cancel()}>
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
     <div
       class="dialog"
       role="dialog"

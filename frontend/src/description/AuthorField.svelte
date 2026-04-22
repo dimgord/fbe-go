@@ -12,9 +12,13 @@
   const id_ = uid("author");
   const dispatch = createEventDispatcher<{ remove: void; clone: void }>();
 
-  // Ensure optional arrays exist for two-way binding.
+  // Ensure optional arrays exist for two-way binding, then expose
+  // narrowed locals — Svelte's template parser rejects `!` inside
+  // `bind:value={…}`, so the assertion has to live in <script>.
   $: if (!author.Email)    author.Email    = [];
   $: if (!author.HomePage) author.HomePage = [];
+  $: emails    = author.Email!;
+  $: homepages = author.HomePage!;
 
   function addEmail() {
     author.Email = [...(author.Email ?? []), ""];
@@ -53,9 +57,9 @@
     <div class="multi">
       <label for={`${id_}-email-0`}>Email</label>
       <div class="stack">
-        {#each author.Email ?? [] as _, i}
+        {#each emails as _, i}
           <div class="inline">
-            <input id={i === 0 ? `${id_}-email-0` : undefined} bind:value={author.Email[i]} />
+            <input id={i === 0 ? `${id_}-email-0` : undefined} bind:value={emails[i]} />
             <button class="aux" type="button" on:click={() => removeEmail(i)}>×</button>
           </div>
         {/each}
@@ -65,9 +69,9 @@
     <div class="multi">
       <label for={`${id_}-home-0`}>Home page</label>
       <div class="stack">
-        {#each author.HomePage ?? [] as _, i}
+        {#each homepages as _, i}
           <div class="inline">
-            <input id={i === 0 ? `${id_}-home-0` : undefined} bind:value={author.HomePage[i]} />
+            <input id={i === 0 ? `${id_}-home-0` : undefined} bind:value={homepages[i]} />
             <button class="aux" type="button" on:click={() => removeHomePage(i)}>×</button>
           </div>
         {/each}
