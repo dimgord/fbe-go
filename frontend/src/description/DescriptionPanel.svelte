@@ -16,14 +16,21 @@
   $: if (!fb.Description.PublishInfo) fb.Description.PublishInfo = {};
   $: if (!fb.Description.CustomInfo)  fb.Description.CustomInfo  = [];
 
-  function enableSrcTitle() {
-    const empty: TitleInfo = {
+  function emptyTitleInfo(): TitleInfo {
+    return {
       Genres: [],
       Authors: [{}],
       BookTitle: "",
       Lang: "",
     };
-    fb.Description.SrcTitleInfo = empty;
+  }
+
+  function enableTitleInfo() {
+    fb.Description.TitleInfo = emptyTitleInfo();
+  }
+
+  function enableSrcTitle() {
+    fb.Description.SrcTitleInfo = emptyTitleInfo();
   }
 </script>
 
@@ -68,7 +75,12 @@
 
   <div class="form-area">
     {#if activeTab === "title"}
-      <TitleInfoForm bind:info={fb.Description.TitleInfo} {availableBinaryIDs} />
+      {#if fb.Description.TitleInfo}
+        <TitleInfoForm bind:info={fb.Description.TitleInfo} {availableBinaryIDs} />
+      {:else}
+        <p class="todo">This document has no <code>&lt;title-info&gt;</code>.</p>
+        <button class="prompt" on:click={enableTitleInfo}>Add title info</button>
+      {/if}
     {:else if activeTab === "src-title"}
       {#if fb.Description.SrcTitleInfo}
         <TitleInfoForm bind:info={fb.Description.SrcTitleInfo} {availableBinaryIDs} />

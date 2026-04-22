@@ -56,10 +56,15 @@ func (e *exporter) writef(format string, args ...any) {
 }
 
 func (e *exporter) writeHeader(fb *doc.FictionBook) {
-	title := html.EscapeString(fb.Description.TitleInfo.BookTitle)
+	var titleStr, langStr string
+	if ti := fb.Description.TitleInfo; ti != nil {
+		titleStr = ti.BookTitle
+		langStr = ti.Lang
+	}
+	title := html.EscapeString(titleStr)
 	e.write(`<!DOCTYPE html>
 <html lang="`)
-	e.write(html.EscapeString(fb.Description.TitleInfo.Lang))
+	e.write(html.EscapeString(langStr))
 	e.write(`">
 <head>
 <meta charset="utf-8">
@@ -77,7 +82,10 @@ func (e *exporter) writeFooter() {
 }
 
 func (e *exporter) writeDescription(d *doc.Description) {
-	ti := &d.TitleInfo
+	ti := d.TitleInfo
+	if ti == nil {
+		return
+	}
 	e.write(`<header class="book-meta">` + "\n")
 	if cp := ti.Coverpage; cp != nil && len(cp.Images) > 0 {
 		src := e.resolveBinaryHref(cp.Images[0].Href)

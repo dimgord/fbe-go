@@ -79,6 +79,8 @@ speller/  Hunspell (CGo, future)
 
 **Lossless fallback invariant:** `doc.Block` and `doc.Inline` each carry a `Raw *RawElement` field; `Block.UnmarshalXML` / `unmarshalInlineContent` route unknown elements there instead of calling `d.Skip()`. Writer round-trips `Raw` verbatim, preserving attributes and nested content. Do not reintroduce silent skips — they caused a Rev-5 regression where an `<empty-line>` in an unexpected position was dropped. When adding new typed fields, make sure the dispatcher still falls through to `Raw` for unknown elements.
 
+**Absent-section invariant:** `Description.TitleInfo` is `*TitleInfo` with `,omitempty` (Rev 31). A source file without `<title-info>` round-trips as "absent" (nil pointer → writer omits the element) instead of being silently resurrected as an empty `<title-info><book-title></book-title><lang></lang></title-info>`. Every access site in Go (`thumb.Extract`, `html.writeHeader` / `writeDescription`) and on the frontend (`DescriptionPanel.svelte`) nil-checks before dereferencing. If you add new code that reads `fb.Description.TitleInfo.*`, remember the nil guard or the app will panic on minimal / broken documents. The same pattern already applies to `SrcTitleInfo`, `PublishInfo`, etc.
+
 ### Frontend (`frontend/src/`)
 
 - **Stack:** Svelte 4 + TypeScript + Vite + raw ProseMirror (not TipTap — see ARCHITECTURE.md §"Why ProseMirror").

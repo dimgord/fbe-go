@@ -6,6 +6,124 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 31 — 2026-04-22 — Validation line numbers + title-info faithful round-trip [dev]
+
+Version: **0.0.31**
+
+Bundles two related fixes spotted during Rev 30 testing on NixOS: Dmitry
+opened a deliberately-broken `.fb2` (with `<title-info>` removed) to
+test validation and saw:
+
+1. Error at `L0:0` — line numbers weren't being extracted.
+2. A ghost `<title-info>` in the XML pane that wasn't in his source
+   file, and the error message talked about `book-title` instead of
+   the expected `genre` / `title-info`.
+
+### Part A — Populate Line/Column in ValidationError
+
+Root cause: `lestrrat-go/libxml2` registers a plain
+`xmlSchemaValidityErrorFunc` (via `MY_accumulateErr` in its cgo), which
+only forwards the formatted message string. libxml2's native
+`xmlErrorPtr` (with `line` / `int2` fields) is discarded inside the
+binding before we ever see it. Switching to the structured-error
+callback would require patching the binding — too heavy.
+
+Pragmatic fix: post-process. After collecting the `[]error` from
+`schema.Validate`, parse the QName out of the message with a regex —
+typical shape `Element '{ns}name': …` or bare `Element 'name': …` —
+and scan the source bytes for the first `<name[\s/>]` occurrence.
+Byte offset → (line, column), both 1-based. Falls back to (0, 0) when
+no element name can be extracted.
+
+Covered by a new `TestLocateElementInSource` with four cases including
+two fall-through paths (unrelated message; element not present in src).
+The heuristic is not perfect (multiple identical tag names → we pick the
+first), but for FictionBook's typical "missing / unexpected at
+description level" errors it lands on the right line.
+
+### Part B — Description.TitleInfo as *TitleInfo
+
+Root cause: `Description.TitleInfo` was a value type (`TitleInfo`, not
+`*TitleInfo`), so Go's encoding/xml always emitted the element on
+marshal. Two string children (`BookTitle`, `Lang`) lacked `,omitempty`
+so they emitted as `<book-title></book-title>` / `<lang></lang>` even
+when zero-value. A file with no `<title-info>` therefore round-tripped
+as an empty-but-present title-info, and the validator reported
+`<book-title>` as unexpected (first child didn't match the XSD's
+required-first `<genre>`) instead of telling the user their title-info
+was missing entirely.
+
+Fix: `*TitleInfo` with `,omitempty` + nil-guards at every access site.
+
+Access sites updated:
+- `internal/fb2/thumb/thumb.go` — nil check before `Coverpage` deref.
+- `internal/fb2/export/html/html.go` — `writeHeader` reads
+  `BookTitle`/`Lang` via a nil-tolerant local; `writeDescription`
+  returns early when `TitleInfo == nil`.
+- `frontend/src/description/DescriptionPanel.svelte` — wrapped
+  `<TitleInfoForm bind:info={…}>` in `{#if fb.Description.TitleInfo}`
+  with an "Add title info" prompt in the else branch (mirrors the
+  existing SrcTitleInfo pattern). Refactored the two "add empty
+  title-info object" code paths to share one `emptyTitleInfo()` helper.
+- `frontend/src/fb2/types.ts` — `TitleInfo?: TitleInfo | null`.
+- `frontend/src/editor/serialize.test.ts` — optional-chain the read.
+
+Wails regen verified: `TitleInfo?: TitleInfo` propagated to
+`wailsjs/go/models.ts` automatically.
+
+### Documented invariant
+
+CLAUDE.md Architecture section now carries an "Absent-section invariant"
+note next to the existing "Lossless fallback invariant". Keeps future
+readers from re-introducing the ghost-element bug.
+
+### Verification
+
+- `go build -tags xsd ./...` / `go vet -tags xsd ./...` clean.
+- `go test -tags xsd ./...` — all existing packages green; new
+  `TestLocateElementInSource` (4 sub-cases) passes.
+- `wails build -tags xsd` — full bundle clean; regen pulled
+  `TitleInfo?: TitleInfo` into the generated TS models as expected.
+- `npm run check` — 0 errors, 0 warnings.
+- `npm run test` — 54/54.
+- UI flow again not clicked-through from dev env — Dmitry to open
+  `book-broken.fb2` and confirm the post-fix behavior: XML pane should
+  no longer show an empty `<title-info>`, and the error should now
+  point at the `<description>` line (because `title-info` is *missing*,
+  not present-but-wrong).
+
+### Known heuristic limits (Part A)
+
+- If a doc contains many elements with the same local name, we map every
+  error about that tag to the first occurrence. Good enough for typical
+  description-level errors; could mislead on body-level errors in long
+  docs.
+- Messages that don't quote an element (e.g. attribute-value errors) fall
+  back to (0, 0). Acceptable — better than "always 0" across the board,
+  and the message text still conveys the issue.
+- When `lestrrat-go/libxml2` eventually exposes structured errors, swap
+  the regex heuristic for the native `xmlErrorPtr` fields.
+
+### Files modified
+
+- `internal/fb2/doc/doc.go` — TitleInfo pointer + rationale comment
+- `internal/fb2/thumb/thumb.go`, `internal/fb2/export/html/html.go` — nil guards
+- `internal/fb2/xsd/xsd_libxml2.go` — line/col heuristic
+- `internal/fb2/xsd/xsd_libxml2_test.go` — `TestLocateElementInSource`
+- `frontend/src/fb2/types.ts` — TitleInfo optional
+- `frontend/src/description/DescriptionPanel.svelte` — conditional + helper refactor
+- `frontend/src/editor/serialize.test.ts` — optional chain
+- `CLAUDE.md` — absent-section invariant
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.30 → 0.0.31
+- `frontend/package.json`       0.0.30 → 0.0.31
+- `frontend/package-lock.json`  0.0.30 → 0.0.31
+
+---
+
 ## Rev 30 — 2026-04-22 — Draggable resizer between XML and errors panes [dev]
 
 Version: **0.0.30**

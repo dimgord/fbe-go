@@ -31,8 +31,13 @@ type Stylesheet struct {
 }
 
 // Description aggregates all descriptive metadata sections.
+//
+// TitleInfo is a pointer with `,omitempty` (rather than a value type) so that
+// a document whose source lacks `<title-info>` round-trips as "absent" rather
+// than materializing a ghost element with empty `<book-title>`/`<lang>` on the
+// writer side. Callers must nil-check before dereferencing.
 type Description struct {
-	TitleInfo    TitleInfo     `xml:"title-info"`
+	TitleInfo    *TitleInfo    `xml:"title-info,omitempty"`
 	SrcTitleInfo *TitleInfo    `xml:"src-title-info,omitempty"`
 	DocumentInfo DocumentInfo  `xml:"document-info"`
 	PublishInfo  *PublishInfo  `xml:"publish-info,omitempty"`

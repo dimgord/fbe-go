@@ -76,7 +76,7 @@ describe("serialize round-trip on SAMPLE_BOOK", () => {
   });
 
   it("preserves book-title in description", () => {
-    expect(out.Description.TitleInfo.BookTitle).toBe("Кобзар (sample)");
+    expect(out.Description.TitleInfo?.BookTitle).toBe("Кобзар (sample)");
   });
 
   it("preserves body-level epigraph with text-author", () => {

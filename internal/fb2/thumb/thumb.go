@@ -16,6 +16,9 @@ import (
 // Extract returns the raw bytes of the coverpage image, its content type, or an
 // error if no cover is present / referenced binary is missing.
 func Extract(fb *doc.FictionBook) (data []byte, contentType string, err error) {
+	if fb.Description.TitleInfo == nil {
+		return nil, "", fmt.Errorf("thumb: no title-info")
+	}
 	cp := fb.Description.TitleInfo.Coverpage
 	if cp == nil || len(cp.Images) == 0 {
 		return nil, "", fmt.Errorf("thumb: no coverpage")
