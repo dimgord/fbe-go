@@ -6,6 +6,63 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 40 — 2026-04-22 — Help-dialog links open externally, text is selectable [dev]
+
+Version: **0.1.1**
+
+### Symptoms (beta feedback, Dmitry)
+
+1. Links in the Help modal didn't do anything on click — no new tab,
+   no Go-side action.
+2. Text inside the modal (version string, link text, kbd labels)
+   couldn't be selected or copied.
+
+### Root causes
+
+1. Wails' WKWebView / WebKitGTK doesn't route `<a href="http…">`
+   clicks to the system browser. That's deliberate — if it did,
+   random links in user content would open browser windows. The
+   contract is: the frontend intercepts the click and calls
+   `runtime.BrowserOpenURL(url)`, which on macOS fires `open`, on
+   Linux fires `xdg-open`.
+2. Chromed-up dialogs inherited `cursor: auto` weirdly + `user-select`
+   wasn't explicitly set on `.dialog`. WebKit on macOS sometimes treats
+   descendants of `role="button"` elements (the backdrop) as
+   non-selectable by default, and our backdrop is `role="button"`.
+
+### Fixes
+
+- `openExternal(e, url)` in HelpDialog.svelte: `preventDefault`, then
+  dynamic-import `wailsjs/runtime/runtime` and call `BrowserOpenURL`.
+  If Wails isn't running (plain vite dev), falls back to
+  `window.open(url, "_blank", "noopener,noreferrer")`. Every `<a>`
+  in the dialog wires an `on:click={...openExternal(…)}` handler.
+- `.dialog` CSS now declares `user-select: text` and
+  `-webkit-user-select: text` explicitly, plus `cursor: auto` to
+  reset from the inherited `cursor: pointer` the `role="button"`
+  backdrop was bleeding in.
+- All link `rel` attributes bumped to `noreferrer noopener` (browser
+  fallback hardening).
+
+### Verification
+
+- `npm run check` — 0/0.
+- `npm run test` — 58/58 (no test for Wails-side link flow; manual
+  on Dmitry's NixOS box needed).
+
+### Files modified
+
+- `frontend/src/help/HelpDialog.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.1.0 → 0.1.1
+- `frontend/package.json`       0.1.0 → 0.1.1
+- `frontend/package-lock.json`  0.1.0 → 0.1.1
+
+---
+
 ## Rev 39 — 2026-04-22 — Help dialog + v0.1.0-beta milestone [dev → main]
 
 Version: **0.1.0** (product); git tag: **v0.1.0-beta**
