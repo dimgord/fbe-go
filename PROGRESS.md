@@ -6,6 +6,136 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 37 — 2026-04-22 — doc.Section.Body — ordered children (sections + blocks) [dev]
+
+Version: **0.0.37**
+
+### Why
+
+Rev 34 let PM carry mixed `section + block` content past the XSD's
+strict `(section+ | block+)` choice. But round-trip still lost the
+exact *order* inside such a section: Go's `encoding/xml` splits matches
+into the two disjoint slices `Sections []Section` and `Blocks []Block`,
+and the writer emits all Sections before all Blocks (field-declaration
+order). A source with `<empty-lane/> <section/> <empty-lyne/>` came
+back as `<section/> <empty-lane/> <empty-lyne/>`. Content preserved,
+position canonicalized.
+
+### What
+
+Collapsed `doc.Section.Sections + Blocks` into a single ordered slice
+`Body []Block`. Subsections live inside `Body` as a `Block` whose new
+`Section *Section` field is non-nil — the same variant-discrimination
+pattern `Block` already used for Paragraph, Poem, Cite, Raw, etc.
+
+### Go changes
+
+`internal/fb2/doc/doc.go`:
+- `Section`: `Sections` + `Blocks` removed; added `Body []Block` with
+  `xml:"-"` and custom `UnmarshalXML` / `MarshalXML`.
+- `UnmarshalXML`: reads header (id attr, title?, epigraph*, image?,
+  annotation?) then collects everything else — including `<section>` —
+  into `Body` via `Block.UnmarshalXML`, in source order.
+- `MarshalXML`: emits header in XSD-required order, then iterates
+  `Body` and calls `Block.MarshalXML` directly (EncodeElement with
+  an empty StartElement errors "missing name" because Block has no
+  XMLName field; direct call bypasses that).
+- `Block`: new `Section *Section` variant.
+- `Block.UnmarshalXML`: new `"section"` case.
+- `Block.MarshalXML`: new case that emits `<section>` for the variant.
+
+### Go consumers
+
+- `internal/fb2/export/html/html.go::writeSection`: replaced the
+  if/else (nested sections → recurse; else → writeBlock) with a single
+  walk of `s.Body` that dispatches on `b.Section != nil`. Ordered
+  output matches source regardless of mixing.
+- `internal/fb2/writer/writer_test.go::check`: `Sections[0].Blocks`
+  → `Sections[0].Body` in the body-count assertion.
+
+### Frontend changes
+
+Wails regenerates TS models from the Go struct, so `Section.Body: Block[]`
+propagates automatically. Hand-written types + code that used the old
+names had to follow:
+
+- `frontend/src/fb2/types.ts`: `Section` — `Sections` / `Blocks`
+  removed, `Body?: Block[] | null` added. `Block` — new
+  `Section?: Section | null` field.
+- `frontend/src/fb2/sample.ts`: each section's `Blocks:` / `Sections:`
+  lists reshaped into a single `Body:` with `{ Section: { ... } }`
+  wrappers for the subsection entries.
+- `frontend/src/editor/parse.ts::buildSection`: single loop over
+  `s.Body`; relies on `buildBlock` to dispatch each item.
+  `buildBlock` gains `if (b.Section) return buildSection(b.Section);`.
+- `frontend/src/editor/serialize.ts::buildSection`: emits `{ Body: [...] }`
+  in PM-child order. Section-type children become `{ Section: ... }`
+  entries. `buildBlock` gains `case "section"`.
+- `frontend/src/tree/outline.ts::buildSection`: filters `s.Body` by
+  `b.Section` to enumerate subsections for the outline tree; path
+  indices still count only subsection children (matches
+  `Editor.svelte::findNodePos`'s "i-th section child" semantics).
+- `frontend/src/editor/commands.test.ts` (23 tests) — bulk
+  `Blocks:` → `Body:` rename, plus four manual nested-sections
+  unwrapping to `Body: [{ Section: {...} }]`.
+- `frontend/src/editor/serialize.test.ts` — assertions that used
+  `section.Blocks.find(...)` updated to `section.Body.find(...)`;
+  the "preserves nested section count" and "preserves nested section
+  with annotation" tests now filter `Body` by Section variant.
+- `frontend/src/editor/raw.test.ts` — shared `minimalBook` helper
+  + the mixed-content regression test reshaped to the new Body
+  structure.
+
+### Tests
+
+New `internal/fb2/writer/section_order_test.go::TestSectionBodyPreservesInterleaving`:
+parses a section with `[p, section, p, section, p]` alternating, writes
+it, and asserts the nine substring markers appear in source order in
+the output. Before Rev 37 this test would have seen the two sections
+bunched at the top of the section's body.
+
+### Doc note
+
+CLAUDE.md Architecture section gains a "Section order invariant" entry
+next to the existing "Lossless fallback invariant" so future code
+changes don't accidentally revert the pair back to Sections+Blocks.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `go test -tags xsd ./...` clean — new interleaving test passes.
+- `wails build -tags xsd` — bindings regenerated, Section now carries
+  `Body: Block[]` in `frontend/wailsjs/go/models.ts`.
+- `npm run check` 0/0.
+- `npm run test` 58/58 (54 existing + 3 raw + 1 mixed — unchanged count
+  since the raw mixed-section test simply changed shape of its input).
+- UI flow not clicked-through from dev env. Dmitry to re-open
+  `book-broken.fb2` and verify: XML source pane shows all three
+  misspelled elements now IN THEIR ORIGINAL POSITIONS
+  (empty-lane before section, empty-lyne after section — not bunched
+  at the top).
+
+### Files modified
+
+- `internal/fb2/doc/doc.go` — Section refactor + Block.Section variant
+- `internal/fb2/export/html/html.go` — writeSection Body walk
+- `internal/fb2/writer/writer_test.go` — field rename
+- `internal/fb2/writer/section_order_test.go` (new) — interleaving regression
+- `frontend/src/fb2/types.ts`, `frontend/src/fb2/sample.ts`
+- `frontend/src/editor/parse.ts`, `frontend/src/editor/serialize.ts`
+- `frontend/src/editor/commands.test.ts`, `frontend/src/editor/serialize.test.ts`, `frontend/src/editor/raw.test.ts`
+- `frontend/src/tree/outline.ts`
+- `CLAUDE.md`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.36 → 0.0.37
+- `frontend/package.json`       0.0.36 → 0.0.37
+- `frontend/package-lock.json`  0.0.36 → 0.0.37
+
+---
+
 ## Rev 36 — 2026-04-22 — Cleanup: compactMixedContent tag assembly via fmt.Appendf [dev]
 
 Version: **0.0.36**

@@ -179,14 +179,14 @@ func (e *exporter) writeSection(s *doc.Section, headingLevel int) {
 		}
 		e.write("</aside>\n")
 	}
-	if len(s.Sections) > 0 {
-		for i := range s.Sections {
-			e.writeSection(&s.Sections[i], headingLevel+1)
+	// Body holds nested subsections and flat blocks interleaved in source
+	// order — walk them in order so HTML export matches the on-disk layout.
+	for _, b := range s.Body {
+		if b.Section != nil {
+			e.writeSection(b.Section, headingLevel+1)
+			continue
 		}
-	} else {
-		for _, b := range s.Blocks {
-			e.writeBlock(b, "")
-		}
+		e.writeBlock(b, "")
 	}
 	e.write("</section>\n")
 }

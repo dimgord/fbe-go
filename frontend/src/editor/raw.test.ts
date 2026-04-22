@@ -23,7 +23,7 @@ function minimalBook(blockOrInline: "block" | "inline", raw: RawElement): Fictio
     },
     Bodies: [{
       Sections: [{
-        Blocks: blockOrInline === "block"
+        Body: blockOrInline === "block"
           ? [
               { Paragraph: { Children: [{ Text: "before" }] } },
               { Raw: raw },
@@ -55,12 +55,12 @@ describe("Raw block round-trip", () => {
   it("preserves Raw block through PM round-trip (no drop)", () => {
     const src = minimalBook("block", raw);
     const out = pmDocToFB2(fb2ToPMDoc(src), src);
-    const blocks = out.Bodies[0].Sections![0].Blocks!;
-    expect(blocks.length).toBe(3);
-    expect(blocks[0].Paragraph).toBeDefined();
-    expect(blocks[1].Raw).toBeDefined();
-    expect(blocks[1].Raw!.XMLName.Local).toBe("empty-lune");
-    expect(blocks[2].Paragraph).toBeDefined();
+    const body = out.Bodies[0].Sections![0].Body!;
+    expect(body.length).toBe(3);
+    expect(body[0].Paragraph).toBeDefined();
+    expect(body[1].Raw).toBeDefined();
+    expect(body[1].Raw!.XMLName.Local).toBe("empty-lune");
+    expect(body[2].Paragraph).toBeDefined();
   });
 
   it("preserves Raw block attributes and nested items", () => {
@@ -77,7 +77,7 @@ describe("Raw block round-trip", () => {
     };
     const src = minimalBook("block", complex);
     const out = pmDocToFB2(fb2ToPMDoc(src), src);
-    const roundTripped = out.Bodies[0].Sections![0].Blocks![1].Raw!;
+    const roundTripped = out.Bodies[0].Sections![0].Body![1].Raw!;
     expect(roundTripped.XMLName.Local).toBe("custom-extension");
     expect(roundTripped.Attrs).toHaveLength(2);
     expect(roundTripped.Attrs![0].Value).toBe("Flibusta");
@@ -94,6 +94,9 @@ describe("Raw block inside a section mixed with a nested <section>", () => {
   // dropped (PM schema had the same strict choice). We relaxed PM to
   // (section | block)+ so the round-trip preserves what the file actually
   // contained, and the validator is the one flagging the XSD breach.
+  //
+  // Rev 37 collapsed doc.Section.Sections+Blocks into a single ordered Body,
+  // so the preservation check now looks at Body and filters by variant.
   const raw = (name: string): RawElement => ({
     XMLName: { Local: name },
     Attrs: [],
@@ -109,25 +112,21 @@ describe("Raw block inside a section mixed with a nested <section>", () => {
       Bodies: [{
         Sections: [{
           Title: { Children: [{ Paragraph: { Children: [{ Text: "outer" }] } }] },
-          Blocks: [
+          Body: [
             { Raw: raw("empty-lane") },
+            { Section: {
+              Body: [{ Paragraph: { Children: [{ Text: "inner" }] } }],
+            } },
           ],
-          Sections: [{
-            Blocks: [{ Paragraph: { Children: [{ Text: "inner" }] } }],
-          }],
         }],
       }],
     } as unknown as FictionBook;
-    // The Go side allows storing Blocks AND Sections on the same section
-    // (both fields exist on doc.Section) — the XSD choice is enforced at
-    // validation time, not at struct level. We lean on that here: feed the
-    // frontend a section whose Blocks and Sections are both non-empty, and
-    // expect the round-trip not to lose either.
     const out = pmDocToFB2(fb2ToPMDoc(src), src);
     const outer = out.Bodies[0].Sections![0];
-    expect(outer.Blocks?.length, "flanking raw block should survive").toBeGreaterThan(0);
-    expect(outer.Sections?.length, "nested section should survive").toBeGreaterThan(0);
-    const rawBlocks = (outer.Blocks ?? []).filter((b) => b.Raw);
+    const rawBlocks = (outer.Body ?? []).filter((b) => b.Raw);
+    const subsections = (outer.Body ?? []).filter((b) => b.Section);
+    expect(rawBlocks.length, "flanking raw block should survive").toBeGreaterThan(0);
+    expect(subsections.length, "nested section should survive").toBeGreaterThan(0);
     expect(rawBlocks.map((b) => b.Raw!.XMLName.Local)).toContain("empty-lane");
   });
 });
@@ -145,7 +144,7 @@ describe("Raw inline round-trip", () => {
   it("preserves Raw inline inside a paragraph (no drop)", () => {
     const src = minimalBook("inline", raw);
     const out = pmDocToFB2(fb2ToPMDoc(src), src);
-    const inlines = out.Bodies[0].Sections![0].Blocks![0].Paragraph!.Children!;
+    const inlines = out.Bodies[0].Sections![0].Body![0].Paragraph!.Children!;
 
     // Expect at least one Inline with Raw non-null and the text segments around it.
     const rawInline = inlines.find((i) => i.Raw);

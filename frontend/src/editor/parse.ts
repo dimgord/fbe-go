@@ -69,19 +69,12 @@ function buildSection(s: Section): PMNode | null {
     if (n) children.push(n);
   }
 
-  // FictionBook.xsd strictly says either nested sections OR flat blocks, not
-  // both. In practice, real-world files sometimes mix them (malformed or via
-  // editors that don't enforce the choice). Pre-Rev-34 we dropped Blocks
-  // whenever Sections was non-empty — silent loss on round-trip. Now we
-  // include both, emitting Sections first then Blocks (matches Go's
-  // encoding/xml field-declaration order, so save-and-reopen is idempotent).
-  // The section's PM content model was relaxed from (section+ | block+) to
-  // (section | block)+ to accept this.
-  for (const sub of s.Sections ?? []) {
-    const n = buildSection(sub);
-    if (n) children.push(n);
-  }
-  for (const b of s.Blocks ?? []) {
+  // Rev 37: Section.Body is a single ordered list of Block values —
+  // a Block with a non-null Section field is a nested subsection, everything
+  // else is a flat block. Walk the list in order so on-disk interleaving
+  // survives the PM round-trip. The PM `section` content model is
+  // (section | block)+ so a mix of the two variants is legal.
+  for (const b of s.Body ?? []) {
     const n = buildBlock(b);
     if (n) children.push(n);
   }
@@ -237,6 +230,7 @@ function buildBlock(b: Block): PMNode | null {
   if (b.Cite)      return buildCite(b.Cite);
   if (b.Table)     return buildTable(b.Table);
   if (b.Image)     return buildBlockImage(b.Image);
+  if (b.Section)   return buildSection(b.Section);
   if (b.Raw)       return buildRawBlock(b);
   return null;
 }

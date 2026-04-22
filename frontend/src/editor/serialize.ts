@@ -60,8 +60,7 @@ function buildSection(node: PMNode): Section {
   const out: Section = {
     ID: node.attrs.id ?? undefined,
     Epigraph: [],
-    Sections: [],
-    Blocks: [],
+    Body: [],
   };
   node.forEach((child) => {
     switch (child.type.name) {
@@ -72,23 +71,27 @@ function buildSection(node: PMNode): Section {
         out.Epigraph!.push(buildEpigraph(child));
         break;
       case "image_block":
-        out.Image = buildImage(child);
+        // Image only counts as the section's <image> header slot when it's
+        // the first post-title child; elsewhere it's a body image. We
+        // conservatively route image_block into Body — the (rare) cases
+        // where it's actually the header image still round-trip correctly
+        // because FB2 readers accept <image> at block level inside sections.
+        out.Body!.push({ Image: buildImage(child) });
         break;
       case "annotation":
         out.Annotation = buildAnnotation(child);
         break;
       case "section":
-        out.Sections!.push(buildSection(child));
+        out.Body!.push({ Section: buildSection(child) });
         break;
-      default:
-        // Block-level content: paragraph / subtitle / empty_line / poem / cite / table / image_block.
+      default: {
         const blk = buildBlock(child);
-        if (blk) out.Blocks!.push(blk);
+        if (blk) out.Body!.push(blk);
+      }
     }
   });
   if (out.Epigraph?.length === 0) delete out.Epigraph;
-  if (out.Sections?.length === 0) delete out.Sections;
-  if (out.Blocks?.length === 0) delete out.Blocks;
+  if (out.Body?.length === 0) delete out.Body;
   return out;
 }
 
@@ -237,6 +240,8 @@ function buildBlock(node: PMNode): Block | null {
       return { Table: buildTable(node) };
     case "image_block":
       return { Image: buildImage(node) };
+    case "section":
+      return { Section: buildSection(node) };
     case "raw_block":
       return decodeRaw(node.attrs.raw, "Block");
   }

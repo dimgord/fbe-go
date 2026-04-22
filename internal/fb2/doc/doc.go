@@ -157,16 +157,122 @@ type Body struct {
 }
 
 // Section is a recursive structural block.
+//
+// Body holds the post-header content in source order — each entry is a
+// `Block`, and a Block whose `Section` field is non-nil represents a nested
+// subsection. FictionBook.xsd strictly requires this tail to be either all
+// blocks or all subsections (no mixing), but real-world files sometimes
+// violate that. Using a single ordered slice keeps their on-disk
+// interleaving intact across round-trip. See Block.UnmarshalXML /
+// MarshalXML for the `<section>` dispatch that makes this work.
 type Section struct {
-	ID       string    `xml:"id,attr,omitempty"`
-	Title    *Title    `xml:"title,omitempty"`
-	Epigraph []Epigraph `xml:"epigraph,omitempty"`
-	Image    *Image    `xml:"image,omitempty"`
+	ID         string      `xml:"id,attr,omitempty"`
+	Title      *Title      `xml:"title,omitempty"`
+	Epigraph   []Epigraph  `xml:"epigraph,omitempty"`
+	Image      *Image      `xml:"image,omitempty"`
 	Annotation *Annotation `xml:"annotation,omitempty"`
 
-	// Either nested sections OR inline block content (paragraphs, poems, etc.).
-	Sections []Section `xml:"section,omitempty"`
-	Blocks   []Block   `xml:",any"`
+	// Ordered tail: blocks and/or nested subsections as they appear in the source.
+	Body []Block `xml:"-"`
+}
+
+// UnmarshalXML reads the fixed-order header (title?, epigraph*, image?,
+// annotation?) and then collects every remaining child — be it a `<section>`
+// or any block-level element — into Body in the order they appear. This
+// replaces Go's default reflection-based unmarshal, which would have split
+// sections and blocks into two disjoint slices and lost their interleaving.
+func (s *Section) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	for _, a := range start.Attr {
+		if a.Name.Local == "id" {
+			s.ID = a.Value
+		}
+	}
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return err
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "title":
+				s.Title = &Title{}
+				if err := d.DecodeElement(s.Title, &t); err != nil {
+					return err
+				}
+			case "epigraph":
+				var ep Epigraph
+				if err := d.DecodeElement(&ep, &t); err != nil {
+					return err
+				}
+				s.Epigraph = append(s.Epigraph, ep)
+			case "image":
+				s.Image = &Image{}
+				if err := d.DecodeElement(s.Image, &t); err != nil {
+					return err
+				}
+			case "annotation":
+				s.Annotation = &Annotation{}
+				if err := d.DecodeElement(s.Annotation, &t); err != nil {
+					return err
+				}
+			default:
+				// Everything else — including `<section>` — goes into Body.
+				// Block.UnmarshalXML dispatches on the element name.
+				var b Block
+				if err := b.UnmarshalXML(d, t); err != nil {
+					return err
+				}
+				s.Body = append(s.Body, b)
+			}
+		case xml.EndElement:
+			return nil
+		}
+	}
+}
+
+// MarshalXML emits the header fields in their XSD-required order, then the
+// Body in source order. Each Body entry goes through Block.MarshalXML, which
+// re-emits `<section>` for nested-section variants.
+func (s Section) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if start.Name.Local == "" {
+		start.Name = xml.Name{Local: "section"}
+	}
+	start.Attr = nil
+	addAttrIfSet(&start, "id", s.ID)
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if s.Title != nil {
+		if err := e.EncodeElement(s.Title, xml.StartElement{Name: xml.Name{Local: "title"}}); err != nil {
+			return err
+		}
+	}
+	for _, ep := range s.Epigraph {
+		if err := e.EncodeElement(ep, xml.StartElement{Name: xml.Name{Local: "epigraph"}}); err != nil {
+			return err
+		}
+	}
+	if s.Image != nil {
+		if err := e.EncodeElement(s.Image, xml.StartElement{Name: xml.Name{Local: "image"}}); err != nil {
+			return err
+		}
+	}
+	if s.Annotation != nil {
+		if err := e.EncodeElement(s.Annotation, xml.StartElement{Name: xml.Name{Local: "annotation"}}); err != nil {
+			return err
+		}
+	}
+	for _, b := range s.Body {
+		// Block.MarshalXML discards the StartElement arg and dispatches on
+		// whichever field is populated (paragraph/poem/.../section/raw), so
+		// we call it directly — passing an empty start to EncodeElement
+		// errors with "missing name" because Block has no XMLName field.
+		if err := b.MarshalXML(e, xml.StartElement{}); err != nil {
+			return err
+		}
+	}
+	return e.EncodeToken(start.End())
 }
 
 // Title is a simple block container of <p> / <empty-line>.
@@ -215,6 +321,10 @@ type Stanza struct {
 //
 // Raw captures any element we don't have a typed representation for (custom
 // FB2 extensions, future-version elements) so the round-trip is lossless.
+//
+// Section is a Block variant too (not just a sibling of Block) so that a
+// parent section's ordered Body can interleave subsections with flat blocks
+// — see Section.Body / Section.UnmarshalXML.
 type Block struct {
 	Paragraph *Paragraph
 	Poem      *Poem
@@ -223,6 +333,7 @@ type Block struct {
 	EmptyLine *EmptyLine
 	Table     *Table
 	Image     *Image
+	Section   *Section
 	Raw       *RawElement
 }
 
@@ -317,6 +428,9 @@ func (b *Block) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	case "image":
 		b.Image = &Image{}
 		return d.DecodeElement(b.Image, &start)
+	case "section":
+		b.Section = &Section{}
+		return d.DecodeElement(b.Section, &start)
 	}
 	b.Raw = &RawElement{}
 	return b.Raw.UnmarshalXML(d, start)
@@ -339,6 +453,8 @@ func (b Block) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		return e.EncodeElement(b.Table, xml.StartElement{Name: xml.Name{Local: "table"}})
 	case b.Image != nil:
 		return e.EncodeElement(b.Image, xml.StartElement{Name: xml.Name{Local: "image"}})
+	case b.Section != nil:
+		return e.EncodeElement(b.Section, xml.StartElement{Name: xml.Name{Local: "section"}})
 	case b.Raw != nil:
 		return b.Raw.MarshalXML(e, xml.StartElement{})
 	}

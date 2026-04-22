@@ -63,9 +63,9 @@ describe("serialize round-trip on SAMPLE_BOOK", () => {
   });
 
   it("preserves nested section count", () => {
-    const inSrc = SAMPLE_BOOK.Bodies[0].Sections[1].Sections ?? [];
-    const inOut = out.Bodies[0].Sections[1].Sections ?? [];
-    expect(inOut.length).toBe(inSrc.length);
+    const srcSubs = (SAMPLE_BOOK.Bodies[0].Sections[1].Body ?? []).filter((b) => b.Section);
+    const outSubs = (out.Bodies[0].Sections[1].Body ?? []).filter((b) => b.Section);
+    expect(outSubs.length).toBe(srcSubs.length);
   });
 
   it("preserves body title text", () => {
@@ -88,7 +88,7 @@ describe("serialize round-trip on SAMPLE_BOOK", () => {
 
   it("preserves poem with two stanzas and text-author", () => {
     const section0 = out.Bodies[0].Sections[0];
-    const poem = section0.Blocks?.find((b) => b.Poem)?.Poem;
+    const poem = section0.Body?.find((b) => b.Poem)?.Poem;
     expect(poem).toBeDefined();
     expect(poem!.Stanzas.length).toBe(2);
     expect(poem!.Stanzas[0].Verses.length).toBe(4);
@@ -100,7 +100,7 @@ describe("serialize round-trip on SAMPLE_BOOK", () => {
   it("preserves inline marks in a paragraph", () => {
     // Sample: "жирний", "курсив", "моноширинний", "посилання".
     const section0 = out.Bodies[0].Sections[0];
-    const richParagraph = section0.Blocks!
+    const richParagraph = section0.Body!
       .filter((b) => b.Paragraph)
       .find((b) => flattenText(b.Paragraph!.Children).includes("жирний"));
     expect(richParagraph).toBeDefined();
@@ -113,13 +113,13 @@ describe("serialize round-trip on SAMPLE_BOOK", () => {
 
   it("preserves empty-line block", () => {
     const section0 = out.Bodies[0].Sections[0];
-    const emptyLine = section0.Blocks?.find((b) => b.EmptyLine);
+    const emptyLine = section0.Body?.find((b) => b.EmptyLine);
     expect(emptyLine).toBeDefined();
   });
 
   it("preserves cite with text-author", () => {
     const section0 = out.Bodies[0].Sections[0];
-    const cite = section0.Blocks?.find((b) => b.Cite)?.Cite;
+    const cite = section0.Body?.find((b) => b.Cite)?.Cite;
     expect(cite).toBeDefined();
     expect(cite!.TextAuthor?.length).toBeGreaterThan(0);
     expect(flattenText(cite!.TextAuthor![0].Children)).toBe("— I і мертвим, і живим…");
@@ -127,14 +127,14 @@ describe("serialize round-trip on SAMPLE_BOOK", () => {
 
   it("preserves subtitle block", () => {
     const section0 = out.Bodies[0].Sections[0];
-    const subtitle = section0.Blocks?.find((b) => b.Subtitle);
+    const subtitle = section0.Body?.find((b) => b.Subtitle);
     expect(subtitle).toBeDefined();
     expect(flattenText(subtitle!.Subtitle!.Children)).toBe("Таблиця-приклад");
   });
 
   it("preserves table with th + td cells and sub mark in a cell", () => {
     const section0 = out.Bodies[0].Sections[0];
-    const table = section0.Blocks?.find((b) => b.Table)?.Table;
+    const table = section0.Body?.find((b) => b.Table)?.Table;
     expect(table).toBeDefined();
     expect(table!.Rows.length).toBe(3); // header + 2 data rows
     expect(table!.Rows[0].Cells?.[0].XMLName?.Local).toBe("th");
@@ -148,8 +148,9 @@ describe("serialize round-trip on SAMPLE_BOOK", () => {
 
   it("preserves nested section with annotation", () => {
     const nested = out.Bodies[0].Sections[1];
-    expect(nested.Sections?.length).toBe(2);
-    const withAnnotation = nested.Sections![0];
+    const subs = (nested.Body ?? []).filter((b) => b.Section).map((b) => b.Section!);
+    expect(subs.length).toBe(2);
+    const withAnnotation = subs[0];
     expect(withAnnotation.Annotation).toBeDefined();
     expect(flattenText(withAnnotation.Annotation!.Children?.[0]?.Paragraph?.Children))
       .toContain("Короткий опис підсекції.");

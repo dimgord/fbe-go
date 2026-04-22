@@ -96,8 +96,10 @@ export interface Section {
   Epigraph?: Epigraph[] | null;
   Image?: Image | null;
   Annotation?: Annotation | null;
-  Sections?: Section[] | null;
-  Blocks?: Block[] | null;
+  // Rev 37: Sections+Blocks collapsed into a single ordered Body list so
+  // real-world interleaving survives round-trip. A Block whose Section field
+  // is non-null is a nested subsection; everything else is a flat block.
+  Body?: Block[] | null;
 }
 
 export interface Title { ID?: string; Children?: Block[] }
@@ -141,6 +143,7 @@ export interface Block {
   EmptyLine?: EmptyLine | null;
   Table?: Table | null;
   Image?: Image | null;
+  Section?: Section | null;
   Raw?: RawElement | null;
 }
 
