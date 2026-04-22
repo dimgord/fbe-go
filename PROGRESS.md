@@ -6,6 +6,58 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 22 — 2026-04-21 — Toolbar text wrap + outline navigation after first click [dev]
+
+Version: **0.0.22**
+
+### Bug 1 — toolbar labels wrapping onto two lines
+
+`Toolbar.svelte` buttons with multi-glyph labels (`T-A`, `+ Title`, `+ Epigraph`,
+`+ Annot.`, `+ T-A`) rendered stacked: first glyph on top line, rest on the
+second. The button had `min-width: 2rem; height: 1.8rem` but no
+`white-space: nowrap`, so the natural label width exceeded min-width and the
+text wrapped. `T-A` additionally broke at the hyphen.
+
+Fix: added `display: inline-flex; align-items: center; justify-content: center;
+white-space: nowrap; line-height: 1` to `.toolbar button`.
+
+### Bug 2 — only the first outline navigation worked, subsequent clicks scrolled out of view
+
+`Editor.scrollToPath` computed the scroll delta against
+`view.dom.getBoundingClientRect().top`, but scrolled a *different* element
+(the nearest scrollable ancestor, which is the `<section>` in
+`App.svelte`, not `view.dom`). `view.dom`'s rect moves with every scroll —
+after the first click, its `top` is negative by the current `scrollTop`,
+so the formula `coords.top - rootRect.top - 12` over-counted by exactly
+the previous scroll distance, landing the target above the visible area.
+
+The first click worked only because `scrollTop = 0` and `view.dom.top`
+coincidentally equals the scrollable container's top in that state.
+
+Fix: measure delta against `el.getBoundingClientRect().top` (the scrollable
+container's rect), which is invariant under its own `scrollTop` changes:
+
+```ts
+const elRect = el.getBoundingClientRect();
+el.scrollTop += coords.top - elRect.top - 12;
+```
+
+Also made the flash highlight use `parentElement` when `domAtPos` returns a
+Text node, so sections get a visible flash instead of silent no-op.
+
+### Files modified
+
+- `frontend/src/editor/Toolbar.svelte`
+- `frontend/src/editor/Editor.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`
+
+### Versions bumped
+
+- `wails.json`            0.0.21 → 0.0.22
+- `frontend/package.json` 0.0.21 → 0.0.22
+
+---
+
 ## Rev 21 — 2026-04-21 — Drop `*.fb2.zip` filter (Wails v2 macOS UTType nil crash) [dev]
 
 Version: **0.0.21**
