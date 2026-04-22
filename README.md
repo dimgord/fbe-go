@@ -63,4 +63,36 @@ wails build    # production bundle
 
 ## License
 
-TBD — original FBE was released open-source in 2010.
+Released under the **MIT License** — see [LICENSE](LICENSE) for the full
+text. Third-party components bundled or depended on are listed with their
+own licenses and attribution notices in [NOTICE.md](NOTICE.md).
+
+## Legacy & acknowledgements
+
+fbe-go is an **independent rewrite**, not a code-level port. The editor
+surface moved from MSHTML `contentEditable` to a ProseMirror view, the
+XML layer from MSXML to Go's `encoding/xml` + libxml2 for validation,
+and the host from C++/WTL to Go + Wails. No source from the original
+project was reused.
+
+Thanks to:
+
+- **Dmitry Gribov** — the [FictionBook 2.0 specification and XSD
+  schemas](internal/fb2/xsd/) (2004, BSD). Those schemas ship inside
+  every fbe-go binary and are the ground truth the validator checks
+  against.
+- **[evpobr](https://github.com/evpobr/fictionbookeditor)** and the
+  classic FBE maintainers — their Windows-only FBE defined the
+  operations catalog (clone / merge / insert cite / poem / table / …)
+  that `docs/OPERATIONS.md` cross-references. Their UX is why fbe-go
+  has the shape it has.
+- **[Wails v2](https://github.com/wailsapp/wails)** (Lea Anthony et al.)
+  — Go desktop framework, why this app can ship macOS+Linux from one
+  codebase.
+- **[ProseMirror](https://prosemirror.net/)** (Marijn Haverbeke et al.)
+  — the editor framework; FB2's mixed-content model fits its schema
+  system almost perfectly.
+- **[libxml2](https://gitlab.gnome.org/GNOME/libxml2)** (Daniel Veillard)
+  and **[lestrrat-go/libxml2](https://github.com/lestrrat-go/libxml2)**
+  (Daisuke Maki) — XSD validation we rely on in `-tags xsd` builds.
+- Every upstream listed in [NOTICE.md](NOTICE.md).
