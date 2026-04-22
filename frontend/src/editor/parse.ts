@@ -69,17 +69,21 @@ function buildSection(s: Section): PMNode | null {
     if (n) children.push(n);
   }
 
-  // FB2: section has either nested sections OR flat block content, not both.
-  if (s.Sections && s.Sections.length > 0) {
-    for (const sub of s.Sections) {
-      const n = buildSection(sub);
-      if (n) children.push(n);
-    }
-  } else {
-    for (const b of s.Blocks ?? []) {
-      const n = buildBlock(b);
-      if (n) children.push(n);
-    }
+  // FictionBook.xsd strictly says either nested sections OR flat blocks, not
+  // both. In practice, real-world files sometimes mix them (malformed or via
+  // editors that don't enforce the choice). Pre-Rev-34 we dropped Blocks
+  // whenever Sections was non-empty — silent loss on round-trip. Now we
+  // include both, emitting Sections first then Blocks (matches Go's
+  // encoding/xml field-declaration order, so save-and-reopen is idempotent).
+  // The section's PM content model was relaxed from (section+ | block+) to
+  // (section | block)+ to accept this.
+  for (const sub of s.Sections ?? []) {
+    const n = buildSection(sub);
+    if (n) children.push(n);
+  }
+  for (const b of s.Blocks ?? []) {
+    const n = buildBlock(b);
+    if (n) children.push(n);
   }
 
   if (children.length === 0) {

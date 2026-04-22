@@ -6,6 +6,108 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 34 — 2026-04-22 — Allow mixed section content (section + block siblings) [dev]
+
+Version: **0.0.34**
+
+### Symptom
+
+After Rev 33, `book-broken.fb2` (three misspelled `<empty-line/>`s as
+`<empty-lune/>`, `<empty-lane/>`, `<empty-lyne/>`) still produced only
+2 XSD errors in the app (vs. 3 from the CLI on raw bytes). XML-source
+pane confirmed it: the first raw block (inside a section with flat
+blocks only) survived, but the other two were silently missing — they
+sat inside a section that also had a nested `<section>`, and the
+round-trip through PM dropped them.
+
+### Root cause — two layers
+
+1. **PM schema:** `section` content was
+   `(title | epigraph | image_block | annotation)* (section+ | block+)`
+   — a strict XSD-aligned choice: either only subsections or only flat
+   blocks, not mixed. PM dropped the block-level children of a section
+   that also had a nested subsection.
+
+2. **`parse.ts::buildSection`:** mirrored the strict choice in an
+   explicit `if (s.Sections.length > 0) { …emit only Sections… } else
+   { …emit only Blocks… }`. Even if the PM schema were relaxed, this
+   code would still silently lose Blocks on sections that had
+   subsections.
+
+### Fix
+
+- Schema: `(title | epigraph | image_block | annotation)* (section | block)+`.
+  The inline comment explains we're deliberately wider than the FB2 XSD
+  so real-world files with technically-invalid-but-present mixed content
+  survive a round-trip; Validate still flags the XSD breach.
+- `parse.ts::buildSection`: emit Sections first, then Blocks,
+  unconditionally. Order matches Go's `encoding/xml` field-declaration
+  order in `doc.Section` (`Sections` field declared before `Blocks`),
+  so save-and-reopen is idempotent.
+- `serialize.ts::buildSection` already routed PM children into the
+  right Go-side slice (Sections vs Blocks) per node type — no change
+  needed.
+
+### Note on ordering
+
+Go's `doc.Section` stores Blocks and nested Sections in separate
+slices. Original inter-leaving (e.g., `block, section, block`) is lost
+at the struct level — we only know "this section had these blocks
+and these subsections". On re-emit we emit all subsections, then all
+blocks. A source file whose section was `[empty-lane, section, empty-lyne]`
+round-trips as `[section, empty-lane, empty-lyne]`. Content is
+preserved; position relative to each other is canonicalized. Fixing
+this would require changing `doc.Section` to carry a single ordered
+`Children` slice — a larger refactor, tracked as potential future work.
+
+### Test
+
+New `raw.test.ts` case: "preserves raw blocks flanking a nested section".
+Feeds a Go-shaped section with both `Sections: [nestedSection]` and
+`Blocks: [Raw(empty-lane)]`, round-trips through `fb2ToPMDoc` →
+`pmDocToFB2`, and asserts:
+
+- Outer section still has at least one entry in both `Blocks` and `Sections`.
+- The raw block's `localName` ("empty-lane") is preserved.
+
+Pre-fix: the raw block was silently dropped by `buildSection`'s
+if/else; test failed with `expected > 0, got undefined`. Post-fix: passes.
+
+### Out of scope (deferred)
+
+- **Exact interleaving preservation.** Needs a `doc.Section.Children []SectionChild`
+  refactor, which cascades into parser / writer / Wails bindings.
+  Separate rev.
+- **Other serialization drift** Dmitry spotted in the same XML pane —
+  `xmlns:l → xmlns:xlink` per-`<a>`, and whitespace-around-inline inside
+  `<p>`. Both harmless for display but change file bytes on save.
+  Dedicated rev (writer-indent refactor).
+
+### Verification
+
+- `npm run check` — 0 errors, 0 warnings.
+- `npm run test` — 58/58 (57 old + 1 new in raw.test.ts).
+- `go test -tags xsd ./...` — unchanged, green.
+- UI round-trip not clicked-through from dev env; Dmitry to re-open
+  `book-broken.fb2` and confirm the XML pane now shows all three of
+  `<empty-lune/>`, `<empty-lane/>`, `<empty-lyne/>` and that the errors
+  list has 3 (plus the title-info one = 4 total).
+
+### Files modified
+
+- `frontend/src/editor/schema.ts` — relaxed section content model
+- `frontend/src/editor/parse.ts` — always emit Sections + Blocks, not one-or-the-other
+- `frontend/src/editor/raw.test.ts` — new mixed-content regression case
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.33 → 0.0.34
+- `frontend/package.json`       0.0.33 → 0.0.34
+- `frontend/package-lock.json`  0.0.33 → 0.0.34
+
+---
+
 ## Rev 33 — 2026-04-22 — Lossless fallback in PM (raw_block / raw_inline) [dev]
 
 Version: **0.0.33**

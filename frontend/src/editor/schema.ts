@@ -21,7 +21,15 @@ const nodes: Record<string, NodeSpec> = {
   },
 
   section: {
-    content: "(title | epigraph | image_block | annotation)* (section+ | block+)",
+    // FictionBook.xsd strictly requires (section+ | block+) — not mixed. We
+    // deliberately relax this to (section | block)+ in the PM schema so that
+    // lossless round-trip survives technically-invalid-but-existing source
+    // files (e.g. an extension element appearing next to a <section>). Save
+    // still emits what you see; the Validate panel reports the XSD breach so
+    // users know they have an invalid doc. Editor operations that could mint
+    // mixed content remain a theoretical risk — none of our toolbar commands
+    // currently do this in practice.
+    content: "(title | epigraph | image_block | annotation)* (section | block)+",
     group: "structural",
     attrs: { id: { default: null } },
     toDOM: (n) => ["div", { class: "section", id: n.attrs.id }, 0],
