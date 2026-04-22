@@ -43,11 +43,16 @@ type WindowGeom struct {
 }
 
 // PaneSizes holds user-adjusted sizes of splitter panes inside the editor.
-// Kept in a dedicated struct so we can grow it (outline width, split
-// columns, etc.) without further field sprawl on Settings.
+// Kept in a dedicated struct so we can grow it without further field sprawl
+// on Settings. All values are in CSS pixels; 0 means "use the CSS default".
 type PaneSizes struct {
+	// OutlineWidth — width of the left outline sidebar.
+	OutlineWidth int `json:"outlineWidth"`
+	// ValidationWidth — width of the right validation / XML-source panel
+	// when it's open.
+	ValidationWidth int `json:"validationWidth"`
 	// ValidationErrorsHeight — pixels from the bottom of the validation
-	// panel given to the errors list. 0 = "use CSS default (45%)".
+	// panel given to the errors list.
 	ValidationErrorsHeight int `json:"validationErrorsHeight"`
 }
 

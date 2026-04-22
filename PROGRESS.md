@@ -6,6 +6,91 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 53 — 2026-04-22 — Draggable outline + validation-panel width resizers [dev]
+
+Version: **0.1.14**
+
+### What
+
+Two new vertical drag-handles:
+
+- Between the outline sidebar and the editor (clamped 150–500px).
+- Between the editor and the validation panel when the panel is
+  open (clamped 260px – 70% of available width).
+
+Persisted in `settings.panes.{outlineWidth, validationWidth}` so
+the layout survives restart (already wired via Rev 52's
+`patchSettings` helper). Also works in Description view — the
+validation-panel resizer spans both views via a shared
+`panelWidth` state.
+
+### Go side
+
+`settings.PaneSizes` grows two pixel-valued fields:
+
+```go
+OutlineWidth    int `json:"outlineWidth"`    // 0 = CSS default 260px
+ValidationWidth int `json:"validationWidth"` // 0 = CSS default minmax(320px,30%)
+```
+
+Zero means "use CSS default" — we don't assume stale settings
+from older versions of the app have these fields.
+
+### Frontend
+
+- `App.svelte`:
+  - `outlineWidth` + `panelWidth` state (both `number | null`).
+    Loaded from settings on mount.
+  - `--outline-w` and `--panel-w` CSS custom properties applied
+    inline on the `<main>` and `.description-wrap` elements.
+  - Grid track declarations now reference those properties,
+    falling back to the previous hard-coded defaults.
+  - Pointer-event drag handlers (start/move/end) with a
+    body-level `cursor: ew-resize` during drag so the cursor
+    stays consistent even if the pointer leaves the handle.
+  - Keyboard arrow-L/R support via a shared `onResizerKeyH`
+    helper, lifted to named `onOutlineResizerKey` /
+    `onPanelResizerKey` handlers because Svelte 4's parser
+    rejects `mainEl!` non-null assertions inside inline
+    `on:keydown={…}` expressions (see the
+    `feedback_ts_nonnull_with_reactive_guard` memory note).
+- `.v-resizer` CSS — vertical twin of the horizontal resizer
+  already in ValidationPanel: 6px track, center-dot indicator,
+  hover / focus states, uses palette variables.
+
+### Not done here (intentional)
+
+- Sidebar drag in Description view: DescriptionPanel uses
+  internal tabs, not a split, so there's nothing to resize.
+- No double-click-to-reset — handy but minor; add if beta users
+  ask.
+- Didn't extract a `VerticalResizer.svelte` component. Could
+  dedupe the handler boilerplate later, but with only two call
+  sites the abstraction would cost more reading than it saves.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `wails build -tags xsd` — regen picked up new PaneSizes fields
+  in TS models.
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 58/58.
+
+### Files modified
+
+- `internal/fb2/settings/settings.go` — new fields.
+- `frontend/src/App.svelte` — state, handlers, markup, CSS.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.13 → 0.1.14
+- `frontend/package.json`       0.1.13 → 0.1.14
+- `frontend/package-lock.json`  0.1.13 → 0.1.14
+
+---
+
 ## Rev 52 — 2026-04-22 — Persistence: window geom + last-view + errors-pane height [dev]
 
 Version: **0.1.13**
