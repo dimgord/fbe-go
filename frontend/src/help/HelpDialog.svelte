@@ -196,18 +196,18 @@
     z-index: 100;
   }
   .dialog {
-    background: #fffdf8;
-    border: 1px solid #d5d5cb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 1rem 1.4rem 1.2rem;
     min-width: 28rem;
     max-width: 36rem;
     max-height: 80vh;
     overflow: auto;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 8px 24px var(--shadow);
     font-family: -apple-system, "Segoe UI", sans-serif;
     font-size: 0.9rem;
-    color: #222;
+    color: var(--fg);
     /* Explicitly opt-in to text selection so users can copy the version
        string, kbd labels, and link text. Rest of the app (editor surface,
        raw-block placeholders, resizer handle) sets `user-select: none` on
@@ -229,7 +229,7 @@
   h4 {
     margin: 1rem 0 0.4rem;
     font-size: 0.9rem;
-    color: #555;
+    color: var(--fg-secondary);
     text-transform: uppercase;
     letter-spacing: 0.6px;
   }
@@ -239,16 +239,16 @@
     font-size: 1.2rem;
     line-height: 1;
     padding: 0.1rem 0.45rem;
-    color: #666;
+    color: var(--fg-muted);
     cursor: pointer;
     border-radius: 3px;
   }
-  .close:hover { background: #e8e4d8; color: #111; }
+  .close:hover { background: var(--bg-hover); color: var(--fg-strong); }
 
   .about p { margin: 0.35rem 0; line-height: 1.45; }
-  .about p.credits { font-size: 0.82rem; color: #555; }
+  .about p.credits { font-size: 0.82rem; color: var(--fg-secondary); }
   .about a, section a {
-    color: #1a5490;
+    color: var(--fg-link);
     text-decoration: none;
   }
   .about a:hover, section a:hover { text-decoration: underline; }
@@ -264,18 +264,18 @@
   }
   td.keys {
     white-space: nowrap;
-    color: #444;
+    color: var(--fg-secondary);
   }
   kbd {
     display: inline-block;
     padding: 0.08rem 0.4rem;
-    border: 1px solid #c9c9bd;
+    border: 1px solid var(--border);
     border-bottom-width: 2px;
     border-radius: 3px;
-    background: #f5f3ea;
+    background: var(--bg-chrome);
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.78rem;
-    color: #333;
+    color: var(--fg);
   }
   ul {
     margin: 0.2rem 0 0 1.2rem;
@@ -302,17 +302,17 @@
     padding: 0.1rem 0.5rem;
     font-size: 0.72rem;
     font-family: "SF Mono", Menlo, Consolas, monospace;
-    color: #555;
-    background: #f5f3ea;
-    border: 1px solid #c9c9bd;
+    color: var(--fg-secondary);
+    background: var(--bg-chrome);
+    border: 1px solid var(--border);
     border-radius: 3px;
     cursor: pointer;
     line-height: 1.3;
     min-width: 4.5rem;
     text-align: center;
   }
-  button.copy-url:hover { background: #efe9d2; color: #222; }
-  button.copy-url:active { background: #e3dcb8; }
+  button.copy-url:hover { background: var(--bg-hover); color: var(--fg); }
+  button.copy-url:active { background: var(--bg-active); }
   .actions {
     display: flex;
     justify-content: flex-end;
@@ -321,17 +321,18 @@
   }
   button {
     padding: 0.35rem 0.9rem;
-    border: 1px solid #bbb;
-    background: white;
+    border: 1px solid var(--border-button);
+    background: var(--bg-surface);
+    color: var(--fg);
     border-radius: 4px;
     cursor: pointer;
     font: inherit;
   }
-  button:hover { background: #fff8e5; }
+  button:hover { background: var(--bg-hover); }
   button.primary {
-    background: #fce6a0;
+    background: var(--bg-active);
     font-weight: 600;
-    border-color: #b89a3e;
+    border-color: var(--warn);
   }
-  button.primary:hover { background: #f5da7c; }
+  button.primary:hover { background: var(--bg-active-hover); }
 </style>

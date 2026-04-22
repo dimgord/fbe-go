@@ -52,14 +52,15 @@
     align-items: center;
     gap: 0.25rem;
     padding: 0.3rem 0.5rem;
-    background: #eceae0;
-    border-bottom: 1px solid #d5d5cb;
+    background: var(--bg-chrome);
+    border-bottom: 1px solid var(--border);
   }
   .toolbar button {
     min-width: 2rem;
     height: 1.8rem;
-    background: white;
-    border: 1px solid #c5c5bb;
+    background: var(--bg-surface);
+    color: var(--fg);
+    border: 1px solid var(--border);
     border-radius: 3px;
     cursor: pointer;
     font-size: 0.85rem;
@@ -70,12 +71,12 @@
     white-space: nowrap;
     line-height: 1;
   }
-  .toolbar button:hover { background: #fff8e5; }
-  .toolbar button:active { background: #fce6a0; }
+  .toolbar button:hover { background: var(--bg-hover); }
+  .toolbar button:active { background: var(--bg-active); }
   .sep {
     width: 1px;
     height: 1.2rem;
-    background: #c5c5bb;
+    background: var(--border);
     margin: 0 0.25rem;
   }
   code {

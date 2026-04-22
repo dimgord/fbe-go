@@ -105,18 +105,20 @@
     display: grid;
     grid-template-rows: auto 1fr;
     height: 100%;
-    background: #fffdf8;
+    background: var(--bg-card);
+    color: var(--fg);
   }
   .tabs {
     display: flex;
     gap: 0.25rem;
     padding: 0.4rem 0.6rem 0 0.6rem;
-    background: #eceae0;
-    border-bottom: 1px solid #d5d5cb;
+    background: var(--bg-chrome);
+    border-bottom: 1px solid var(--border);
   }
   .tabs button {
-    background: #f5f5f0;
-    border: 1px solid #d5d5cb;
+    background: var(--bg-sidebar);
+    color: var(--fg);
+    border: 1px solid var(--border);
     border-bottom: none;
     padding: 0.35rem 0.7rem;
     cursor: pointer;
@@ -124,10 +126,10 @@
     font: inherit;
     font-size: 0.88rem;
   }
-  .tabs button:hover { background: #fff8e5; }
+  .tabs button:hover { background: var(--bg-hover); }
   .tabs button.active {
-    background: #fffdf8;
-    border-bottom: 1px solid #fffdf8;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--bg-card);
     margin-bottom: -1px;
     font-weight: 600;
   }
@@ -138,22 +140,23 @@
     width: 100%;
   }
   .todo {
-    color: #888;
+    color: var(--fg-muted);
     font-style: italic;
   }
   code {
-    background: #f5f5ef;
+    background: var(--bg-chrome);
     padding: 0.15em 0.4em;
     border-radius: 3px;
     font-size: 0.85em;
   }
   .prompt {
     padding: 0.4rem 0.8rem;
-    background: white;
-    border: 1px solid #bbb;
+    background: var(--bg-surface);
+    color: var(--fg);
+    border: 1px solid var(--border-button);
     border-radius: 4px;
     cursor: pointer;
     font: inherit;
   }
-  .prompt:hover { background: #fff8e5; }
+  .prompt:hover { background: var(--bg-hover); }
 </style>

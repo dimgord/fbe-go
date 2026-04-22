@@ -100,13 +100,14 @@
     z-index: 100;
   }
   .dialog {
-    background: #fffdf8;
-    border: 1px solid #d5d5cb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 1.2rem 1.5rem;
     min-width: 20rem;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 8px 24px var(--shadow);
     font-family: inherit;
+    color: var(--fg);
   }
   h3 {
     margin: 0 0 0.8rem 0;
@@ -124,11 +125,13 @@
   }
   label {
     font-size: 0.9rem;
-    color: #444;
+    color: var(--fg-secondary);
   }
   input[type="number"] {
     padding: 0.25rem 0.4rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-input);
+    background: var(--bg-surface);
+    color: var(--fg);
     border-radius: 3px;
     font: inherit;
     width: 5rem;
@@ -141,17 +144,18 @@
   }
   button {
     padding: 0.35rem 0.9rem;
-    border: 1px solid #bbb;
-    background: white;
+    border: 1px solid var(--border-button);
+    background: var(--bg-surface);
+    color: var(--fg);
     border-radius: 4px;
     cursor: pointer;
     font: inherit;
   }
-  button:hover { background: #fff8e5; }
+  button:hover { background: var(--bg-hover); }
   button.primary {
-    background: #fce6a0;
+    background: var(--bg-active);
     font-weight: 600;
-    border-color: #b89a3e;
+    border-color: var(--warn);
   }
-  button.primary:hover { background: #f5da7c; }
+  button.primary:hover { background: var(--bg-active-hover); }
 </style>
