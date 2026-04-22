@@ -25,9 +25,11 @@ Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project r
 A `flake.nix` provides a cross-platform dev shell (Linux + macOS) with Go 1.25, Node 22, and all native deps wired up. Wails CLI is auto-installed into `$GOPATH/bin` on first entry:
 
 ```sh
-nix develop            # enter shell
-wails build -tags xsd  # or: wails dev
+nix develop                          # enter shell
+wails build -tags 'xsd webkit2_41'   # or: wails dev -tags webkit2_41
 ```
+
+`webkit2_41` selects the `webkit2gtk-4.1` ABI (default is still `4.0`, not in modern nixpkgs). The tag is a no-op on macOS.
 
 Works on `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`.
 

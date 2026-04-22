@@ -6,6 +6,103 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 27 — 2026-04-22 — Linux / NixOS fixes: webkit2_41 tag + GSettings schemas [dev]
+
+Version: **0.0.27**
+
+### Symptoms on NixOS
+
+Two separate breakages surfaced when Dmitry first ran `wails dev` on his
+NixOS box after Rev 26:
+
+1. **Build failed** with `No package 'webkit2gtk-4.0' found` — pkg-config
+   couldn't resolve the webkit dep even though `webkitgtk_4_1` was in the
+   devshell.
+2. **Binary built after fix #1, then crashed on Open/Save click** with
+   `GLib-GIO-ERROR: Settings schema 'org.gtk.Settings.FileChooser' is not
+   installed` → SIGTRAP during CGo.
+
+### Root causes
+
+**(1) Build-tag gap.** Wails v2's CGo directives are gated by a build tag:
+`#cgo !webkit2_41 pkg-config: webkit2gtk-4.0` / `#cgo webkit2_41 pkg-config:
+webkit2gtk-4.1`. Without `-tags webkit2_41`, the build asks for the older
+`4.0` ABI (libsoup 2.x), which modern distros and nixpkgs don't ship.
+Rev 26 noted the Nix dependency but not the tag — a half-landed fix.
+
+**(2) GSettings discovery.** GTK's `GtkFileChooserNative` reads the
+`org.gtk.Settings.FileChooser` schema at dialog-open time. On NixOS this
+schema lives at `${gtk3}/share/gsettings-schemas/${gtk3.name}/glib-2.0/schemas/`,
+but `XDG_DATA_DIRS` inside `nix develop` only points at the system's
+`/run/current-system/sw/share` — which on a fresh NixOS box doesn't carry
+GTK's schemas. The schema load fails, glib panics, the WKWebView host
+process gets SIGTRAP.
+
+### Fixes
+
+**Flake (`flake.nix`):**
+
+- Added `gsettings-desktop-schemas` to the Linux build inputs (for common
+  GNOME schemas beyond GTK's own).
+- Linux `shellHook` now exports `XDG_DATA_DIRS` prepended with the
+  Nix-store schema paths for `gtk3`, `glib`, and `gsettings-desktop-schemas`.
+  Guarded by `pkgs.lib.optionalString pkgs.stdenv.isLinux` so macOS is
+  untouched.
+- `shellHook` echo reminders now show the correct `-tags webkit2_41`
+  invocations per platform (reminders include the tag on Linux, omit on
+  macOS — where it's harmless anyway).
+
+**Docs:**
+
+- `CLAUDE.md` Commands section — both `wails dev` and `wails build`
+  examples now include the tag, with a short note that it's a no-op on
+  macOS.
+- `CLAUDE.md` Platform notes — new bullet explaining the `webkit2_41`
+  CGo tag requirement; expanded NixOS bullet describing the
+  GSettings/XDG_DATA_DIRS issue with the exact error message (so a
+  future reader googling the error string lands on the right place).
+- `README.md` Nix section — updated command examples, added the "no-op on
+  macOS" hint so readers don't strip the tag in a cross-platform setup.
+
+### Build tag safety on macOS
+
+Verified that `-tags webkit2_41` is harmless on macOS: all files that
+reference the tag (`internal/frontend/desktop/linux/*.go`) are gated by
+`//go:build linux`, so the tag is silently ignored in darwin builds.
+This lets us document a single cross-platform command instead of forking
+by OS.
+
+### Verification
+
+- `nix flake check --all-systems` — clean on all four target systems.
+- Shell entry on darwin prints the macOS-flavoured hint (no tag);
+  Linux path would print the tagged variant (can't verify from macOS,
+  but `pkgs.stdenv.isLinux` logic is standard nixpkgs idiom).
+
+### Files modified
+
+- `flake.nix` (no `flake.lock` change — only Nix expression logic tweaked)
+- `CLAUDE.md`, `README.md`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.26 → 0.0.27
+- `frontend/package.json`       0.0.26 → 0.0.27
+- `frontend/package-lock.json`  0.0.26 → 0.0.27
+
+### Not attempted
+
+- `wrapGAppsHook3` setup-hook approach: considered but rejected in favor
+  of the explicit `XDG_DATA_DIRS` export. Setup-hook behaviour inside
+  `mkShell` (vs. proper derivations) varies by nixpkgs version, and the
+  explicit export is easier to audit and debug.
+- `GDK_PIXBUF_MODULE_FILE` / `GIO_EXTRA_MODULES` exports: not needed yet
+  (we don't load external pixbuf loaders or GIO VFS modules). Add if
+  icon/theme rendering breaks.
+
+---
+
 ## Rev 26 — 2026-04-22 — Nix flake with cross-platform dev shell [dev]
 
 Version: **0.0.26**
