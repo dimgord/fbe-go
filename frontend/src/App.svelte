@@ -30,7 +30,6 @@
       if (!path) return;
       console.log(`[fbe] opening ${path}`);
       status = `Opening ${path.split(/[\\/]/).pop()}…`;
-      // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
       const parsed: FictionBook = await App.OpenFile(path);
       console.log(
         `[fbe] parsed: ${parsed.Bodies?.length ?? 0} bodies, ` +
@@ -109,12 +108,11 @@
     try {
       const App = await wailsApp();
       if (!App || !currentPath) throw new Error("Open a saved file first.");
-      const errs: Array<{ Line: number; Column: number; Message: string }> =
-        await App.Validate(currentPath);
+      const errs = await App.Validate(currentPath);
       if (!errs || errs.length === 0) {
         status = "XSD valid ✓";
       } else {
-        status = `XSD: ${errs.length} error(s) — first: ${errs[0].Message.slice(0, 120)}`;
+        status = `XSD: ${errs.length} error(s) — first: ${errs[0].message.slice(0, 120)}`;
       }
       setTimeout(() => (status = ""), 6000);
     } catch (e) {

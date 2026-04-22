@@ -91,7 +91,7 @@
   <AnnotationEditor annotation={info.Annotation ?? { Children: [] }} on:change={onAnnotationChange} />
 
   <h3>Coverpage</h3>
-  <CoverpageField bind:cover={info.Coverpage} {availableBinaryIDs} />
+  <CoverpageField bind:cover={info.Coverpage} availableIDs={availableBinaryIDs} />
 
   <h3>Translators</h3>
   {#if info.Translators}
