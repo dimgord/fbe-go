@@ -77,8 +77,8 @@
     font-size: 0.85rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #888;
-    border-bottom: 1px solid #e5e5da;
+    color: var(--fg-muted);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 0.2rem;
   }
   h3:first-child { margin-top: 0; }
@@ -88,10 +88,10 @@
     align-items: center;
     margin-bottom: 0.3rem;
   }
-  label { font-size: 0.8rem; color: #666; min-width: 6rem; }
+  label { font-size: 0.8rem; color: var(--fg-secondary); min-width: 6rem; }
   input {
     padding: 0.25rem 0.4rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-input);
     border-radius: 3px;
     font: inherit;
   }
@@ -100,17 +100,17 @@
   .mono { flex: 1; font-family: "SF Mono", Menlo, monospace; font-size: 0.88rem; }
   .aux {
     background: white;
-    border: 1px solid #bbb;
+    border: 1px solid var(--border-button);
     border-radius: 3px;
     padding: 0.2rem 0.5rem;
     cursor: pointer;
   }
-  .aux:hover { background: #fff8e5; }
+  .aux:hover { background: var(--bg-hover); }
   .link {
-    background: none; border: none; color: #1a5490;
+    background: none; border: none; color: var(--fg-link);
     cursor: pointer; padding: 0.15rem 0; font-size: 0.85rem; text-align: left;
     align-self: flex-start;
   }
-  .hint { color: #888; font-size: 0.85rem; margin: 0.2rem 0; }
-  .todo-header { color: #aaa; }
+  .hint { color: var(--fg-muted); font-size: 0.85rem; margin: 0.2rem 0; }
+  .todo-header { color: var(--fg-muted-soft); }
 </style>

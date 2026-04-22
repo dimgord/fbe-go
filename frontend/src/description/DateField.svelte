@@ -33,12 +33,12 @@
   }
   label {
     font-size: 0.8rem;
-    color: #666;
+    color: var(--fg-secondary);
     min-width: 4rem;
   }
   input {
     padding: 0.25rem 0.4rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-input);
     border-radius: 3px;
     font: inherit;
     flex: 1;

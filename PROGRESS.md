@@ -6,6 +6,57 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 47 — 2026-04-22 — Dark mode sweep: description-form sub-components [dev]
+
+Version: **0.1.8**
+
+### What
+
+Rev 46 left 10 description-form sub-components (AuthorField,
+CoverpageField, CustomInfoForm, DateField, DocumentInfoForm,
+GenreField, PublishInfoForm, SequenceField, TitleInfoForm,
+AnnotationEditor) still hard-coded with hex colors. On dark
+theme they'd show as light islands inside an otherwise-dark
+DescriptionPanel.
+
+Batch-replaced 11 unique hex colors with var(--xxx) across all
+10 files via a single sed pass. Mappings:
+
+  #ccc     → --border-input
+  #bbb     → --border-button
+  #666     → --fg-secondary
+  #888     → --fg-muted
+  #aaa     → --fg-muted-soft
+  #1a5490  → --fg-link
+  #fff8e5  → --bg-hover
+  #e5e5da  → --border
+  #dcdcd0  → --border
+  #d5d5cb  → --border
+  #fcfbf6  → --bg-card
+
+Grep after: zero hex colors in description/ directory.
+
+### Verification
+
+- `npm run check` 0/0.
+- `npm run test` 58/58.
+- Visually not tested; Dmitry to check all 10 description tabs in
+  both light and dark.
+
+### Files modified
+
+- `frontend/src/description/*.svelte` (10 files)
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.7 → 0.1.8
+- `frontend/package.json`       0.1.7 → 0.1.8
+- `frontend/package-lock.json`  0.1.7 → 0.1.8
+
+---
+
 ## Rev 46 — 2026-04-22 — Dark mode (Phase 2 A2) [dev]
 
 Version: **0.1.7**

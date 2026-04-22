@@ -176,7 +176,7 @@
   .annotation-editor {
     min-height: 5rem;
     padding: 0.6rem 0.8rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-input);
     border-radius: 4px;
     background: white;
     font-family: Georgia, serif;
