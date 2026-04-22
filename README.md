@@ -8,7 +8,7 @@ Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project r
 
 ## Project status
 
-**Phase 3 editor MVP complete, Phase 4 polish in progress.** End-to-end flow works: open → edit → save → validate → export. All structural commands (clone / merge / insert cite / poem / table / …), inline marks, save cycle, description form with rich annotation editor, HTML export, paste cleanup, and native-webview spellcheck are wired. See `PROGRESS.md` for the per-revision log, `docs/PHASES.md` for the roadmap, and `docs/OPERATIONS.md` for the full list of FB2 operations.
+**v0.1.0-beta — Phase 3 MVP + Phase 4 polish shipped.** End-to-end flow works: open → edit → save → validate → export. All structural commands (clone / merge / insert cite / poem / table / …), inline marks, save cycle, description form with rich annotation editor, HTML export, paste cleanup, native-webview spellcheck, read-only XML-source panel with clickable XSD errors, and lossless round-trip for unknown FB2 elements are wired. See `PROGRESS.md` for the per-revision log, `docs/PHASES.md` for the roadmap, and `docs/OPERATIONS.md` for the full list of FB2 operations.
 
 ## Prerequisites
 

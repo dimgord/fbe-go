@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`fbe-go` is a Go + Wails v2 port of the classic Windows-only FictionBook Editor (FBE), targeting **macOS + Linux only** (Windows is explicitly out of scope). It edits FB2 (FictionBook 2.x) XML documents. Status: Phase 3 editor MVP complete (all structural commands + save cycle + description form + HTML export + paste handling + native spellcheck); Phase 4 polish in progress. See `docs/PHASES.md` for the full roadmap and `PROGRESS.md` for the per-revision log.
+`fbe-go` is a Go + Wails v2 port of the classic Windows-only FictionBook Editor (FBE), targeting **macOS + Linux only** (Windows is explicitly out of scope). It edits FB2 (FictionBook 2.x) XML documents. Status: **v0.1.0-beta shipped** — Phase 3 editor MVP and Phase 4 polish landed (all structural commands + save cycle + description form + HTML export + paste handling + native spellcheck + read-only XML source panel with clickable XSD errors + lossless round-trip for unknown elements + Nix flake + Help dialog). See `docs/PHASES.md` for the full roadmap and `PROGRESS.md` for the per-revision log.
 
 See `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, and `docs/PHASES.md` for deeper context before touching unfamiliar subsystems.
 
