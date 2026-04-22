@@ -4,6 +4,7 @@
   import Editor from "./editor/Editor.svelte";
   import Toolbar from "./editor/Toolbar.svelte";
   import DescriptionPanel from "./description/DescriptionPanel.svelte";
+  import ValidationPanel from "./validation/ValidationPanel.svelte";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
 
@@ -16,6 +17,11 @@
   let status = "";
   let error = "";
   let editor: Editor | undefined = undefined;
+
+  // Validation / XML-source panel state.
+  let showPanel = false;
+  let xmlSource = "";
+  let validationErrors: { line: number; column: number; message: string }[] = [];
 
   async function wailsApp() {
     return await import("../wailsjs/go/main/App").catch(() => null);
@@ -107,14 +113,30 @@
     error = ""; status = "";
     try {
       const App = await wailsApp();
-      if (!App || !currentPath) throw new Error("Open a saved file first.");
-      const errs = await App.Validate(currentPath);
-      if (!errs || errs.length === 0) {
-        status = "XSD valid ✓";
-      } else {
-        status = `XSD: ${errs.length} error(s) — first: ${errs[0].message.slice(0, 120)}`;
+      if (!App) throw new Error("Wails bindings not available.");
+      if (!fb) throw new Error("No document loaded.");
+
+      // Push the latest editor state to Go (if we're in body view) so the
+      // serialized XML and the validation result reflect unsaved edits.
+      const current = (view === "body" && editor) ? editor.currentFB() : fb;
+      if (current) {
+        // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
+        await App.UpdateDocument(current);
       }
-      setTimeout(() => (status = ""), 6000);
+
+      const [xml, errs] = await Promise.all([
+        App.SerializeCurrent(),
+        App.ValidateCurrent(),
+      ]);
+
+      xmlSource = xml ?? "";
+      validationErrors = errs ?? [];
+      showPanel = true;
+
+      status = errs && errs.length > 0
+        ? `XSD: ${errs.length} error(s)`
+        : "XSD valid ✓";
+      setTimeout(() => (status = ""), 4000);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -160,7 +182,7 @@
     <button on:click={openFile}>Open…</button>
     <button on:click={() => save(false)} disabled={!editor}>Save</button>
     <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
-    <button on:click={validate} disabled={!currentPath}>Validate</button>
+    <button on:click={validate} disabled={!fb}>Validate</button>
     <button on:click={exportHTML} disabled={!editor}>Export HTML…</button>
     <div class="view-toggle" role="tablist" aria-label="View">
       <button
@@ -181,16 +203,30 @@
 
   {#if view === "body"}
     <Toolbar {editor} />
-    <main>
+    <main class:with-panel={showPanel}>
       <aside>
         <DocumentTree {fb} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
       <section><Editor bind:this={editor} {fb} /></section>
+      {#if showPanel}
+        <ValidationPanel
+          {xmlSource}
+          errors={validationErrors}
+          on:close={() => (showPanel = false)}
+        />
+      {/if}
     </main>
   {:else if fb}
     <div class="spacer" />
-    <div class="description-wrap">
+    <div class="description-wrap with-panel-maybe" class:with-panel={showPanel}>
       <DescriptionPanel bind:fb />
+      {#if showPanel}
+        <ValidationPanel
+          {xmlSource}
+          errors={validationErrors}
+          on:close={() => (showPanel = false)}
+        />
+      {/if}
     </div>
   {/if}
 </div>
@@ -252,6 +288,9 @@
     grid-template-columns: 260px 1fr;
     overflow: hidden;
   }
+  main.with-panel {
+    grid-template-columns: 260px 1fr minmax(320px, 30%);
+  }
   aside {
     border-right: 1px solid #d5d5cb;
     overflow: auto;
@@ -261,5 +300,9 @@
   section {
     overflow: auto;
     background: white;
+  }
+  .description-wrap.with-panel-maybe.with-panel {
+    display: grid;
+    grid-template-columns: 1fr minmax(320px, 30%);
   }
 </style>

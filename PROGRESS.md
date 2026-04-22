@@ -6,6 +6,115 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 29 — 2026-04-22 — XML source panel + clickable validation errors [dev]
+
+Version: **0.0.29**
+
+### Why
+
+Before Rev 29 the Validate button produced a single status-bar line
+with the first error truncated to 120 characters — *"XSD: N error(s)
+— first: Element '{http://www.gribuser.ru/xml/fictionbook/2.0}document-
+info': This element is not expected. Expected is ( {http:/"*. The
+namespace URI alone ate half the budget; the rest of the errors weren't
+shown at all. There was also no way to inspect the serialized XML of
+the in-memory document, which is needed any time behaviour diverges
+between "what the editor thinks the doc is" and "what the writer
+produces".
+
+### What
+
+New right-side drawer (`frontend/src/validation/ValidationPanel.svelte`)
+with two sections:
+
+1. **XML source (read-only).** Line-numbered `<pre>` of
+   `writer.Write(a.current)`. Monospace, syntax-neutral (no highlighter
+   dependency added — deliberate scope cut).
+2. **Validation errors.** Full list below the XML pane, each row a
+   `<button>` showing `L<line>:<col>` + full wrapped message. Clicking
+   scrolls the XML pane to that line and flashes it yellow for 2.5s.
+
+Opens when Validate is clicked. Stays open; explicit × closes it.
+
+### Go side
+
+Two new `App` methods, both operating on the **in-memory** document so
+unsaved edits are reflected:
+
+- `App.SerializeCurrent() (string, error)` — serializes `a.current` via
+  `writer.Write` into a string.
+- `App.ValidateCurrent() ([]xsd.ValidationError, error)` — serializes
+  then validates. Line numbers in returned errors align exactly with
+  the `SerializeCurrent` output, so the click-to-jump mapping is
+  trivial (no offset arithmetic).
+
+The older `App.Validate(path)` stays for any future "validate a file
+without opening it" flow; the UI no longer uses it.
+
+### Frontend wiring
+
+`validate()` in `App.svelte` rewritten to:
+
+1. Push the latest PM state to Go via `UpdateDocument` (so serialize
+   reflects current unsaved edits).
+2. `Promise.all([SerializeCurrent(), ValidateCurrent()])` in parallel.
+3. Open the panel with both results set.
+
+`Validate` button's `disabled` condition loosened: was `!currentPath`
+(required a saved file), now `!fb` (any loaded doc, saved or not).
+
+### Type note on `ValidationError`
+
+Wails generates TS types from the Go JSON tags, not Go field names, so
+`xsd.ValidationError{Line,Column,Message}` with `json:"line"` etc. becomes
+TS `{ line, column, message }` (lowercase). Old status-bar code already
+used `.message` so the wire was correct; only my first-cut panel was
+wrong — fixed before landing.
+
+### Out of scope (on purpose)
+
+- **Syntax highlighting for the XML pane.** Would need prismjs/highlight.js
+  — real cost in bundle size for a developer-assist feature. Skipped.
+- **Editable XML view.** Requires two-way sync between the textual XML
+  and the ProseMirror schema, conflict resolution on partial docs, etc.
+  Significantly more work; this rev stays read-only to ship the
+  high-value portion immediately.
+- **Validation on every keystroke.** Expensive (XSD + libxml2 per edit).
+  Still on-demand via the Validate button; revisit once there's a
+  real-world complaint.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `wails build -tags xsd` clean — binding regeneration picked up the two
+  new methods (`SerializeCurrent`, `ValidateCurrent`) as expected.
+- `npm run check` — 0 errors, 0 warnings.
+- `npm run test` — 54/54 green (existing suite; no new tests added for
+  the Svelte component yet, since there's no component-testing harness
+  wired up — worth adding separately).
+- **UI not visually verified from the dev environment** — I can type-check
+  and build the bundle but can't click through the flow. Dmitry to test
+  the golden path on NixOS: Open .fb2 → Validate → panel opens with XML
+  + error list → click an error → XML pane scrolls and flashes the
+  target line. Edge case: empty errors list should show "XSD valid ✓"
+  in the errors area.
+
+### Files added / modified
+
+- `app.go` — new `SerializeCurrent`, `ValidateCurrent`
+- `frontend/src/validation/ValidationPanel.svelte` (new)
+- `frontend/src/App.svelte` — state, `validate()` flow, layout
+- `CLAUDE.md` — short frontend-arch note about the panel
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json`
+
+### Versions bumped
+
+- `wails.json`                  0.0.28 → 0.0.29
+- `frontend/package.json`       0.0.28 → 0.0.29
+- `frontend/package-lock.json`  0.0.28 → 0.0.29
+
+---
+
 ## Rev 28 — 2026-04-22 — Pin libxml2 to 2.13.x on Nix (binding vs. 2.15 ABI) [dev]
 
 Version: **0.0.28**
