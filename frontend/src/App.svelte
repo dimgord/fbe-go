@@ -29,6 +29,19 @@
   // ValidationPanel dispatches `resize`.
   let initialErrorsHeight: number | null = null;
 
+  // Outline-sidebar and validation-panel column widths (px). Null = use
+  // CSS default (260px and minmax(320px, 30%) respectively).
+  let outlineWidth: number | null = null;
+  let panelWidth: number | null = null;
+  let mainEl: HTMLElement | undefined;
+  let descWrapEl: HTMLElement | undefined;
+  let draggingOutline = false;
+  let draggingPanel = false;
+
+  const OUTLINE_MIN = 150;
+  const OUTLINE_MAX = 500;
+  const PANEL_MIN = 260;
+
   let showHelp = false;
 
   // Most-recently-used files, fed from settings.json on the Go side.
@@ -77,9 +90,130 @@
   function onPanelResize(e: CustomEvent<{ height: number }>) {
     const h = Math.max(0, Math.round(e.detail.height));
     void patchSettings((s) => {
-      if (!s.panes) s.panes = { validationErrorsHeight: 0 };
+      if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
       s.panes.validationErrorsHeight = h;
     });
+  }
+
+  function clamp(v: number, lo: number, hi: number) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  // --- Outline sidebar resizer (left edge, drags right-ward) ---
+  function startDragOutline(e: PointerEvent) {
+    e.preventDefault();
+    draggingOutline = true;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  }
+  function onDragOutline(e: PointerEvent) {
+    if (!draggingOutline || !mainEl) return;
+    const rect = mainEl.getBoundingClientRect();
+    outlineWidth = clamp(e.clientX - rect.left, OUTLINE_MIN, OUTLINE_MAX);
+  }
+  function endDragOutline(e: PointerEvent) {
+    if (!draggingOutline) return;
+    draggingOutline = false;
+    const el = e.currentTarget as HTMLElement;
+    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    if (outlineWidth !== null) {
+      const w = Math.round(outlineWidth);
+      void patchSettings((s) => {
+        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
+        s.panes.outlineWidth = w;
+      });
+    }
+  }
+
+  // --- Validation-panel resizer (drags toward left = panel wider,
+  //     toward right = panel narrower) ---
+  function startDragPanel(e: PointerEvent) {
+    e.preventDefault();
+    draggingPanel = true;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  }
+  function onDragPanel(e: PointerEvent) {
+    if (!draggingPanel) return;
+    // In body view mainEl is the parent; in description view descWrapEl is.
+    const parent = (view === "body" ? mainEl : descWrapEl) ?? undefined;
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    // Cap max at 70% of parent so the editor surface can't collapse to
+    // zero. Min keeps the errors list legible.
+    panelWidth = clamp(rect.right - e.clientX, PANEL_MIN, rect.width * 0.7);
+  }
+  function endDragPanel(e: PointerEvent) {
+    if (!draggingPanel) return;
+    draggingPanel = false;
+    const el = e.currentTarget as HTMLElement;
+    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    if (panelWidth !== null) {
+      const w = Math.round(panelWidth);
+      void patchSettings((s) => {
+        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
+        s.panes.validationWidth = w;
+      });
+    }
+  }
+
+  function onResizerKeyH(
+    e: KeyboardEvent,
+    get: () => number,
+    set: (v: number) => void,
+    min: number,
+    max: number,
+    persist: (w: number) => void,
+  ) {
+    const step = e.shiftKey ? 40 : 10;
+    let changed = false;
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      set(clamp(get() - step, min, max));
+      changed = true;
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      set(clamp(get() + step, min, max));
+      changed = true;
+    }
+    if (changed) persist(Math.round(get()));
+  }
+
+  function onOutlineResizerKey(e: KeyboardEvent) {
+    onResizerKeyH(
+      e,
+      () => outlineWidth ?? 260,
+      (v) => (outlineWidth = v),
+      OUTLINE_MIN,
+      OUTLINE_MAX,
+      (w) => patchSettings((s) => {
+        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
+        s.panes.outlineWidth = w;
+      }),
+    );
+  }
+
+  function onPanelResizerKey(e: KeyboardEvent) {
+    const parent = view === "body" ? mainEl : descWrapEl;
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    onResizerKeyH(
+      e,
+      () => panelWidth ?? Math.round(rect.width * 0.3),
+      (v) => (panelWidth = v),
+      PANEL_MIN,
+      rect.width * 0.7,
+      (w) => patchSettings((s) => {
+        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
+        s.panes.validationWidth = w;
+      }),
+    );
   }
 
   function themeIcon(t: Theme): string {
@@ -270,6 +404,14 @@
         if (typeof h === "number" && h > 0) {
           initialErrorsHeight = h;
         }
+        const ow = s?.panes?.outlineWidth;
+        if (typeof ow === "number" && ow >= OUTLINE_MIN && ow <= OUTLINE_MAX) {
+          outlineWidth = ow;
+        }
+        const pw = s?.panes?.validationWidth;
+        if (typeof pw === "number" && pw >= PANEL_MIN) {
+          panelWidth = pw;
+        }
       } catch { /* leave defaults */ }
     })();
     // Pick up whatever Go already has open (so opening :34115 in a browser
@@ -361,12 +503,46 @@
 
   {#if view === "body"}
     <Toolbar {editor} />
-    <main class:with-panel={showPanel}>
+    <main
+      bind:this={mainEl}
+      class:with-panel={showPanel}
+      style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}`}
+    >
       <aside>
         <DocumentTree {fb} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
+      <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+      <div
+        class="v-resizer"
+        class:dragging={draggingOutline}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize outline sidebar"
+        tabindex="0"
+        on:pointerdown={startDragOutline}
+        on:pointermove={onDragOutline}
+        on:pointerup={endDragOutline}
+        on:pointercancel={endDragOutline}
+        on:keydown={onOutlineResizerKey}
+      ></div>
       <section><Editor bind:this={editor} {fb} /></section>
       {#if showPanel}
+        <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+        <div
+          class="v-resizer"
+          class:dragging={draggingPanel}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize validation panel"
+          tabindex="0"
+          on:pointerdown={startDragPanel}
+          on:pointermove={onDragPanel}
+          on:pointerup={endDragPanel}
+          on:pointercancel={endDragPanel}
+          on:keydown={onPanelResizerKey}
+        ></div>
         <ValidationPanel
           {xmlSource}
           errors={validationErrors}
@@ -378,9 +554,29 @@
     </main>
   {:else if fb}
     <div class="spacer" />
-    <div class="description-wrap with-panel-maybe" class:with-panel={showPanel}>
+    <div
+      bind:this={descWrapEl}
+      class="description-wrap with-panel-maybe"
+      class:with-panel={showPanel}
+      style={panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}
+    >
       <DescriptionPanel bind:fb />
       {#if showPanel}
+        <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+        <div
+          class="v-resizer"
+          class:dragging={draggingPanel}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize validation panel"
+          tabindex="0"
+          on:pointerdown={startDragPanel}
+          on:pointermove={onDragPanel}
+          on:pointerup={endDragPanel}
+          on:pointercancel={endDragPanel}
+          on:keydown={onPanelResizerKey}
+        ></div>
         <ValidationPanel
           {xmlSource}
           errors={validationErrors}
@@ -606,14 +802,21 @@
   .err { color: var(--danger); font-size: 0.8rem; margin-left: auto; }
   main {
     display: grid;
-    grid-template-columns: 260px 1fr;
+    /* outline | resizer | editor. Resizer is a 6px track so the cursor
+       target is big enough to grab comfortably. */
+    grid-template-columns: var(--outline-w, 260px) 6px 1fr;
     overflow: hidden;
   }
   main.with-panel {
-    grid-template-columns: 260px 1fr minmax(320px, 30%);
+    /* outline | resizer | editor | resizer | validation-panel. */
+    grid-template-columns:
+      var(--outline-w, 260px)
+      6px
+      1fr
+      6px
+      var(--panel-w, minmax(320px, 30%));
   }
   aside {
-    border-right: 1px solid var(--border);
     overflow: auto;
     background: var(--bg-sidebar);
     font-size: 0.9rem;
@@ -624,6 +827,40 @@
   }
   .description-wrap.with-panel-maybe.with-panel {
     display: grid;
-    grid-template-columns: 1fr minmax(320px, 30%);
+    grid-template-columns: 1fr 6px var(--panel-w, minmax(320px, 30%));
+  }
+
+  /* Vertical drag handle (separator between two columns). Shares its
+     styling approach with ValidationPanel's horizontal resizer but lives
+     here because these two handles are App.svelte's responsibility. */
+  .v-resizer {
+    background: var(--border);
+    cursor: ew-resize;
+    border-left: 1px solid var(--border-strong);
+    border-right: 1px solid var(--border-strong);
+    touch-action: none;
+    position: relative;
+  }
+  .v-resizer::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px;
+    height: 32px;
+    background: var(--fg-muted);
+    border-radius: 1px;
+    box-shadow: 3px 0 0 var(--fg-muted);
+  }
+  .v-resizer:hover,
+  .v-resizer.dragging,
+  .v-resizer:focus-visible {
+    background: var(--border-strong);
+    outline: none;
+  }
+  .v-resizer:focus-visible::before {
+    background: var(--fg-secondary);
+    box-shadow: 3px 0 0 var(--fg-secondary);
   }
 </style>
