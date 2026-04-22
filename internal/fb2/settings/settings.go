@@ -21,6 +21,7 @@ type Settings struct {
 	NBSPChar          string            `json:"nbspChar"`          // configured non-breaking space replacement
 	Font              FontSettings      `json:"font"`
 	Colors            ColorSettings     `json:"colors"`
+	Theme             string            `json:"theme"`   // "system" (default) | "light" | "dark"
 	Hotkeys           map[string]string `json:"hotkeys"` // action -> accelerator (e.g. "InsertPoem": "Ctrl+Shift+P")
 	RecentFiles       []string          `json:"recentFiles"`
 	WordsList         []WordsEntry      `json:"wordsList"`
@@ -99,6 +100,7 @@ func Default() *Settings {
 		NBSPChar:          " ",
 		Font:              FontSettings{Family: "Trebuchet MS", Size: 12},
 		Colors:            ColorSettings{FG: "#000000", BG: "#FFFFFF"},
+		Theme:             "system",
 		Hotkeys:           defaultHotkeys(),
 	}
 }

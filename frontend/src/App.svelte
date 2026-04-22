@@ -30,6 +30,41 @@
   let recentFiles: string[] = [];
   let recentMenuOpen = false;
 
+  // Theme: "system" follows prefers-color-scheme, "light"/"dark" pin it.
+  // Stored in settings.Theme on the Go side; defaults to "system".
+  type Theme = "system" | "light" | "dark";
+  let theme: Theme = "system";
+  // Track the OS preference so "system" effective theme updates live.
+  let systemDark = typeof window !== "undefined" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+  $: effectiveTheme = theme === "system" ? (systemDark ? "dark" : "light") : theme;
+  $: if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("data-theme", effectiveTheme);
+  }
+
+  async function cycleTheme() {
+    const next: Theme = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+    theme = next;
+    const App = await wailsApp();
+    if (!App) return;
+    try {
+      const s = await App.LoadSettings();
+      s.theme = next;
+      await App.SaveSettings(s);
+    } catch (e) {
+      console.warn("[fbe] theme save failed:", e);
+    }
+  }
+
+  function themeIcon(t: Theme): string {
+    switch (t) {
+      case "light":  return "☀";
+      case "dark":   return "☾";
+      default:       return "◐";
+    }
+  }
+
   async function wailsApp() {
     return await import("../wailsjs/go/main/App").catch(() => null);
   }
@@ -182,6 +217,24 @@
     document.title = "FictionBook Editor (Go)";
     window.addEventListener("keydown", onKeyDown);
     void refreshRecent();
+
+    // Live-follow OS color-scheme changes while theme === "system".
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onSystemChange = (e: MediaQueryListEvent) => { systemDark = e.matches; };
+    mq.addEventListener("change", onSystemChange);
+
+    // Load persisted theme preference.
+    void (async () => {
+      const App = await wailsApp();
+      if (!App) return;
+      try {
+        const s = await App.LoadSettings();
+        const t = s?.theme;
+        if (t === "light" || t === "dark" || t === "system") {
+          theme = t;
+        }
+      } catch { /* leave as default system */ }
+    })();
     // Pick up whatever Go already has open (so opening :34115 in a browser
     // tab while a file is loaded in the native window shows that file
     // instead of the sample). Path is intentionally NOT synced — Save in
@@ -202,7 +255,10 @@
       fb = SAMPLE_BOOK;
       filename = "blank.fb2 (sample)";
     })();
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      mq.removeEventListener("change", onSystemChange);
+    };
   });
 </script>
 
@@ -242,6 +298,12 @@
     <button on:click={validate} disabled={!fb}>Validate</button>
     <button on:click={exportHTML} disabled={!editor}>Export HTML…</button>
     <button on:click={() => (showHelp = true)} title="Keyboard shortcuts and about">Help</button>
+    <button
+      class="theme-toggle"
+      on:click={cycleTheme}
+      title={`Theme: ${theme}${theme === "system" ? ` (effective: ${effectiveTheme})` : ""} — click to cycle`}
+      aria-label="Cycle theme (system → light → dark)"
+    >{themeIcon(theme)}</button>
     <div class="view-toggle" role="tablist" aria-label="View">
       <button
         class:active={view === "body"}
@@ -292,11 +354,96 @@
 <HelpDialog bind:open={showHelp} />
 
 <style>
+  /* Theme palette. Applied via [data-theme="light|dark"] on <html>; the
+     default (no attribute) also resolves to light so server-rendered
+     previews look right. Components reference these vars; hard-coded
+     hex should stay rare and documented. */
+  :global(:root),
+  :global([data-theme="light"]) {
+    color-scheme: light;
+    --bg-app:          #fafaf7;
+    --bg-surface:      #ffffff;   /* editor paper */
+    --bg-chrome:       #f1f1ec;   /* header, panel-title, toolbar */
+    --bg-sidebar:      #f5f5f0;
+    --bg-card:         #fffdf8;   /* dialogs, menus */
+    --bg-hover:        #fff8e5;
+    --bg-active:       #fce6a0;
+    --bg-active-hover: #f5da7c;
+    --bg-errors:       #fffaf0;
+    --bg-errors-title: #fdecec;
+    --bg-ok:           #f2faf4;
+
+    --fg:              #222;
+    --fg-strong:       #111;
+    --fg-secondary:    #444;
+    --fg-muted:        #888;
+    --fg-muted-soft:   #aaa;
+    --fg-link:         #1a5490;
+
+    --border:          #d5d5cb;
+    --border-strong:   #bfbfb2;
+    --border-input:    #ccc;
+    --border-button:   #bbb;
+
+    --danger:          #a33;
+    --danger-border:   #edc7c7;
+    --ok:              #2a7;
+    --ok-border:       #cfe7d6;
+    --warn:            #b58f00;   /* raw-block accent */
+    --warn-fg:         #7a5a10;
+    --warn-bg-a:       #fef7d8;
+    --warn-bg-b:       #fcebad;
+    --warn-bg-inline:  #fef0bc;
+
+    --highlight:       #fce6a0;
+    --shadow:          rgba(0, 0, 0, 0.25);
+  }
+
+  :global([data-theme="dark"]) {
+    color-scheme: dark;
+    --bg-app:          #1a1a1a;
+    --bg-surface:      #242422;
+    --bg-chrome:       #2a2a27;
+    --bg-sidebar:      #242422;
+    --bg-card:         #2a2a27;
+    --bg-hover:        #3a3630;
+    --bg-active:       #5a4a10;
+    --bg-active-hover: #6b5814;
+    --bg-errors:       #2a2420;
+    --bg-errors-title: #3a2222;
+    --bg-ok:           #1a2a22;
+
+    --fg:              #e4e4de;
+    --fg-strong:       #f5f5ef;
+    --fg-secondary:    #c0c0ba;
+    --fg-muted:        #8a8a82;
+    --fg-muted-soft:   #5a5a52;
+    --fg-link:         #7fb6e6;
+
+    --border:          #3a3a35;
+    --border-strong:   #4a4a42;
+    --border-input:    #4a4a42;
+    --border-button:   #4a4a42;
+
+    --danger:          #e88;
+    --danger-border:   #5a2a2a;
+    --ok:              #7ec99f;
+    --ok-border:       #2a4a38;
+    --warn:            #ebc550;
+    --warn-fg:         #f5d878;
+    --warn-bg-a:       #3a2e10;
+    --warn-bg-b:       #4a3818;
+    --warn-bg-inline:  #3a2e10;
+
+    --highlight:       #5a4a10;
+    --shadow:          rgba(0, 0, 0, 0.6);
+  }
+
   :global(body), :global(html) {
     margin: 0;
     height: 100%;
-    background: #fafaf7;
-    color: #222;
+    background: var(--bg-app);
+    color: var(--fg);
   }
   .layout {
     display: grid;
@@ -309,18 +456,26 @@
     align-items: center;
     padding: 0 0.75rem;
     gap: 0.5rem;
-    background: #f1f1ec;
-    border-bottom: 1px solid #d5d5cb;
+    background: var(--bg-chrome);
+    border-bottom: 1px solid var(--border);
   }
   header button {
     padding: 0.25rem 0.7rem;
-    border: 1px solid #bbb;
-    background: white;
+    border: 1px solid var(--border-button);
+    background: var(--bg-surface);
+    color: var(--fg);
     border-radius: 4px;
     cursor: pointer;
   }
-  header button:hover:not(:disabled) { background: #fff8e5; }
+  header button:hover:not(:disabled) { background: var(--bg-hover); }
   header button:disabled { opacity: 0.5; cursor: default; }
+
+  /* Theme cycle icon-button (lives on the right edge, near Help). */
+  header button.theme-toggle {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.95rem;
+    line-height: 1;
+  }
 
   /* Recent-files split-button: Open…<dropdown-caret>. Visually the two
      buttons share a border so they read as one control. */
@@ -357,10 +512,10 @@
     padding: 0.25rem 0;
     min-width: 22rem;
     max-width: 38rem;
-    background: #fffdf8;
-    border: 1px solid #d5d5cb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 6px 18px var(--shadow);
     font-size: 0.85rem;
   }
   .recent-menu li { margin: 0; padding: 0; }
@@ -375,10 +530,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  button.recent-item:hover { background: #fff8e5; }
-  button.recent-item .basename { font-weight: 600; color: #222; }
+  button.recent-item:hover { background: var(--bg-hover); }
+  button.recent-item .basename { font-weight: 600; color: var(--fg); }
   button.recent-item .dir {
-    color: #888;
+    color: var(--fg-muted);
     font-size: 0.78rem;
     margin-left: 0.4rem;
   }
@@ -395,16 +550,16 @@
   .view-toggle button:first-child { border-radius: 4px 0 0 4px; }
   .view-toggle button:last-child { border-radius: 0 4px 4px 0; border-right-width: 1px; }
   .view-toggle button.active {
-    background: #fce6a0;
+    background: var(--bg-active);
     font-weight: 600;
   }
   .description-wrap {
     overflow: hidden;
   }
   .spacer { height: 0; }
-  .title { font-size: 0.9rem; color: #444; margin-left: 0.5rem; }
-  .status { color: #2a7; font-size: 0.8rem; margin-left: auto; }
-  .err { color: #a33; font-size: 0.8rem; margin-left: auto; }
+  .title { font-size: 0.9rem; color: var(--fg-secondary); margin-left: 0.5rem; }
+  .status { color: var(--ok); font-size: 0.8rem; margin-left: auto; }
+  .err { color: var(--danger); font-size: 0.8rem; margin-left: auto; }
   main {
     display: grid;
     grid-template-columns: 260px 1fr;
@@ -414,14 +569,14 @@
     grid-template-columns: 260px 1fr minmax(320px, 30%);
   }
   aside {
-    border-right: 1px solid #d5d5cb;
+    border-right: 1px solid var(--border);
     overflow: auto;
-    background: #f5f5f0;
+    background: var(--bg-sidebar);
     font-size: 0.9rem;
   }
   section {
     overflow: auto;
-    background: white;
+    background: var(--bg-surface);
   }
   .description-wrap.with-panel-maybe.with-panel {
     display: grid;

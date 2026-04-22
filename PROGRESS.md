@@ -6,6 +6,109 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 46 — 2026-04-22 — Dark mode (Phase 2 A2) [dev]
+
+Version: **0.1.7**
+
+### What
+
+Toolbar gains a theme cycle button (◐/☀/☾) right after Help.
+Clicking cycles system → light → dark → system. Choice persists in
+`settings.Theme` on the Go side.
+
+When theme is `"system"`, the app live-follows the OS
+`prefers-color-scheme` media query — flipping the OS from light to
+dark re-themes the editor immediately without restart.
+
+### CSS architecture
+
+Added ~30 semantic CSS custom properties at `:root` (light defaults)
+and `[data-theme="dark"]` (dark overrides). Set on
+`document.documentElement` via a reactive `$:` block in `App.svelte`
+that listens to the computed `effectiveTheme`.
+
+Palette covers: surface/chrome/sidebar/card backgrounds, hover and
+active button states, errors pane + errors-title, validation OK
+banner, text colors (strong/default/secondary/muted/link), borders
+(default/strong/input/button), warn family (raw-block dashed yellow),
+highlight (flash-on-jump), drop shadow opacity.
+
+`color-scheme: light | dark` is also declared so native widgets
+(scrollbars, form controls, focus rings in WebKitGTK) adapt.
+
+### Refactor sweep
+
+Replaced 56 unique hex colors across 7 Svelte files with the new
+var(--xxx) references — each hex mapped to the semantically nearest
+variable:
+
+- `App.svelte` — layout chrome, recent-files menu, view-toggle,
+  status/err spans.
+- `editor/Editor.svelte` — ProseMirror chrome, epigraph/cite/
+  annotation colors, table borders, code inline, raw-block hatched
+  placeholders.
+- `editor/Toolbar.svelte` — the inline-mark toolbar chrome.
+- `editor/TableDialog.svelte` — modal.
+- `validation/ValidationPanel.svelte` — panel, resizer, errors list,
+  XML source line gutter + highlight.
+- `help/HelpDialog.svelte` — modal, kbd chips, copy-url buttons,
+  links.
+- `description/DescriptionPanel.svelte` — tabs, prompt button.
+- `tree/DocumentTree.svelte` — empty-state text.
+
+### Settings wiring
+
+- `settings.Settings` gains `Theme string json:"theme"`; `Default()`
+  sets `"system"`.
+- `App.LoadSettings()` / `App.SaveSettings()` are already exposed —
+  no new Go bindings needed.
+- `App.svelte::cycleTheme()` writes the new theme into settings
+  immediately (no explicit Save step on the user side).
+- Wails regen: TS `Settings` type now has `theme: string`.
+
+### Known rough edges
+
+- Dark palette is a first pass; some saturations might feel off on
+  OLED. Real-world beta feedback welcome.
+- Didn't adjust Description-form sub-components (TitleInfoForm,
+  DocumentInfoForm, AnnotationEditor) — they're read-heavy on
+  native inputs which inherit `color-scheme: dark` automatically,
+  but custom wrappers may need follow-up.
+- `color-scheme` media query detection is build-time; no dedicated
+  "auto-switch at time of day" — follows OS as-is.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `wails build -tags xsd` — regen picked up `theme: string` on
+  `Settings` (used in `LoadSettings()` / `SaveSettings()`).
+- `npm run check` 0/0.
+- `npm run test` 58/58.
+- UI flow not clicked-through — Dmitry to verify theme cycle +
+  persistence + OS live-follow on NixOS.
+
+### Files modified
+
+- `internal/fb2/settings/settings.go` — Theme field + Default().
+- `frontend/src/App.svelte` — palette, state, toggle button, refactor.
+- `frontend/src/editor/Editor.svelte`
+- `frontend/src/editor/Toolbar.svelte`
+- `frontend/src/editor/TableDialog.svelte`
+- `frontend/src/validation/ValidationPanel.svelte`
+- `frontend/src/help/HelpDialog.svelte`
+- `frontend/src/description/DescriptionPanel.svelte`
+- `frontend/src/tree/DocumentTree.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.6 → 0.1.7
+- `frontend/package.json`       0.1.6 → 0.1.7
+- `frontend/package-lock.json`  0.1.6 → 0.1.7
+
+---
+
 ## Rev 45 — 2026-04-22 — Validation errors pane: larger default [dev]
 
 Version: **0.1.6**

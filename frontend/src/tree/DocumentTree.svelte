@@ -28,7 +28,7 @@
 <style>
   .empty {
     padding: 1rem;
-    color: #999;
+    color: var(--fg-muted);
     font-style: italic;
     font-size: 0.85rem;
   }

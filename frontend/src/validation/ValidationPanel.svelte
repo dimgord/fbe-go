@@ -155,8 +155,9 @@
     grid-template-rows: 2rem 1fr auto auto;
     height: 100%;
     min-height: 0;
-    border-left: 1px solid #d5d5cb;
-    background: #fdfdfa;
+    border-left: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--fg);
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.78rem;
   }
@@ -166,12 +167,12 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 0.25rem 0 0.6rem;
-    background: #f1f1ec;
-    border-bottom: 1px solid #d5d5cb;
+    background: var(--bg-chrome);
+    border-bottom: 1px solid var(--border);
     font-family: -apple-system, "Segoe UI", sans-serif;
     font-size: 0.8rem;
     font-weight: 600;
-    color: #333;
+    color: var(--fg);
   }
   .panel-title button {
     border: none;
@@ -179,13 +180,13 @@
     font-size: 1.1rem;
     line-height: 1;
     padding: 0.15rem 0.5rem;
-    color: #666;
+    color: var(--fg-muted);
     cursor: pointer;
     border-radius: 3px;
   }
   .panel-title button:hover {
-    background: #e8e4d8;
-    color: #111;
+    background: var(--bg-hover);
+    color: var(--fg-strong);
   }
 
   .xml {
@@ -202,28 +203,28 @@
     line-height: 1.35;
   }
   .xml-line .ln {
-    color: #aaa;
+    color: var(--fg-muted-soft);
     text-align: right;
     user-select: none;
-    border-right: 1px solid #eee6d4;
+    border-right: 1px solid var(--border);
     padding-right: 0.35rem;
   }
   .xml-line.hl {
-    background: #fce6a0;
+    background: var(--highlight);
     transition: background 0.4s ease-out;
   }
   .xml-line.hl .ln {
-    color: #7a5a10;
+    color: var(--warn-fg);
     font-weight: 600;
   }
 
   .resizer {
     position: relative;
     height: 6px;
-    background: #d5d5cb;
+    background: var(--border);
     cursor: ns-resize;
-    border-top: 1px solid #bfbfb2;
-    border-bottom: 1px solid #bfbfb2;
+    border-top: 1px solid var(--border-strong);
+    border-bottom: 1px solid var(--border-strong);
     touch-action: none;
   }
   .resizer::before {
@@ -234,19 +235,19 @@
     transform: translate(-50%, -50%);
     width: 32px;
     height: 2px;
-    background: #888;
+    background: var(--fg-muted);
     border-radius: 1px;
-    box-shadow: 0 3px 0 #888;
+    box-shadow: 0 3px 0 var(--fg-muted);
   }
   .resizer:hover,
   .resizer.dragging,
   .resizer:focus-visible {
-    background: #c4c4b5;
+    background: var(--border-strong);
     outline: none;
   }
   .resizer:focus-visible::before {
-    background: #5a5a48;
-    box-shadow: 0 3px 0 #5a5a48;
+    background: var(--fg-secondary);
+    box-shadow: 0 3px 0 var(--fg-secondary);
   }
 
   .errors {
@@ -261,7 +262,7 @@
     height: 45%;
     min-height: 60px;
     overflow: auto;
-    background: #fffaf0;
+    background: var(--bg-errors);
     font-family: -apple-system, "Segoe UI", sans-serif;
     font-size: 0.8rem;
   }
@@ -269,10 +270,10 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    background: #fdecec;
-    color: #a33;
+    background: var(--bg-errors-title);
+    color: var(--danger);
     padding: 0.3rem 0.6rem;
-    border-bottom: 1px solid #edc7c7;
+    border-bottom: 1px solid var(--danger-border);
     font-size: 0.72rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -282,10 +283,10 @@
 
   .errors.ok {
     height: auto;
-    color: #2a7;
+    color: var(--ok);
     padding: 0.5rem 0.75rem;
-    background: #f2faf4;
-    border-top: 1px solid #cfe7d6;
+    background: var(--bg-ok);
+    border-top: 1px solid var(--ok-border);
     font-weight: 600;
   }
 
@@ -295,7 +296,7 @@
     padding: 0;
   }
   .errors li {
-    border-bottom: 1px solid #f3e8d0;
+    border-bottom: 1px solid var(--border);
   }
   .errors li button {
     all: unset;
@@ -309,19 +310,19 @@
     cursor: pointer;
     text-align: left;
   }
-  .errors li button:hover { background: #fff3cc; }
+  .errors li button:hover { background: var(--bg-hover); }
   .errors li button:focus-visible {
-    outline: 2px solid #c99;
+    outline: 2px solid var(--danger);
     outline-offset: -2px;
-    background: #fff3cc;
+    background: var(--bg-hover);
   }
   .errors li .pos {
-    color: #888;
+    color: var(--fg-muted);
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.72rem;
   }
   .errors li .msg {
-    color: #a33;
+    color: var(--danger);
     word-break: break-word;
     white-space: normal;
   }
