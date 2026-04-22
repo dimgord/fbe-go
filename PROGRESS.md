@@ -6,6 +6,71 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 50 — 2026-04-22 — Dark mode: `background: white` named-color sweep [dev]
+
+Version: **0.1.11**
+
+### Symptom (beta feedback, Dmitry screenshot)
+
+Annotation textarea inside the Description form stayed white in dark
+mode, and several small `.aux` "×" delete buttons next to
+author/genre/sequence/custom rows rendered as white squares.
+
+### Root cause
+
+Rev 47's sweep used a sed pattern matching `#[0-9a-fA-F]{3,8}` — it
+caught 56 hex-color literals but silently skipped **named colors**.
+Seven files had `background: white;` as a literal keyword:
+
+- `AnnotationEditor.svelte` — the nested-ProseMirror container.
+- `AuthorField.svelte`, `CoverpageField.svelte`, `CustomInfoForm.svelte`,
+  `DocumentInfoForm.svelte`, `SequenceField.svelte`,
+  `GenreField.svelte` — all on `.aux` (the per-row × remove button).
+
+None of those were flagged because my regex only looked for hex.
+
+### Fix
+
+One sed pass in `frontend/src/description/`:
+
+```
+sed -i '' 's/background: white;/background: var(--bg-surface);/g' *.svelte
+```
+
+Grep after: `background: white` (and `background: #fff(?!\w)`) empty
+across `frontend/src/`.
+
+Not caught by this pass but worth noting — `background: transparent`,
+`background: none`, and explicit rgba() literals all remain. Those
+are intentionally neutral and should still look right in both modes.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 58/58.
+- Dmitry to re-check dark-mode rendering after pull: annotation
+  editor should be dark-card; ✕ buttons should read as dark chips
+  with the ✕ glyph visible.
+
+### Files modified
+
+- `frontend/src/description/AnnotationEditor.svelte`
+- `frontend/src/description/AuthorField.svelte`
+- `frontend/src/description/CoverpageField.svelte`
+- `frontend/src/description/CustomInfoForm.svelte`
+- `frontend/src/description/DocumentInfoForm.svelte`
+- `frontend/src/description/GenreField.svelte`
+- `frontend/src/description/SequenceField.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.10 → 0.1.11
+- `frontend/package.json`       0.1.10 → 0.1.11
+- `frontend/package-lock.json`  0.1.10 → 0.1.11
+
+---
+
 ## Rev 49 — 2026-04-22 — External `<a href>` clicks route through BrowserOpenURL [dev]
 
 Version: **0.1.10**

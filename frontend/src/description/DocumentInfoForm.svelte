@@ -99,7 +99,7 @@
   .short { flex: 0 0 6rem; }
   .mono { flex: 1; font-family: "SF Mono", Menlo, monospace; font-size: 0.88rem; }
   .aux {
-    background: white;
+    background: var(--bg-surface);
     border: 1px solid var(--border-button);
     border-radius: 3px;
     padding: 0.2rem 0.5rem;

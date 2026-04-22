@@ -178,7 +178,7 @@
     padding: 0.6rem 0.8rem;
     border: 1px solid var(--border-input);
     border-radius: 4px;
-    background: white;
+    background: var(--bg-surface);
     font-family: Georgia, serif;
     line-height: 1.5;
   }

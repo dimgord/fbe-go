@@ -64,7 +64,7 @@
   }
   .num { flex: 0 0 4rem; text-align: center; }
   .aux {
-    background: white;
+    background: var(--bg-surface);
     border: 1px solid var(--border-button);
     border-radius: 3px;
     padding: 0 0.4rem;

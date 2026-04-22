@@ -33,7 +33,7 @@
   .match { width: 3.5rem; text-align: center; }
   label { font-size: 0.8rem; color: var(--fg-secondary); }
   .aux {
-    background: white;
+    background: var(--bg-surface);
     border: 1px solid var(--border-button);
     border-radius: 3px;
     padding: 0 0.4rem;
