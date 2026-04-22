@@ -37,7 +37,17 @@ export function buildOutline(fb: FictionBook | null): OutlineNode[] {
 
 function buildSection(s: Section, path: number[], index: number): OutlineNode {
   const label = titleText(s.Title) || `section ${index}`;
-  const subs = (s.Sections ?? []).map((sub, i) => buildSection(sub, [...path, i], i + 1));
+  // Rev 37: subsections now live inside Section.Body as Block entries with
+  // a non-null Section variant. Filter them out and keep their index within
+  // the subsection-only sequence so the outline path still maps to the
+  // editor's PM section children.
+  let subIdx = 0;
+  const subs: OutlineNode[] = [];
+  for (const b of s.Body ?? []) {
+    if (!b.Section) continue;
+    subs.push(buildSection(b.Section, [...path, subIdx], subIdx + 1));
+    subIdx++;
+  }
   return {
     kind: "section",
     label,

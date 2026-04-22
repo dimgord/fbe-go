@@ -75,10 +75,10 @@ func check(t *testing.T, a, b *doc.FictionBook) {
 	}
 	// Quick paragraph-content sanity on the first body's first section.
 	if len(a.Bodies) > 0 && len(a.Bodies[0].Sections) > 0 {
-		aBlocks := a.Bodies[0].Sections[0].Blocks
-		bBlocks := b.Bodies[0].Sections[0].Blocks
-		if got, want := len(bBlocks), len(aBlocks); got != want {
-			t.Errorf("section[0].Blocks count: %d → %d", want, got)
+		aBody := a.Bodies[0].Sections[0].Body
+		bBody := b.Bodies[0].Sections[0].Body
+		if got, want := len(bBody), len(aBody); got != want {
+			t.Errorf("section[0].Body count: %d → %d", want, got)
 		}
 	}
 }

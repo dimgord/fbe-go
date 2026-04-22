@@ -42,7 +42,7 @@ export const SAMPLE_BOOK: FictionBook = {
       Sections: [
         {
           Title: { Children: [{ Paragraph: { Children: [t("Заповіт")] } }] },
-          Blocks: [
+          Body: [
             { Poem: {
               Stanzas: [
                 { Verses: [
@@ -99,24 +99,24 @@ export const SAMPLE_BOOK: FictionBook = {
         },
         {
           Title: { Children: [{ Paragraph: { Children: [t("Вкладена секція")] } }] },
-          Sections: [
-            {
+          Body: [
+            { Section: {
               Title: { Children: [{ Paragraph: { Children: [t("Підсекція 1")] } }] },
               Annotation: {
                 Children: [
                   { Paragraph: { Children: [em(t("Короткий опис підсекції.")), t(" Друге речення.")] } },
                 ],
               },
-              Blocks: [
+              Body: [
                 { Paragraph: { Children: [t("Вміст підсекції 1.")] } },
               ],
-            },
-            {
+            } },
+            { Section: {
               Title: { Children: [{ Paragraph: { Children: [t("Підсекція 2")] } }] },
-              Blocks: [
+              Body: [
                 { Paragraph: { Children: [t("Вміст підсекції 2.")] } },
               ],
-            },
+            } },
           ],
         },
       ],
