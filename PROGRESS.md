@@ -6,6 +6,70 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 58 — 2026-04-22 — Font combobox: explicit dropdown (WebKit datalist is invisible) [dev]
+
+Version: **0.1.19**
+
+### Symptom (beta feedback, Dmitry screenshot)
+
+The `<input list="sd-font-list">` in Rev 57 rendered as a plain text
+input. No down-arrow, no affordance, no popup on focus. WebKitGTK's
+HTML `<datalist>` support is minimal — the dropdown UI just isn't
+drawn. On Chromium-based Wails builds Dmitry would have seen the
+arrow, on WebKit he saw nothing.
+
+### Fix
+
+Replaced the datalist wiring with a custom combobox:
+
+- Wrapper `<div class="combobox">` holds the text input and a
+  `▾` toggle button sharing a border so they read as one control.
+- Click the `▾` or focus / type in the input → a popup `<ul
+  role="listbox">` appears below, showing the font list. Each entry
+  is a `<button>` styled in its own family (same preview trick
+  as the input itself, so users see what they're picking).
+- Clicking an entry fills the input and closes the popup.
+- Typing filters the popup case-insensitively against the font
+  list; if no match, the popup shows an italic "No match — your
+  typed value will be saved as-is" hint so users don't worry
+  they've broken something.
+- A transparent full-viewport backdrop closes the popup on any
+  outside click.
+
+### Still covered
+
+- Free-text fallback (type anything, Apply saves it verbatim).
+- Real OS-wide font list from Rev 57 (sysfont).
+- Inline style on the input previews the chosen font.
+
+### Keyboard (deferred)
+
+No arrow-key navigation of the popup yet. Possible follow-up if
+users ask. For the typical "pick a serif" flow, click-open + type
+to filter is sufficient.
+
+### Verification
+
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 61/61.
+- UI not clicked-through from dev env — Dmitry to confirm the
+  `▾` now opens a list, filter works, click sets the font.
+
+### Files modified
+
+- `frontend/src/settings/SettingsDialog.svelte` — combobox
+  markup, filter state, CSS.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.18 → 0.1.19
+- `frontend/package.json`       0.1.18 → 0.1.19
+- `frontend/package-lock.json`  0.1.18 → 0.1.19
+
+---
+
 ## Rev 57 — 2026-04-22 — Font-family picker: real system fonts via sysfont [dev]
 
 Version: **0.1.18**
