@@ -33,6 +33,16 @@ jobs:
   macos:
     name: macOS · universal .app + .dmg
     runs-on: macos-latest
+    # Every secret-consuming step below is conditional on this env var, so
+    # the workflow still produces a (Gatekeeper-warning) unsigned DMG when
+    # the signing secrets aren't configured — lets us rebuild older tags
+    # without having to backport the cert setup.
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+      APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,8 +65,97 @@ jobs:
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
+      # Import the Developer ID Application cert into a fresh ephemeral
+      # keychain. Using a dedicated keychain (rather than the default login
+      # one) so the cleanup step below wipes it wholesale without touching
+      # any runner-shared state — GitHub's macos-latest runners reset
+      # between jobs, but being explicit never hurts.
+      - name: Import Developer ID cert
+        if: env.APPLE_TEAM_ID != ''
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "KEYCHAIN=$KEYCHAIN"                 >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          CERT_P12="$RUNNER_TEMP/developer_id.p12"
+          echo "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" | base64 --decode > "$CERT_P12"
+          security import "$CERT_P12" \
+            -k "$KEYCHAIN" \
+            -P "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" \
+            -T /usr/bin/codesign
+          rm -f "$CERT_P12"
+
+          # Allow codesign to use the key without an interactive prompt.
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          # Put our keychain first so `codesign --sign "Developer ID
+          # Application: …"` finds the imported identity before any system
+          # one, and find the full-name so downstream steps can quote it
+          # even when the CN contains shell-sensitive characters.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          SIGN_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+          if [ -z "$SIGN_IDENTITY" ]; then
+            echo "::error::No Developer ID Application identity found in keychain after import."
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$SIGN_IDENTITY" >> "$GITHUB_ENV"
+          echo "Using signing identity: $SIGN_IDENTITY"
+
       - name: Build universal .app (arm64 + x86_64)
         run: wails build -platform darwin/universal -tags xsd -clean
+
+      # Sign the .app with the hardened runtime + our entitlements, then
+      # verify the signature parses cleanly. `--deep` walks every binary
+      # inside the bundle (Wails ships a few helper libs); `--options
+      # runtime` is the magic flag notarization requires.
+      - name: Codesign .app
+        if: env.APPLE_TEAM_ID != ''
+        run: |
+          set -euo pipefail
+          APP="build/bin/fbe-go.app"
+          codesign --force --deep --timestamp \
+            --options runtime \
+            --entitlements packaging/macos/entitlements.plist \
+            --sign "$SIGN_IDENTITY" \
+            "$APP"
+          codesign --verify --verbose=2 --deep --strict "$APP"
+          # Spctl assessment is informational here — the app hasn't been
+          # notarized yet, so Gatekeeper will still reject "source=No
+          # usable signature". We just want to confirm the CODESIGN bits
+          # are correct before paying for a notary round-trip.
+          spctl --assess --type execute --verbose "$APP" || true
+
+      # Notarize the .app via a zipped submission (the notary service
+      # rejects .app bundles directly; a .zip or .dmg works). We upload
+      # the zip, wait for verdict, staple the ticket back onto the live
+      # .app on disk. If this step fails, nothing downstream ships — the
+      # tag is a bad release and will be retried.
+      - name: Notarize .app
+        if: env.APPLE_TEAM_ID != ''
+        run: |
+          set -euo pipefail
+          APP="build/bin/fbe-go.app"
+          ZIP="$RUNNER_TEMP/fbe-go.app.zip"
+          ditto -c -k --keepParent "$APP" "$ZIP"
+
+          xcrun notarytool submit "$ZIP" \
+            --apple-id  "$APPLE_ID" \
+            --team-id   "$APPLE_TEAM_ID" \
+            --password  "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait \
+            --timeout 30m
+
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
 
       - name: Install create-dmg
         run: brew install create-dmg
@@ -83,6 +182,47 @@ jobs:
             # is still produced. The file existing is the real signal.
             ls -la "dist/fbe-go-${TAG}-macos-universal.dmg"
           }
+
+      # Sign + notarize + staple the DMG too. Signing the DMG makes the
+      # downloaded disk image trustable before mounting; notarizing it
+      # lets Gatekeeper clear it on the first double-click without a
+      # round-trip to Apple. Stapling attaches the notary ticket so this
+      # works offline on the user's machine.
+      - name: Codesign + notarize DMG
+        if: env.APPLE_TEAM_ID != ''
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          DMG="dist/fbe-go-${TAG}-macos-universal.dmg"
+
+          codesign --force --timestamp \
+            --sign "$SIGN_IDENTITY" \
+            "$DMG"
+          codesign --verify --verbose=2 "$DMG"
+
+          xcrun notarytool submit "$DMG" \
+            --apple-id  "$APPLE_ID" \
+            --team-id   "$APPLE_TEAM_ID" \
+            --password  "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait \
+            --timeout 30m
+
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+          # Final Gatekeeper dry-run: at this point spctl should say
+          # "source=Notarized Developer ID".
+          spctl --assess --type open --context context:primary-signature --verbose "$DMG"
+
+      # Always clean up the ephemeral keychain so repeated workflow runs
+      # on the same runner (self-hosted edge case) don't pile up
+      # identities. `if: always()` lets cleanup run even if notarization
+      # failed.
+      - name: Remove ephemeral keychain
+        if: always() && env.KEYCHAIN != ''
+        run: |
+          security delete-keychain "$KEYCHAIN" || true
 
       - uses: actions/upload-artifact@v4
         with:
