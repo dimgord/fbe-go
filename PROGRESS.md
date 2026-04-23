@@ -6,6 +6,106 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 66 — 2026-04-22 — File associations + GNOME thumbnailer + shared-MIME registration [dev]
+
+Version: **0.1.27**
+
+### What
+
+Ship FB2 desktop integration on both platforms so `.fb2` files get the
+fbe-go icon in Finder / Files, double-click opens in the editor, and
+Linux file managers render thumbnails from the embedded coverpage.
+
+#### macOS — Wails `fileAssociations`
+
+`wails.json` `info.fileAssociations` gets a single `.fb2` entry with
+`role: Editor`, `iconName: iconfile`. Wails' macOS bundler reads this
+at `wails build` time and renders the corresponding
+`CFBundleDocumentTypes` / `UTExportedTypeDeclarations` blocks into the
+`.app`'s `Info.plist`. Next build + install in `/Applications/` and the
+registration is live: Finder shows the fbe-go icon on `.fb2` files,
+right-click → Open With → FictionBook Editor (Go), double-click routes
+through `AppDelegate.application:openFile:` which Wails already wires
+into the same code path the "Open…" menu uses.
+
+QuickLook *preview pane* (the Swift `.appex` extension showing the
+coverpage + first paragraph) is explicitly **deferred** — it needs a
+separate Xcode project with `NSExtension` plist and code-signing. This
+rev ships the UTI / file-association layer only, which covers the
+bulk of the QuickLook experience (icon, Spotlight, "Open With").
+
+#### Linux — three freedesktop files
+
+New `packaging/` additions (alongside the existing `fbe-go.desktop`
+from Rev 65):
+
+- **`packaging/fbe-go-mime.xml`** — shared-mime-info XML registering
+  `application/x-fictionbook+xml` (the de-facto FB2 MIME; FictionBook
+  never registered with IANA) with:
+    - `<glob pattern="*.fb2"/>` for extension matching,
+    - `<magic priority="60">` looking for the `<FictionBook` signature
+      in the first 1 KiB so extensionless files are also detected,
+    - `<sub-class-of type="application/xml"/>` so XML tooling still
+      applies,
+    - localized `<comment>` for uk / ru.
+    - Secondary type `application/x-zip-compressed-fb2` subclasses
+      `application/zip` so `.fb2.zip` still opens in archive managers
+      while our thumbnailer can target it specifically.
+
+- **`packaging/fbe-go.thumbnailer`** — freedesktop thumbnailer spec
+  honored by GNOME Files, Nautilus, Nemo, Caja, KDE Dolphin.
+  `Exec=fbe thumb %i %o` routes to the existing `cmd/fbe/main.go`
+  `cmdThumb` that writes a PNG of the `<coverpage>` binary. `%s`
+  (requested pixel size) is ignored — the file manager downscales at
+  render time and 128×128 / 256×256 grids look fine from the raw
+  coverpage resolution.
+
+- **`packaging/README.md`** — step-by-step install flow for
+  `~/.local/share/...` (per-user) and `/usr/share/...` (system)
+  plus the required `update-mime-database` /
+  `update-desktop-database` cache refresh.
+
+#### Release workflow ships the packaging files
+
+`.github/workflows/release.yml` gains a **freedesktop tarball**
+artifact on the Linux job: `dist/fbe-go-${TAG}-linux-freedesktop.tar.gz`
+bundles `README.md` + `.desktop` + `-mime.xml` + `.thumbnailer` so
+AppImage users can untar and drop the files into their XDG data dirs
+without cloning the repo. The DMG-vs-AppImage-vs-tarball asset set is
+now the full shipping surface.
+
+### Why
+
+FBE's classic Windows `.fb2` icon + Explorer thumbnail was a distinct
+quality-of-life feature. Phase 5 "polish" targets feature-parity
+with the original editor, and icon integration was the most visible
+gap on both target platforms (macOS Finder had generic .fb2; GNOME
+Files had generic document icon).
+
+### Files
+
+- Modified: `wails.json` (version + fileAssociations).
+- Modified: `frontend/package.json`, `frontend/package-lock.json`
+  (version sync).
+- Modified: `.github/workflows/release.yml` (freedesktop tarball).
+- New: `packaging/fbe-go-mime.xml`.
+- New: `packaging/fbe-go.thumbnailer`.
+- New: `packaging/README.md`.
+
+### Out of scope / follow-ups
+
+- Full macOS QuickLook preview extension (needs Swift `.appex` +
+  signed extension bundle).
+- `.fb2.zip` thumbnailer entry — current thumbnailer only handles
+  uncompressed; `cmd/fbe` `thumb` subcommand already transparently
+  unwraps the zip, so this is one extra `.thumbnailer` file away
+  but deferred until we can verify file-manager behavior with
+  multiple thumbnailers per binary.
+- Signed + notarized `.app` on macOS (unblocks Gatekeeper on first
+  launch; needs Apple Developer credentials as repo secrets).
+
+---
+
 ## Rev 65 — 2026-04-23 — Release workflow: macOS DMG + Linux AppImage on v* tags [dev]
 
 Version: **0.1.26**

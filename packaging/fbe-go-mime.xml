@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <!--
+    Shared MIME registration for FictionBook 2 documents. Install to
+    /usr/share/mime/packages/fbe-go.xml (system) or
+    ~/.local/share/mime/packages/ (user), then run
+    `update-mime-database <parent-of-packages>` so file managers pick
+    up the new type.
+
+    `application/x-fictionbook+xml` is the de-facto MIME type FB2 tools
+    use (FictionBook itself never registered with IANA). The +xml
+    structure suffix signals "XML-based" to generic tooling.
+  -->
+  <mime-type type="application/x-fictionbook+xml">
+    <comment>FictionBook 2 document</comment>
+    <comment xml:lang="uk">Документ FictionBook 2</comment>
+    <comment xml:lang="ru">Документ FictionBook 2</comment>
+    <sub-class-of type="application/xml"/>
+    <glob pattern="*.fb2"/>
+    <magic priority="60">
+      <match type="string" offset="0:1024" value="&lt;FictionBook"/>
+    </magic>
+    <generic-icon name="text-x-generic"/>
+  </mime-type>
+
+  <!--
+    Compressed variant: most real-world fb2 files ship zipped with
+    a .fb2.zip extension. A subclass of application/zip lets generic
+    archive tools still open it while our thumbnailer / MIME handlers
+    can target it specifically.
+  -->
+  <mime-type type="application/x-zip-compressed-fb2">
+    <comment>Compressed FictionBook 2 document</comment>
+    <comment xml:lang="uk">Стиснений документ FictionBook 2</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.fb2.zip"/>
+    <generic-icon name="package-x-generic"/>
+  </mime-type>
+</mime-info>
