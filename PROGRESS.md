@@ -6,6 +6,77 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 68 — 2026-04-23 — Release-workflow hotfix (iconfile.png + Linux bin path) [dev]
+
+Version: **0.2.0-beta** (unchanged — Rev 67's artifacts never
+shipped; same tag `v0.2.0-beta` is being re-pushed after this fix).
+
+### What
+
+Two independent breakages surfaced on the first `v0.2.0-beta` CI
+run. Both are build-time / packaging-layer issues, no runtime
+behavior change.
+
+#### macOS — missing `build/iconfile.png`
+
+Rev 66 added `fileAssociations` with `iconName: "iconfile"` to
+`wails.json`, but never created the corresponding PNG. Wails'
+`processDarwinIcon` (packager.go:99) opens
+`<BuildDir>/iconfile.png` and auto-converts to `.icns`; when the
+file is missing, packaging aborts with *"open iconfile.png: file
+does not exist"*.
+
+Fix: copy `build/appicon.png` → `build/iconfile.png` (same artwork
+for both app icon and the `.fb2` document-type icon in Finder).
+If we later want a distinct document icon (e.g. a book-with-page
+glyph), drop a new PNG at the same path — no workflow change
+needed.
+
+#### Linux — `build/bin/fbe-go` vs `build/bin/fbe`
+
+`wails.json` sets `outputfilename: "fbe"`, so `wails build` on
+Linux produces `build/bin/fbe`. The release workflow's Linux job
+referenced the non-existent `build/bin/fbe-go`, so
+`linuxdeploy --executable` failed with *"No such file or
+directory"*. The `.desktop` file had the same bug — `Exec=fbe-go`
+didn't match the shipped binary.
+
+Fixes:
+- `release.yml` Linux job: `build/bin/fbe-go` → `build/bin/fbe` in
+  `--executable` flag.
+- `packaging/fbe-go.desktop`: `Exec=fbe-go %F` → `Exec=fbe %F`.
+  `Icon=fbe-go` and `StartupWMClass=fbe-go` stay as-is — they
+  refer to linuxdeploy's `--icon-filename` output name and the
+  GTK window role Wails sets from the project name.
+
+### Why
+
+Both bugs were invisible locally because we never ran
+`wails build -platform darwin/universal` or `wails build
+-platform linux/amd64` on macOS / Linux runners with the
+post-Rev-66 `fileAssociations`. CI caught them immediately on
+the first real run — that's the CI doing its job.
+
+### Files
+
+- New: `build/iconfile.png` (copy of appicon.png).
+- Modified: `.github/workflows/release.yml` (Linux binary path).
+- Modified: `packaging/fbe-go.desktop` (Exec line).
+
+### Follow-up
+
+Tag `v0.2.0-beta` will be force-re-pushed after merge to `main`.
+No GitHub Release was published by the failed run (release job
+was skipped because both build jobs failed), so deleting +
+re-pushing the tag is non-destructive.
+
+Code-signing + notarization (now unblocked by Dmitry having an
+Apple Developer ID) is scoped for a separate Rev 69 — needs
+GitHub Secrets setup first (.p12 export + app-specific
+password + team ID).
+
+---
+
 ## Rev 67 — 2026-04-22 — Version bump to 0.2.0-beta (Phase 5 close) [dev]
 
 Version: **0.2.0-beta**
