@@ -6,6 +6,49 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 69 — 2026-04-23 — Linux hotfix: 512×512 icon for linuxdeploy [dev]
+
+Version: **0.2.0-beta** (unchanged — same tag re-pushed).
+
+Third breakage on the `v0.2.0-beta` release chain. Rev 68 got
+macOS green and Linux past the binary-path bug, but Linux
+packaging then failed at `linuxdeploy`:
+
+```
+ERROR: Icon build/appicon.png has invalid x resolution: 1024
+ERROR: Valid resolutions: 8, 16, 20, 22, 24, 28, 32, 36, 42, 48,
+       64, 72, 96, 128, 160, 192, 256, 384, 480, 512
+```
+
+Our `build/appicon.png` is 1024×1024 — macOS wants that for the
+`.icns` source with the 512@2x variant. linuxdeploy is strict and
+refuses anything outside its canonical size list.
+
+Fix: pre-scale a 512×512 copy as `build/appicon-linux.png`,
+commit alongside the original, reference it in `release.yml`
+`--icon-file`. Tradeoff: two icon files in the repo, but the
+Linux one is ~245 KB so not a weight concern, and local `sips
+-z 512 512 build/appicon.png --out build/appicon-linux.png`
+makes regeneration trivial.
+
+macOS build continues to use `build/appicon.png` (1024×1024) and
+`build/iconfile.png` (also 1024, from Rev 68) — Wails handles
+downscaling for `.icns`.
+
+### Files
+
+- New: `build/appicon-linux.png` (512×512).
+- Modified: `.github/workflows/release.yml` Linux job `--icon-file`.
+
+### Follow-up
+
+Same `v0.2.0-beta` tag will be force-re-pushed again. macOS DMG
+from the Rev 68 run is already on GitHub Releases — re-running
+shouldn't duplicate it (`softprops/action-gh-release@v2` updates
+in place).
+
+---
+
 ## Rev 68 — 2026-04-23 — Release-workflow hotfix (iconfile.png + Linux bin path) [dev]
 
 Version: **0.2.0-beta** (unchanged — Rev 67's artifacts never
