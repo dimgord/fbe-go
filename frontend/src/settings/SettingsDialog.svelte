@@ -24,11 +24,44 @@
   // Custom combobox state (WebKit's built-in <datalist> dropdown is invisible
   // in WebKitGTK — no arrow affordance and the popup sometimes doesn't
   // appear — so we render our own list under the input).
+  //
+  // `fontFilter` is separate from `draft.font.family`: the input's value is
+  // the stored/editing font, the filter is *only* populated while the user
+  // is actively typing to narrow the visible list. Clicking the ▾ caret
+  // opens the menu with the filter cleared so users can browse the full
+  // list without having to first erase their current selection (the
+  // behavior Dmitry reported in Rev 62 beta).
   let fontMenuOpen = false;
-  $: filteredFonts = draft?.font?.family
+  let fontFilter = "";
+  $: filteredFonts = fontFilter
     ? fontFamilies.filter((f) =>
-        f.toLowerCase().includes((draft?.font?.family ?? "").toLowerCase()))
+        f.toLowerCase().includes(fontFilter.toLowerCase()))
     : fontFamilies;
+
+  function toggleFontMenu() {
+    if (fontMenuOpen) {
+      fontMenuOpen = false;
+      return;
+    }
+    fontFilter = "";
+    fontMenuOpen = true;
+  }
+  function onFontInput(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    fontFilter = val;
+    fontMenuOpen = true;
+  }
+  function onFontFocus() {
+    // Open menu on focus but DON'T auto-filter by the stored value —
+    // users expect to browse the full list from this point.
+    fontFilter = "";
+    fontMenuOpen = true;
+  }
+  function selectFont(name: string) {
+    if (draft) draft.font.family = name;
+    fontFilter = "";
+    fontMenuOpen = false;
+  }
   // Snapshot taken at open time — used as the Cancel baseline for fields
   // we've applied live (reset panes / clear recent); Apply writes `draft`.
   let loaded = false;
@@ -205,15 +238,15 @@
                 placeholder="Trebuchet MS"
                 autocomplete="off"
                 style={`font-family: ${draft.font.family || "inherit"}`}
-                on:focus={() => (fontMenuOpen = true)}
-                on:input={() => (fontMenuOpen = true)}
+                on:focus={onFontFocus}
+                on:input={onFontInput}
               />
               <button
                 type="button"
                 class="combobox-toggle"
                 title="Show installed fonts"
                 aria-label="Toggle font list"
-                on:click={() => (fontMenuOpen = !fontMenuOpen)}
+                on:click={toggleFontMenu}
               >▾</button>
               {#if fontMenuOpen}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -226,7 +259,7 @@
                         type="button"
                         class="combobox-item"
                         style={`font-family: ${f}`}
-                        on:click={() => { if (draft) { draft.font.family = f; } fontMenuOpen = false; }}
+                        on:click={() => selectFont(f)}
                       >{f}</button>
                     </li>
                   {:else}

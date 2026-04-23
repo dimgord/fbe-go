@@ -6,6 +6,61 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 62 — 2026-04-23 — Font combobox filter: browse-full from ▾, filter only while typing [dev]
+
+Version: **0.1.23**
+
+### Symptom (beta feedback, Dmitry)
+
+With 31 fonts loaded via fontconfig the dropdown worked, but UX
+was wrong: the input pre-filled with the current family
+("Trebuchet MS"), and the dropdown filtered by that value — so
+clicking ▾ only showed fonts matching "trebuchet". User had to
+erase the input to see the full list.
+
+### Fix
+
+Split "what the input holds" from "what filters the dropdown":
+
+- `draft.font.family` — the stored / editing family (what Apply
+  persists).
+- `fontFilter` — separate string, only non-empty while the user
+  is actively typing to narrow the list.
+
+Rules:
+- **Click ▾** → `fontFilter = ""`, open. User sees full list.
+- **Focus input** → same as ▾: `fontFilter = ""`, open. Users
+  expect to browse, not re-filter by the current value.
+- **Type in input** → `fontFilter = input.value`, menu stays
+  open. Input value (bind:value on `draft.font.family`) and
+  filter stay in sync while typing.
+- **Click an item** → `draft.font.family = item`, close,
+  `fontFilter = ""` (reset for next open).
+- **Click outside** → close. `fontFilter` stays non-empty but
+  dropdown is closed; next reopen via ▾/focus resets it.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 61/61.
+- Dmitry to confirm opening the dialog shows all 31 families in
+  the dropdown without having to clear the input first.
+
+### Files modified
+
+- `frontend/src/settings/SettingsDialog.svelte` — `fontFilter`
+  state, `toggleFontMenu` / `onFontFocus` / `onFontInput` /
+  `selectFont` handlers.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.22 → 0.1.23
+- `frontend/package.json`       0.1.22 → 0.1.23
+- `frontend/package-lock.json`  0.1.22 → 0.1.23
+
+---
+
 ## Rev 61 — 2026-04-23 — Font discovery via fontconfig `fc-list` on Linux [dev]
 
 Version: **0.1.22**
