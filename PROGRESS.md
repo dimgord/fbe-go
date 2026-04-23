@@ -6,6 +6,118 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 71 — 2026-04-23 — Search / Replace UI (Cmd-F, Cmd-H) — Phase 4 [dev]
+
+Version: **0.2.0-beta** (unchanged — UI feature on top of the beta).
+
+First Phase 4 pick-up after the v0.2.0-beta cut. In-editor
+Search & Replace modeled on VS Code's inline bar — non-modal,
+Cmd/Ctrl+F to find, Cmd/Ctrl+H to find + replace, Esc to close,
+Enter / Shift+Enter to navigate, Mod+G / F3 for next.
+
+### Architecture
+
+Entirely frontend for now — searching the PM document in TS
+avoids a Go↔JS roundtrip per keystroke and gives us native PM
+positions for decorations. The `internal/fb2/search` Go package
+stays as-is (future `cmd/fbe search` subcommand can still use it
+without colliding).
+
+**`frontend/src/editor/search/plugin.ts`** — a ProseMirror
+plugin holding `{pattern, flags, matches, active, decorations}`.
+Key behaviors:
+
+- **Regex construction** (`buildRegex`): literal patterns
+  auto-escape; `wholeWord` wraps with `\b…\b`; `caseSensitive`
+  toggles the `i` flag. Invalid regex returns null, the state
+  exposes `valid: false`, and the input border goes red.
+- **Match scan** (`scanMatches`): walks text leaves via
+  `doc.descendants`, maps local offsets to absolute PM positions.
+  Per-leaf scanning misses cross-mark matches (e.g. searching
+  "hello world" where "world" is bold splits into two text
+  nodes), which is acceptable — regex users can opt into
+  `.*?` and 95%+ of real-world FB2 has clean text runs.
+- **Doc-edit reflow**: any `tr.docChanged` with a live pattern
+  triggers a rescan + decoration rebuild in the plugin's `apply`,
+  so match count + active index stay correct during typing.
+- **Svelte-store bridge**: the plugin's `view()` hook mirrors its
+  state into a `writable<SearchState>()` on every update. The
+  SearchBar component subscribes to the store for reactive
+  `3 / 17` counter + invalid-regex styling — clean separation
+  between PM state and Svelte reactivity without dispatch
+  listeners.
+- **Imperative commands**: `setSearch`, `clearSearch`, `findNext`,
+  `findPrev`, `replaceActive`, `replaceAll` all take an
+  `EditorView` and dispatch `setMeta(searchPluginKey, …)`
+  transactions. Scroll-into-view handled via `TextSelection` +
+  `tr.scrollIntoView()` on each navigation.
+- **Replace-all ordering**: builds a descending-position batch
+  in one transaction so earlier positions stay valid. Empty
+  replacements use `tr.insertText("", …)` which schema-safely
+  deletes (plain `replaceWith(schema.text(""))` fails — text
+  nodes can't be empty).
+
+**`frontend/src/editor/search/SearchBar.svelte`** — non-modal
+inline bar rendered between Toolbar and Editor when `searchOpen`
+is true. Two-row grid (row 2 only when `mode === "replace"`):
+
+- Find input with case / whole-word / regex toggles (`Aa` /
+  `\b` / `.*`).
+- Counter showing `N / M` or `No matches` / `Invalid regex`.
+- ◀ / ▶ navigation buttons (also Enter / Shift+Enter from input).
+- Replace input + Replace / Replace All buttons. Enter in
+  replace field = one, Shift+Enter = all (matches VS Code).
+- Esc closes the bar and clears highlights.
+
+**`Editor.svelte`** registers `searchPlugin()` and adds four
+keymap entries: `Mod-g`, `Mod-Shift-g`, `F3`, `Shift-F3`.
+`Mod-f` / `Mod-h` open the bar itself — handled at App level
+via the existing `document.keydown` listener (same pattern as
+`Mod-s` → Save) because the SearchBar sits outside the PM
+editor DOM and PM keybindings can't easily reach Svelte state.
+
+**CSS**: two palette variables in App.svelte — `--search-match-bg`
+(inactive wash) and `--search-match-active-bg` — with values
+for both light and dark themes. Goes through theme-hygiene.
+
+### Design notes / tradeoffs
+
+- Decided on inline bar (not modal) after checking user pref —
+  classic FBE had modal, but modern UX (VS Code, Chrome) doesn't
+  steal focus from the doc. Bar sits above the editor, collapses
+  out of the way when closed.
+- Literal-string search by default; regex behind the `.*` toggle.
+  Matches FBE's original UX and avoids surprising users who don't
+  know `.` is a metachar.
+- Search ignored in description view — description is a separate
+  PM instance; `Cmd+F` while on the description tab is a no-op.
+  Can be extended by mounting a second searchPlugin in
+  `AnnotationEditor`, but not now.
+- No CLI `fbe search` yet — deliberately scoped out so the UI
+  ships clean. `internal/fb2/search/search.go` already has
+  `Compile` and is ready for a follow-up rev.
+
+### Tests
+
+Existing 61 frontend tests still pass. No new search-specific
+unit tests yet — the logic is tightly coupled to PM's state
+shape, so tests would need a real `EditorView`; manual QA covers
+the golden paths. Consider adding a vitest suite that constructs
+a minimal PM doc + plugin and asserts `matches` / `active`
+shape on find/next/prev for the next rev.
+
+### Files
+
+- New: `frontend/src/editor/search/plugin.ts`.
+- New: `frontend/src/editor/search/SearchBar.svelte`.
+- Modified: `frontend/src/editor/Editor.svelte` — register plugin,
+  keymap (`Mod-g`, `F3`, Shift variants), CSS palette refs.
+- Modified: `frontend/src/App.svelte` — `editorView` binding,
+  `searchOpen` / `searchMode` state, Cmd+F / Cmd+H handling,
+  palette vars for match highlighting.
+
+---
+
 ## Rev 70 — 2026-04-23 — Release hotfix: linuxdeploy OUTPUT env + cleaner AppImage name [dev]
 
 Version: **0.2.0-beta** (unchanged — same tag re-pushed).
