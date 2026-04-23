@@ -12,10 +12,13 @@ import (
 	"fmt"
 	"os"
 
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/adrg/sysfont"
+	"github.com/adrg/xdg"
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
@@ -72,7 +75,15 @@ func (a *App) OnStartup(ctx context.Context) {
 // during a session, and the dialog can happily show a stale list if the
 // user installs a family mid-session (they can still type it in the
 // free-text fallback).
+//
+// Augments `xdg.FontDirs` with NixOS-typical locations (`/run/current-system/...`,
+// nix user profiles) and with every `$XDG_DATA_DIRS` entry's `/fonts`
+// subdir, so the Wails flake's reduced XDG_DATA_DIRS on NixOS doesn't
+// leave the finder staring at an empty /usr/share/fonts. No-op on systems
+// where those paths don't exist.
 func (a *App) populateSystemFonts() {
+	extendFontDirsForNix()
+
 	finder := sysfont.NewFinder(nil)
 	all := finder.List()
 	seen := make(map[string]struct{}, len(all))
@@ -92,6 +103,46 @@ func (a *App) populateSystemFonts() {
 	a.systemFontsMu.Lock()
 	a.systemFonts = families
 	a.systemFontsMu.Unlock()
+}
+
+// extendFontDirsForNix appends additional font directories to xdg.FontDirs
+// that sysfont would otherwise miss on NixOS and nix-darwin setups:
+//
+//   - `/run/current-system/sw/share/fonts` — system-wide NixOS packages.
+//   - `$HOME/.nix-profile/share/fonts`     — user-installed via nix profile.
+//   - `/etc/profiles/per-user/<user>/share/fonts` — home-manager style.
+//   - Each entry in `$XDG_DATA_DIRS` joined with `fonts` — this picks up
+//     any activation-script-managed paths a Nix dev shell might inject.
+//
+// Only existing directories are appended. Idempotent per process — the
+// package-level xdg.FontDirs can be mutated multiple times without harm
+// beyond extra duplicate checks inside sysfont's walker.
+func extendFontDirsForNix() {
+	seen := make(map[string]struct{}, len(xdg.FontDirs))
+	for _, p := range xdg.FontDirs {
+		seen[p] = struct{}{}
+	}
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		if _, dup := seen[p]; dup {
+			return
+		}
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			seen[p] = struct{}{}
+			xdg.FontDirs = append(xdg.FontDirs, p)
+		}
+	}
+	add("/run/current-system/sw/share/fonts")
+	if home, err := os.UserHomeDir(); err == nil {
+		add(filepath.Join(home, ".nix-profile/share/fonts"))
+	}
+	if xdgDataDirs := os.Getenv("XDG_DATA_DIRS"); xdgDataDirs != "" {
+		for _, d := range strings.Split(xdgDataDirs, ":") {
+			add(filepath.Join(d, "fonts"))
+		}
+	}
 }
 
 // ListSystemFonts returns the sorted, deduped list of family names the

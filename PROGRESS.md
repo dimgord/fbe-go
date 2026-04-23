@@ -6,6 +6,80 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 59 — 2026-04-22 — Font discovery on NixOS: extend xdg.FontDirs + flake XDG_DATA_DIRS [dev]
+
+Version: **0.1.20**
+
+### Symptom (beta feedback)
+
+Settings → Font family combobox showed only the four CSS generic
+keywords (`system-ui`, `serif`, `sans-serif`, `monospace`) — no
+real fonts. Dmitry's NixOS has plenty installed, so something
+stopped sysfont from finding them.
+
+### Root cause
+
+`github.com/adrg/sysfont` walks `xdg.FontDirs` from
+`github.com/adrg/xdg`, which is the fixed set:
+
+```
+$XDG_DATA_HOME/fonts, $HOME/.fonts, $HOME/.local/share/fonts,
+/usr/local/share/fonts, /usr/share/fonts,
+and each $XDG_DATA_DIRS entry joined with /fonts.
+```
+
+On NixOS installed fonts live in `/run/current-system/sw/share/fonts`
+(or the user's nix profile), and our Rev 46 shellHook had reduced
+`XDG_DATA_DIRS` to just the three GTK/GLib schema paths — none of
+which have a `/fonts` subdir. The union came out empty; sysfont
+found zero fonts.
+
+### Fix
+
+Two layers:
+
+1. **`flake.nix`** — the dev-shell `XDG_DATA_DIRS` now also includes
+   `/run/current-system/sw/share` and legacy `/usr/share`. That way
+   whatever NixOS activation exposes under those paths is visible to
+   every tool in the shell (fonts, icons, mime types).
+2. **`app.go::extendFontDirsForNix`** — defensive in-code fallback
+   for users who run the release binary outside `nix develop`. On
+   Linux it appends to `xdg.FontDirs`:
+   - `/run/current-system/sw/share/fonts`
+   - `$HOME/.nix-profile/share/fonts`
+   - Every `$XDG_DATA_DIRS` entry joined with `fonts`
+   
+   Only existing directories are appended; no-op on non-NixOS
+   systems where those paths don't exist.
+
+Called from `populateSystemFonts` before the `sysfont.NewFinder`
+walk, so the enumeration sees the real font set.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `nix flake check --all-systems` clean.
+- Live testing is platform-dependent — Dmitry to reopen Settings
+  after pull + `nix develop` exit/re-enter: Font family combobox
+  should now list several hundred installed families.
+
+### Files modified
+
+- `flake.nix` — `XDG_DATA_DIRS` now includes
+  `/run/current-system/sw/share` + `/usr/share`.
+- `app.go` — `extendFontDirsForNix`, called from
+  `populateSystemFonts`.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.19 → 0.1.20
+- `frontend/package.json`       0.1.19 → 0.1.20
+- `frontend/package-lock.json`  0.1.19 → 0.1.20
+
+---
+
 ## Rev 58 — 2026-04-22 — Font combobox: explicit dropdown (WebKit datalist is invisible) [dev]
 
 Version: **0.1.19**
