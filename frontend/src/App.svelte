@@ -9,6 +9,8 @@
   import SettingsDialog from "./settings/SettingsDialog.svelte";
   import SearchBar from "./editor/search/SearchBar.svelte";
   import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
+  import UpdateBanner from "./updates/UpdateBanner.svelte";
+  import type { updates as UpdatesNS } from "../wailsjs/go/models";
   import { installExternalLinkHandler } from "./runtime/externalLink";
   import { configurePaste } from "./editor/paste";
   import { SAMPLE_BOOK } from "./fb2/sample";
@@ -59,6 +61,11 @@
       prop so its PM keymap rebuilds on change, and consulted here for the
       window-level actions (Save, Find, dialogs). */
   let hotkeys: Record<string, string> = {};
+
+  /** Update banner state. Populated asynchronously shortly after mount by
+      a non-blocking GitHub Releases poll. Null = no banner (either no
+      update, check failed, or user dismissed this session). */
+  let updateInfo: UpdatesNS.Info | null = null;
 
   // Search/Replace inline bar state. Bar is non-modal and only shown in the
   // body view because description is edited in a separate PM instance.
@@ -519,6 +526,23 @@
         }
       } catch { /* leave defaults */ }
     })();
+
+    // Non-blocking update check. Fired after a small delay so it doesn't
+    // compete with the settings-load / document-load round-trips for the
+    // first paint. A network flake just means "no banner this launch",
+    // which is the right trade-off — the banner's job is to be polite.
+    const updateTimer = window.setTimeout(async () => {
+      const App = await wailsApp();
+      if (!App) return;
+      try {
+        const info = await App.CheckForUpdate();
+        if (info && info.available) {
+          updateInfo = info;
+        }
+      } catch (e) {
+        console.info("[fbe] update check failed:", e);
+      }
+    }, 800);
     // Pick up whatever Go already has open (so opening :34115 in a browser
     // tab while a file is loaded in the native window shows that file
     // instead of the sample). Path is intentionally NOT synced — Save in
@@ -543,11 +567,13 @@
       window.removeEventListener("keydown", onKeyDown);
       mq.removeEventListener("change", onSystemChange);
       detachExternalLinks();
+      window.clearTimeout(updateTimer);
     };
   });
 </script>
 
 <div class="layout">
+  <UpdateBanner info={updateInfo} on:dismiss={() => (updateInfo = null)} />
   <header>
     <div class="open-group">
       <button on:click={() => openFile()}>Open…</button>
