@@ -6,6 +6,72 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 60 — 2026-04-22 — Font discovery: filename fallback + diagnostic log [dev]
+
+Version: **0.1.21**
+
+### Symptom (beta feedback — Rev 59 didn't fully fix it)
+
+Rev 59 added the NixOS font paths to `xdg.FontDirs`. sysfont now
+walks them, but on NixOS many font files are named after the
+nix-store-path version (e.g.
+`/nix/store/abc-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSans-Bold.ttf`).
+sysfont has a hardcoded filename→family registry that doesn't
+include nixpkgs filename patterns, so `Font.Family` came back
+empty and my "skip if empty" filter dropped everything the
+registry didn't recognize.
+
+### Fix
+
+Two parts:
+
+1. **Filename-to-family heuristic** — for entries where
+   `sysfont.Font.Family` is empty but `Filename` is set, derive
+   the family from the basename: strip extension, strip common
+   weight/style suffixes (`-Bold`, `-Italic`, `-BoldItalic`,
+   `-Light`, `-Regular`, `-SemiBold`, etc.), convert CamelCase /
+   kebab / snake to space-separated words.
+   
+   `DejaVuSans-Bold.ttf` → "DejaVu Sans".
+   `LiberationSerif-Regular.ttf` → "Liberation Serif".
+   
+   Preserves runs of all-caps (`PTSans.ttf` stays "PTSans", not
+   "P T Sans").
+
+2. **Diagnostic log** — logs the resolved `xdg.FontDirs` plus
+   font-counts at startup:
+   ```
+   [fbe] font dirs: [/nix/store/.../share/fonts /usr/share/fonts …]
+   [fbe] system fonts: 243 files scanned, 58 recognized, 119 via
+   filename heuristic, 112 unique families
+   ```
+   Run the binary from terminal to see it; helps diagnose if
+   future regressions happen on fresh distros.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- Logic not unit-tested here — `familyFromFilename` deserves
+  tests, but this rev is small enough to eyeball the string
+  cases. A follow-up can add them.
+- Dmitry to re-test on NixOS: combobox should now show 100+
+  families.
+
+### Files modified
+
+- `app.go` — `familyFromFilename`, `splitCamelCase`, heuristic
+  wired into `populateSystemFonts`, diagnostic log.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.20 → 0.1.21
+- `frontend/package.json`       0.1.20 → 0.1.21
+- `frontend/package-lock.json`  0.1.20 → 0.1.21
+
+---
+
 ## Rev 59 — 2026-04-22 — Font discovery on NixOS: extend xdg.FontDirs + flake XDG_DATA_DIRS [dev]
 
 Version: **0.1.20**
