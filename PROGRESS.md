@@ -6,6 +6,35 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 67 — 2026-04-22 — Version bump to 0.2.0-beta (Phase 5 close) [dev]
+
+Version: **0.2.0-beta**
+
+Minor-version bump signaling Phase 5 close. Between `v0.1.0-beta`
+(Rev 39) and now we landed:
+
+- Dark mode + centralized palette + theme-hygiene lint (Revs 46–51).
+- Persistence: window geom, last view, pane sizes (Rev 52).
+- Draggable outline + validation-pane resizers (Rev 53).
+- Settings dialog with font picker and NBSP-on-space toggle
+  (Revs 54–56).
+- Real OS font enumeration via `sysfont` + fontconfig fc-list fallback
+  on Linux (Revs 57–61), browse-full combobox (Rev 62).
+- CI matrix: Ubuntu + macOS, svelte-check + vitest + go test
+  (Revs 63–64).
+- Release pipeline: macOS universal DMG + Linux AppImage on `v*` tags
+  (Rev 65).
+- File associations (macOS CFBundleDocumentTypes) + GNOME thumbnailer
+  + shared-MIME registration (Rev 66).
+
+Corpus fidelity (`fidelityBroken == 0`) verified green before cut.
+
+Tag `v0.2.0-beta` fires the release workflow → macOS DMG + Linux
+AppImage + freedesktop tarball artifacts on GitHub Releases,
+auto-marked prerelease.
+
+---
+
 ## Rev 66 — 2026-04-22 — File associations + GNOME thumbnailer + shared-MIME registration [dev]
 
 Version: **0.1.27**
