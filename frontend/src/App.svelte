@@ -8,6 +8,7 @@
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
   import SearchBar from "./editor/search/SearchBar.svelte";
+  import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
   import { installExternalLinkHandler } from "./runtime/externalLink";
   import { configurePaste } from "./editor/paste";
   import { SAMPLE_BOOK } from "./fb2/sample";
@@ -50,6 +51,7 @@
 
   let showHelp = false;
   let showSettings = false;
+  let showBinaries = false;
 
   // Search/Replace inline bar state. Bar is non-modal and only shown in the
   // body view because description is edited in a separate PM instance.
@@ -572,7 +574,7 @@
   </header>
 
   {#if view === "body"}
-    <Toolbar {editor} />
+    <Toolbar {editor} on:openBinaries={() => (showBinaries = true)} />
     {#if searchOpen}
       <SearchBar
         view={editorView}
@@ -668,6 +670,7 @@
 
 <HelpDialog bind:open={showHelp} />
 <SettingsDialog bind:open={showSettings} on:apply={onSettingsApplied} />
+<BinaryManagerDialog bind:open={showBinaries} bind:fb view={editorView} />
 
 <style>
   /* Theme palette. Applied via [data-theme="light|dark"] on <html>; the
