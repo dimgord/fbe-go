@@ -6,6 +6,65 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 63 — 2026-04-23 — CI workflow: frontend + Go tests on Ubuntu + macOS [dev]
+
+Version: **0.1.24**
+
+### What
+
+`.github/workflows/ci.yml` runs on every push to `main` / `dev`
+and on every PR targeting those branches. Covers the fast
+signal Phase 5 roadmap requires before we start shipping
+installers:
+
+#### Jobs
+
+- **`frontend`** (ubuntu-latest) — `npm ci` + `npm run check`
+  (svelte-check) + `npm run check:theme` (palette lint) +
+  `npm run test` (vitest). Frontend is pure TS / Svelte, no
+  platform code, so one runner is enough.
+
+- **`go-tests`** (matrix: ubuntu-latest + macos-latest) —
+  `go vet` + `go test` + `go test -tags xsd` against
+  `./internal/...`. Ubuntu installs `libxml2-dev` via apt so
+  the `-tags xsd` path can link. Runs in parallel on both OSes
+  with `fail-fast: false`.
+
+#### Deliberately out of scope
+
+- Root `main` package and `cmd/fbe` aren't tested here. They
+  link Wails' desktop CGo (gtk + webkit on Linux), which needs
+  a much larger apt payload and is best exercised by the
+  release workflow's full `wails build`. Rev 64 will add that.
+- `arm64` architectures — GitHub's free runners are x86_64 by
+  default; `macos-14`+ is arm64 but we stay on `macos-latest`
+  alias for now. Can bump when release needs it.
+
+#### Concurrency control
+
+`cancel-in-progress: true` per ref — a second push to the same
+branch cancels the in-flight run so we don't eat minutes on
+stale commits.
+
+### Verification
+
+Workflow file validates on push to `dev` once this commit lands
+(GitHub Actions runs it). Can't run locally here.
+
+### Files added / modified
+
+- `.github/workflows/ci.yml` (new)
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.23 → 0.1.24
+- `frontend/package.json`       0.1.23 → 0.1.24
+- `frontend/package-lock.json`  0.1.23 → 0.1.24
+
+---
+
 ## Rev 62 — 2026-04-23 — Font combobox filter: browse-full from ▾, filter only while typing [dev]
 
 Version: **0.1.23**
