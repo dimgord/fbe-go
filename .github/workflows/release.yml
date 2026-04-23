@@ -1,0 +1,191 @@
+name: Release
+
+# Triggered by pushing a tag that matches `v*` (e.g. `v0.2.0`, `v0.2.0-beta`,
+# `v0.2.0-rc1`). Builds the macOS .app + DMG and the Linux AppImage, then
+# attaches them to a new GitHub Release.
+#
+# Prerelease vs. final is auto-detected from the tag: names containing
+# `-beta`, `-rc`, or `-alpha` mark the release as a prerelease. A bare
+# `v0.2.0` ships as a stable release.
+#
+# Manual triggers are supported via `workflow_dispatch` for testing the
+# pipeline on an already-pushed tag.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to rebuild
+        required: true
+        type: string
+
+env:
+  # Silence the Node 20 deprecation warning until first-party actions
+  # (@v4 / @v5) land their Node 24 bump. Opt-in keyed per GitHub's changelog.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: write  # needed to create/update the release.
+
+jobs:
+  macos:
+    name: macOS · universal .app + .dmg
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Build universal .app (arm64 + x86_64)
+        run: wails build -platform darwin/universal -tags xsd -clean
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Package DMG
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          mkdir -p dist
+          # create-dmg lays out a nice drag-to-/Applications window with
+          # the app icon and an Applications alias, spinning out a 1-screen
+          # background image (we skip that; the default blank is fine).
+          create-dmg \
+            --volname "FictionBook Editor (Go)" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "fbe-go.app" 175 200 \
+            --app-drop-link 425 200 \
+            "dist/fbe-go-${TAG}-macos-universal.dmg" \
+            "build/bin/fbe-go.app" \
+          || {
+            # `create-dmg` exits non-zero when signing fails but the .dmg
+            # is still produced. The file existing is the real signal.
+            ls -la "dist/fbe-go-${TAG}-macos-universal.dmg"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/*.dmg
+
+  linux:
+    name: Linux · x86_64 binary + .AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config \
+            fuse \
+            libfuse2 \
+            desktop-file-utils
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Build Linux binary
+        run: wails build -platform linux/amd64 -tags 'xsd webkit2_41' -clean
+
+      - name: Download linuxdeploy
+        run: |
+          curl -fsSL -o linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy
+
+      - name: Package AppImage
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          mkdir -p dist
+          # linuxdeploy builds an AppDir from our binary + .desktop + icon,
+          # copies transitive shared libs it can detect, then hands to
+          # appimagetool to produce the self-contained AppImage.
+          ./linuxdeploy --appimage-extract-and-run \
+            --appdir AppDir \
+            --executable build/bin/fbe-go \
+            --desktop-file packaging/fbe-go.desktop \
+            --icon-file build/appicon.png \
+            --icon-filename fbe-go \
+            --output appimage
+          mv fbe-go-*.AppImage "dist/fbe-go-${TAG}-linux-x86_64.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: dist/*.AppImage
+
+  # Collect artifacts from both build jobs into a single GitHub Release.
+  # Separate job so a failure on one platform doesn't block uploading the
+  # other, and vice-versa.
+  release:
+    name: Publish GitHub Release
+    needs: [macos, linux]
+    if: always() && (needs.macos.result == 'success' || needs.linux.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List collected artifacts
+        run: ls -lah dist/
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/*
+          # Prerelease when the tag hints at pre-stable (beta / rc / alpha).
+          prerelease: >-
+            ${{ contains(github.event.inputs.tag || github.ref_name, '-beta')
+             || contains(github.event.inputs.tag || github.ref_name, '-rc')
+             || contains(github.event.inputs.tag || github.ref_name, '-alpha') }}
+          generate_release_notes: true

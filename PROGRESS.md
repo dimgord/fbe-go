@@ -6,6 +6,109 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 65 — 2026-04-23 — Release workflow: macOS DMG + Linux AppImage on v* tags [dev]
+
+Version: **0.1.26**
+
+### What
+
+`.github/workflows/release.yml` fires on `v*` tags (and
+`workflow_dispatch` for reruns). Three jobs:
+
+#### `macos` — universal `.app` + `.dmg`
+
+- Builds the Wails bundle with
+  `wails build -platform darwin/universal -tags xsd`. Universal
+  output covers both Apple Silicon and Intel from one file.
+- `brew install create-dmg` then lays out a classic macOS
+  drag-to-/Applications installer window (600×400, 100-px icons,
+  app at 175,200 and /Applications alias at 425,200).
+- Final artifact: `fbe-go-${TAG}-macos-universal.dmg`.
+
+Note: the bundle is **unsigned**. First launch on a default
+macOS will show *"fbe-go is damaged"* / Gatekeeper refusal. Users
+can run `xattr -d com.apple.quarantine /Applications/fbe-go.app`
+or right-click → Open to bypass. Proper code-signing +
+notarytool submission is a separate rev (needs Apple Developer
+credentials as repo secrets).
+
+#### `linux` — `.AppImage` via `linuxdeploy`
+
+- apt-installs the same native deps as `ci.yml`:
+  `libxml2-dev`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`,
+  `pkg-config`, plus `fuse / libfuse2` (for AppImage self-mount)
+  and `desktop-file-utils`.
+- `wails build -platform linux/amd64 -tags 'xsd webkit2_41'`
+  produces `build/bin/fbe-go`.
+- `linuxdeploy` (downloaded as an AppImage) builds the AppDir
+  from the binary + `packaging/fbe-go.desktop` (new) +
+  `build/appicon.png`, autodetects shared-lib deps, and hands
+  off to `appimagetool` to produce a single self-contained file.
+- Final artifact: `fbe-go-${TAG}-linux-x86_64.AppImage`.
+
+Runs with `--appimage-extract-and-run` because GitHub's hosted
+Linux runner's FUSE is sometimes unhappy.
+
+#### `release` — publish
+
+- `needs: [macos, linux]` with `if: always() && (either succeeded)`
+  — one platform's failure doesn't block shipping the other.
+- Downloads both artifact sets, calls `softprops/action-gh-release@v2`
+  to create / update the tag's GitHub Release.
+- Auto-marks prerelease when the tag name contains `-beta`,
+  `-rc`, or `-alpha`. Bare `v0.2.0` ships as stable.
+- `generate_release_notes: true` pulls commit-log bullets from
+  the merge that produced the tag.
+
+### Supporting additions
+
+- `packaging/fbe-go.desktop` — Freedesktop entry consumed by
+  linuxdeploy. Registers `application/x-fictionbook+xml` MIME
+  type, Office/WordProcessor categories, fb2 keywords.
+- `ci.yml` picks up the same `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`
+  env var to silence the Node 20 deprecation warning on its own
+  runs.
+
+### What's still missing
+
+- **Code signing on macOS** — needs Apple Developer cert +
+  notarytool secrets. Document in a README "Installing" section
+  when we have it.
+- **Signed / sandboxed AppImage on Linux** — unsigned AppImages
+  are the norm; nothing to do here.
+- **Auto-update** — Sparkle on macOS, AppImageUpdate on Linux.
+  Out of scope for a first releasable bundle.
+- **arm64 Linux** — separate runner job. Defer until demand.
+- **QuickLook + GNOME thumbnailer** — Rev 66 candidates.
+
+### Testing plan
+
+1. Push this rev to `dev`. CI stays green (release workflow is
+   inert without a tag).
+2. Merge `dev` → `main` when ready for a cut.
+3. Tag `v0.2.0-beta` (or similar) on `main`. Release workflow
+   builds, publishes the draft release with both artifacts.
+4. Smoke-test: download DMG, open on macOS (Gatekeeper-bypass
+   instructions in release notes). Download AppImage on Linux,
+   `chmod +x` and run.
+
+### Files added / modified
+
+- `.github/workflows/release.yml` (new)
+- `.github/workflows/ci.yml` — `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`
+  env.
+- `packaging/fbe-go.desktop` (new)
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.25 → 0.1.26
+- `frontend/package.json`       0.1.25 → 0.1.26
+- `frontend/package-lock.json`  0.1.25 → 0.1.26
+
+---
+
 ## Rev 64 — 2026-04-23 — CI fix: generate Wails bindings before svelte-check [dev]
 
 Version: **0.1.25**

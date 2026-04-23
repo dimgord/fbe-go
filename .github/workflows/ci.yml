@@ -11,6 +11,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Silence the Node 20 deprecation warning until first-party actions
+  # (@v4 / @v5) land their Node 24 bump. Opt-in keyed per GitHub's changelog.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   # Frontend: typecheck + theme-hygiene + unit tests.
   #
