@@ -143,9 +143,13 @@ jobs:
           # linuxdeploy builds an AppDir from our binary + .desktop + icon,
           # copies transitive shared libs it can detect, then hands to
           # appimagetool to produce the self-contained AppImage.
+          # wails.json sets `outputfilename: fbe`, so the Linux binary is
+          # `build/bin/fbe` (not `fbe-go`). `.desktop` still carries the
+          # user-facing name "fbe-go"; `--icon-filename fbe-go` matches the
+          # `Icon=fbe-go` line in the desktop file.
           ./linuxdeploy --appimage-extract-and-run \
             --appdir AppDir \
-            --executable build/bin/fbe-go \
+            --executable build/bin/fbe \
             --desktop-file packaging/fbe-go.desktop \
             --icon-file build/appicon.png \
             --icon-filename fbe-go \
