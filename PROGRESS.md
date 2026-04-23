@@ -6,6 +6,67 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 74 — 2026-04-23 — Binary Manager foundation — Go helpers [dev]
+
+First half of Phase 4 "Binary manager" pickup. This rev lands only
+the Go side: two new App methods the frontend dialog will consume
+in Rev 75.
+
+### New App methods
+
+**`PickImageToUpload() (string, error)`** — native open-file dialog
+filtered to common image extensions (`*.jpg;*.jpeg;*.png;*.gif;*.webp`
+in a single pattern). Uses semicolon-separated single-dot extensions so
+each token resolves through macOS's `UTType typeWithFilenameExtension:`
+lookup — none of them trip the `*.fb2.zip` multi-dot crash path
+documented on `PickFB2ToOpen`.
+
+**`ReadImageBinary(path string) (*doc.Binary, error)`** — reads a file
+from disk, base64-encodes the bytes, and returns a fresh `doc.Binary`
+with `ID` intentionally blank (the caller assigns it after collision
+check). Content-type inference:
+
+1. Primary: `net/http.DetectContentType` sniff of the first 512
+   bytes — solid for JPEG / PNG / GIF magic.
+2. Fallback: extension-based lookup via new `mimeFromExt` helper
+   for cases where sniff returns `application/octet-stream` (some
+   WebP variants) or `text/*` (SVG gets mis-sniffed as text).
+3. Strip any trailing `; charset=…` parameter that `DetectContentType`
+   tacks onto text payloads — strict FB2 validators reject
+   parametrized content types.
+
+`mimeFromExt` covers the formats real-world FB2 readers render:
+jpg/jpeg → image/jpeg, png, gif, webp, svg+xml, bmp.
+
+### Design decision: frontend-owned cross-reference updates
+
+Considered wiring rename (with href cascade) + delete into Go,
+using a visitor over the doc tree. Rejected because the PM editor
+state is the live source of truth during an edit session —
+mutating the Go-side `FictionBook` wouldn't propagate to in-flight
+`image_block` / `image_inline` PM nodes, and syncing via
+`UpdateDocument` on every rename would lose undo/redo granularity.
+
+Rev 75 will do the walk entirely in TypeScript: rewrite
+`fb.Binaries[].ID`, walk `fb.Description.*.Coverpage.Images[].Href`,
+dispatch a PM transaction that rewrites every image node's `href`
+attribute whose stripped form matches the old ID. This gives us
+single-transaction undo/redo for the whole rename.
+
+### Files
+
+- Modified: `app.go` — added `net/http` import, new
+  `PickImageToUpload`, `ReadImageBinary`, `mimeFromExt`.
+
+The existing `AddBinaryFromDisk` and `GetBinaryDataURL` methods
+stay as-is — they're not used by the new manager (which reads
+bytes via `ReadImageBinary` and previews via local data: URL
+construction from `Binary.Data`), but they're still exported so
+removing would be a minor API break. Mark for cleanup in a
+follow-up once we're sure nothing external depends on them.
+
+---
+
 ## Rev 73 — 2026-04-23 — Search UX: follow active match + Unicode whole-word [dev]
 
 Two Search/Replace UX fixes caught during first hands-on with Rev 71.
