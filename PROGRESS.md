@@ -6,6 +6,40 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 70 — 2026-04-23 — Release hotfix: linuxdeploy OUTPUT env + cleaner AppImage name [dev]
+
+Version: **0.2.0-beta** (unchanged — same tag re-pushed).
+
+Fourth release-workflow issue on the `v0.2.0-beta` chain. Rev 69
+got linuxdeploy past the icon-size check, but the packaging
+plugin then named the AppImage after the desktop file's
+`Name=` field, producing
+`FictionBook_Editor_(Go)-x86_64.AppImage`. The subsequent
+`mv fbe-go-*.AppImage …` glob didn't match, so the step failed
+and the release was published without a Linux artifact.
+
+Fix: set `OUTPUT` env before invoking `linuxdeploy`. The AppImage
+output plugin honors it, letting us name the file
+`fbe-go-${TAG}-linux-x86_64.AppImage` directly instead of guessing
+linuxdeploy's naming scheme.
+
+Secondary symptom from the same run: "Publish GitHub Release"
+step failed with `{"code":"already_exists","field":"tag_name"}`.
+softprops/action-gh-release tried to create a release for a tag
+that already had one from a previous run. Fix from the operator
+side: `gh release delete v0.2.0-beta -y` before force-retagging so
+the action creates fresh. Not a workflow change — just an
+operational note for future re-rolls until we add
+`overwrite_existing` logic (or, more likely, never re-tag:
+bump to `v0.2.0-beta.1` instead).
+
+### Files
+
+- Modified: `.github/workflows/release.yml` Linux job — `OUTPUT`
+  env var + simpler `mv`.
+
+---
+
 ## Rev 69 — 2026-04-23 — Linux hotfix: 512×512 icon for linuxdeploy [dev]
 
 Version: **0.2.0-beta** (unchanged — same tag re-pushed).
