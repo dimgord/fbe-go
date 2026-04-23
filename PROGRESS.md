@@ -6,6 +6,40 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 72 — 2026-04-23 — Release workflow: purge existing releases before publish [dev]
+
+Preventive fix for the softprops/action-gh-release race that bit us
+during the `v0.2.0-beta` cut. Post-mortem: after the third failed
+release attempt, two releases existed for the same tag — one
+published-but-empty, one draft-with-all-artifacts — and the
+action's `finalize` call failed with
+`{"code":"already_exists","field":"tag_name"}`. Had to resolve by
+hand via `gh api ... -X DELETE` + `draft=false` PATCH.
+
+Added a new step "Purge any pre-existing release for this tag"
+between artifact download and the softprops action. Iterates every
+release tied to the current tag (draft or published) and deletes
+them via the REST API before softprops runs — so the action always
+starts from a clean slate.
+
+### Why this is safe
+
+- The step runs *after* both build jobs produced artifacts (they're
+  in `dist/` now). If publish somehow fails again, we still have
+  the artifacts as `actions/upload-artifact@v4` outputs; a
+  `workflow_dispatch` re-run can pick them up.
+- Deleting releases **does not delete the git tag** — the tag ref
+  is what drove the workflow in the first place and stays intact.
+- Idempotent — if there's no prior release, the loop is empty and
+  the step just logs "No existing releases for $TAG".
+
+### Files
+
+- Modified: `.github/workflows/release.yml` — new "Purge" step in
+  the `release` job.
+
+---
+
 ## Rev 71 — 2026-04-23 — Search / Replace UI (Cmd-F, Cmd-H) — Phase 4 [dev]
 
 Version: **0.2.0-beta** (unchanged — UI feature on top of the beta).
