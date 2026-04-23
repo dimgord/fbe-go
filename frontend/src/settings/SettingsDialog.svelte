@@ -33,13 +33,22 @@
   }
 
   // Fire `load` whenever the dialog transitions from closed to open.
+  //
+  // Sequenced inside a single `$:` block intentionally — two separate
+  // blocks (`$: if (open && !wasOpen) { load… }` and `$: wasOpen = open`)
+  // get topologically sorted by Svelte, and the wasOpen-writer runs
+  // FIRST, so the transition check always sees the new value and the
+  // if-branch never fires. Inside one block, statements run top-to-
+  // bottom deterministically.
   let wasOpen = false;
-  $: if (open && !wasOpen) {
-    loaded = false;
-    draft = null;
-    void load();
+  $: {
+    if (open && !wasOpen) {
+      loaded = false;
+      draft = null;
+      void load();
+    }
+    wasOpen = open;
   }
-  $: wasOpen = open;
 
   function cancel() {
     open = false;

@@ -6,6 +6,78 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 56 — 2026-04-22 — SettingsDialog stuck on "Loading…" — reactive ordering bug [dev]
+
+Version: **0.1.17**
+
+### Symptom (beta feedback, Dmitry screenshot)
+
+Clicking ⚙ opened the Settings dialog but it stayed on "Loading…"
+indefinitely. `draft` was never populated and no console error
+surfaced.
+
+### Root cause
+
+Two `$:` reactive blocks can't share "detect transition" state in
+Svelte 4 — the compiler topologically orders reactive statements
+by their data-flow dependencies, not by source order:
+
+```svelte
+let wasOpen = false;
+$: if (open && !wasOpen) { load() }    // reader of wasOpen
+$: wasOpen = open;                     // writer of wasOpen
+```
+
+Writer gets ordered before reader → when `open` flips false→true,
+the writer runs first (`wasOpen = true`), then the reader checks
+`open && !wasOpen` = `true && !true` = false, skips the load.
+Dialog mounts, open flips true, nothing happens.
+
+### Fix
+
+Collapse into a single `$:` block where statements run top-to-
+bottom in source order:
+
+```svelte
+let wasOpen = false;
+$: {
+  if (open && !wasOpen) {
+    loaded = false;
+    draft = null;
+    void load();
+  }
+  wasOpen = open;
+}
+```
+
+### Also
+
+Saved the gotcha as a memory (`feedback_svelte_reactive_ordering.md`)
+so future rev-44-range work with transition detection doesn't hit the
+same trap. Index updated in `MEMORY.md`.
+
+### Verification
+
+- `npm run check` 0/0.
+- `npm run test` 61/61.
+- Visual flow not clicked-through from dev env; Dmitry to open ⚙
+  and confirm fields populate.
+
+### Files modified
+
+- `frontend/src/settings/SettingsDialog.svelte` — single-block
+  transition detection + comment.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.16 → 0.1.17
+- `frontend/package.json`       0.1.16 → 0.1.17
+- `frontend/package-lock.json`  0.1.16 → 0.1.17
+
+---
+
 ## Rev 55 — 2026-04-22 — Wire Settings.font and Settings.nbspChar to runtime [dev]
 
 Version: **0.1.16**
