@@ -12,6 +12,10 @@ import (
 	"fmt"
 	"os"
 
+	"sort"
+	"sync"
+
+	"github.com/adrg/sysfont"
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
@@ -28,6 +32,13 @@ type App struct {
 	ctx     context.Context
 	current *doc.FictionBook // currently-open document
 	path    string           // current file path, empty if untitled
+
+	// systemFonts is populated asynchronously on startup by walking the
+	// OS font directories via `sysfont`. Cached as a sorted, deduped
+	// list of family names for the Settings dialog's font-family picker.
+	// Reads are thread-safe behind systemFontsMu.
+	systemFonts   []string
+	systemFontsMu sync.RWMutex
 }
 
 // NewApp constructs the app.
@@ -46,6 +57,56 @@ func (a *App) OnStartup(ctx context.Context) {
 			wailsrt.WindowSetPosition(ctx, s.Window.X, s.Window.Y)
 		}
 	}
+
+	// Enumerate installed fonts in the background so the Settings dialog's
+	// font-family picker shows everything on the system, not just a
+	// curated list. Typical desktops have 200–2 000 families; walking
+	// /System/Library/Fonts + /Library/Fonts + ~/Library/Fonts takes <1 s
+	// even on cold cache. sysfont is pure-Go (no CGo) so this works on
+	// both macOS and Linux from one codepath.
+	go a.populateSystemFonts()
+}
+
+// populateSystemFonts walks the OS font registry, dedupes by family, and
+// caches a sorted slice. Runs once per app launch — fonts rarely change
+// during a session, and the dialog can happily show a stale list if the
+// user installs a family mid-session (they can still type it in the
+// free-text fallback).
+func (a *App) populateSystemFonts() {
+	finder := sysfont.NewFinder(nil)
+	all := finder.List()
+	seen := make(map[string]struct{}, len(all))
+	families := make([]string, 0, len(all))
+	for _, f := range all {
+		if f == nil || f.Family == "" {
+			continue
+		}
+		if _, dup := seen[f.Family]; dup {
+			continue
+		}
+		seen[f.Family] = struct{}{}
+		families = append(families, f.Family)
+	}
+	sort.Strings(families)
+
+	a.systemFontsMu.Lock()
+	a.systemFonts = families
+	a.systemFontsMu.Unlock()
+}
+
+// ListSystemFonts returns the sorted, deduped list of family names the
+// host OS knows about. Returns an empty slice if enumeration hasn't
+// finished (first ~100 ms after launch) — the frontend should then fall
+// back to its curated default list.
+func (a *App) ListSystemFonts() []string {
+	a.systemFontsMu.RLock()
+	defer a.systemFontsMu.RUnlock()
+	if len(a.systemFonts) == 0 {
+		return []string{}
+	}
+	out := make([]string, len(a.systemFonts))
+	copy(out, a.systemFonts)
+	return out
 }
 
 // OnShutdown is called by Wails just before the webview tears down. We grab

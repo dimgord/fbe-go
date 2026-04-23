@@ -6,6 +6,79 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 57 — 2026-04-22 — Font-family picker: real system fonts via sysfont [dev]
+
+Version: **0.1.18**
+
+### What
+
+Free-text input for the editor font-family was bad UX — users had to
+know and spell the family name exactly. New flow:
+
+- On startup the Go side walks OS font directories via
+  `github.com/adrg/sysfont` (pure-Go, no CGo), dedupes by family,
+  caches a sorted slice. Runs in a goroutine so it never blocks
+  launch; typical ~1 s on a warm filesystem, shorter on repeat.
+- `App.ListSystemFonts()` Wails binding returns the cached list
+  (empty slice until enumeration finishes — the first few hundred
+  ms after launch).
+- `SettingsDialog` seeds the font-family `<datalist>` with four
+  generic CSS keywords (`system-ui`, `serif`, `sans-serif`,
+  `monospace`) so the dropdown isn't empty even if the user opens
+  Settings instantly after launch. Then asynchronously merges the
+  real OS list (sorted, deduped) into the same datalist.
+- `<input list="sd-font-list">` gives native dropdown + autocomplete
+  + free-text fallback. Inline `style="font-family: …"` on the
+  input previews the choice live before Apply.
+
+### Why sysfont
+
+Considered:
+
+- **`queryLocalFonts()`** web API — Chromium / Safari 17+ / WebKitGTK
+  2.42+ expose it, but first call prompts the user to allow font
+  enumeration. Wails' in-app webview doesn't need that gate, but
+  the prompt still appears. Rejected.
+- **`system_profiler SPFontsDataType`** on macOS — accurate but
+  5–10 s cold. Unacceptable for background startup.
+- **`fc-list`** on Linux — fast but absent on stock macOS.
+- **Scanning font dirs and parsing name tables ourselves** —
+  doable, ~100 lines of fussy font-file parsing.
+- **`github.com/adrg/sysfont`** — pure-Go, cross-platform, same
+  job done by a maintained library. 4 KB added to `go.sum`. Chosen.
+
+### Field widening
+
+Font-family input bumped from default 18rem to min-14rem /
+max-22rem so "Helvetica Neue" fits without ellipsing.
+
+### Verification
+
+- `go build -tags xsd ./...` clean; `go mod tidy` added sysfont +
+  transitive deps (`adrg/strutil`, `adrg/xdg`).
+- `wails build -tags xsd` — regen picked up `ListSystemFonts` in
+  `App.d.ts`.
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 61/61.
+
+### Files added / modified
+
+- `app.go` — `systemFonts` + `systemFontsMu` cache, background
+  `populateSystemFonts()` on startup, `ListSystemFonts` binding.
+- `go.mod`, `go.sum` — sysfont deps.
+- `frontend/src/settings/SettingsDialog.svelte` — datalist seed +
+  async merge of the real OS list, input preview style, width CSS.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.17 → 0.1.18
+- `frontend/package.json`       0.1.17 → 0.1.18
+- `frontend/package-lock.json`  0.1.17 → 0.1.18
+
+---
+
 ## Rev 56 — 2026-04-22 — SettingsDialog stuck on "Loading…" — reactive ordering bug [dev]
 
 Version: **0.1.17**

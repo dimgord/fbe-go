@@ -3,6 +3,7 @@ module github.com/dimgord/fbe-go
 go 1.25.0
 
 require (
+	github.com/adrg/sysfont v0.1.2
 	github.com/lestrrat-go/libxml2 v0.0.0-20260304224138-bb3877930cf7
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/text v0.36.0
@@ -10,6 +11,8 @@ require (
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
+	github.com/adrg/strutil v0.2.2 // indirect
+	github.com/adrg/xdg v0.3.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
