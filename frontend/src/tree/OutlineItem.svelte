@@ -49,17 +49,17 @@
     padding: 0.2rem 0.4rem;
     cursor: pointer;
     border-radius: 3px;
-    color: #333;
+    color: var(--fg);
     font-family: inherit;
     font-size: 0.88rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .item:hover { background: #e5e5da; }
+  .item:hover { background: var(--bg-hover); }
   .item.kind-body {
     font-weight: 600;
-    color: #1a5490;
+    color: var(--fg-link);
   }
-  .item.kind-section { color: #444; }
+  .item.kind-section { color: var(--fg-secondary); }
 </style>

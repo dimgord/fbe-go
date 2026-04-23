@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# Cancel in-progress runs for the same branch / PR when a new commit lands.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Silence the Node 20 deprecation warning until first-party actions
+  # (@v4 / @v5) land their Node 24 bump. Opt-in keyed per GitHub's changelog.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  # Frontend: typecheck + theme-hygiene + unit tests.
+  #
+  # wailsjs/ (auto-generated TS bindings from app.go) is gitignored by
+  # project convention, so CI regenerates it before svelte-check runs.
+  # `wails build -s` skips the vite frontend build but keeps the Go +
+  # binding-generation step, which is what we need — we throw away the
+  # produced binary. Linux is required for this job because the Wails
+  # Go build imports gtk + webkit CGo on Linux; same apt payload is
+  # what local dev uses.
+  frontend:
+    name: frontend (svelte-check + vitest + theme)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails native deps (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Generate Wails bindings (wails build -s, throw away binary)
+        run: wails build -tags 'xsd webkit2_41' -s
+
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: svelte-check
+        working-directory: frontend
+        run: npm run check
+
+      - name: theme-hygiene
+        working-directory: frontend
+        run: npm run check:theme
+
+      - name: vitest
+        working-directory: frontend
+        run: npm run test
+
+  # Go library tests: internal/fb2/* round-trip / parser / writer / xsd /
+  # export / binary / zip. Skips the root `main` package and `cmd/fbe`
+  # because those pull in Wails' desktop CGo — that route is exercised by
+  # the `frontend` job's `wails build` and (later) the release workflow.
+  go-tests:
+    name: go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: go.sum
+
+      # Linux -tags xsd compiles lestrrat-go/libxml2 against the system
+      # libxml2 headers. Ubuntu 24.04 ships 2.9.x / 2.12.x which the
+      # binding supports; the libxml2_13 pin from our Nix flake is
+      # specifically a nixpkgs-unstable workaround (2.15.x ABI change).
+      - name: Install libxml2-dev (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-dev
+
+      - name: go vet
+        run: go vet ./internal/...
+
+      - name: go test (stub XSD)
+        run: go test ./internal/...
+
+      - name: go test -tags xsd (real libxml2)
+        run: go test -tags xsd ./internal/...

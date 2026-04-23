@@ -237,8 +237,8 @@
   :global(.ProseMirror) {
     outline: none;
     line-height: 1.65;
-    font-family: "Trebuchet MS", -apple-system, sans-serif;
-    font-size: 16px;
+    font-family: var(--editor-font-family, "Trebuchet MS", -apple-system, sans-serif);
+    font-size: var(--editor-font-size, 16px);
   }
   :global(.ProseMirror p) {
     margin: 0 0 0.6em 0;
@@ -269,17 +269,17 @@
   :global(.ProseMirror div.epigraph) {
     margin: 1em 0 1em 3em;
     font-style: italic;
-    color: #444;
+    color: var(--fg-secondary);
   }
   :global(.ProseMirror div.cite) {
     margin: 1em 0 1em 2em;
     padding-left: 1em;
-    border-left: 3px solid #ccc;
+    border-left: 3px solid var(--border-input);
   }
   :global(.ProseMirror div.annotation) {
     margin: 1em 2em;
     font-size: 0.95em;
-    color: #555;
+    color: var(--fg-secondary);
   }
   :global(.ProseMirror div.poem) {
     margin: 1.5em 0 1.5em 2em;
@@ -294,7 +294,7 @@
     display: table;
     border-collapse: collapse;
     margin: 1em 0;
-    border: 1px solid #d0d0c0;
+    border: 1px solid var(--border);
   }
   :global(.ProseMirror div.tr) {
     display: table-row;
@@ -303,23 +303,23 @@
   :global(.ProseMirror p.th) {
     display: table-cell;
     padding: 0.3em 0.7em;
-    border: 1px solid #d0d0c0;
+    border: 1px solid var(--border);
     margin: 0;
   }
   :global(.ProseMirror p.th) {
-    background: #f0f0ea;
+    background: var(--bg-chrome);
     font-weight: 600;
   }
   :global(.ProseMirror span.code),
   :global(.ProseMirror code) {
     font-family: "SF Mono", Menlo, monospace;
     font-size: 0.92em;
-    background: #f5f5ef;
+    background: var(--bg-chrome);
     padding: 0.1em 0.3em;
     border-radius: 3px;
   }
   :global(.ProseMirror a) {
-    color: #1a5490;
+    color: var(--fg-link);
   }
   :global(.ProseMirror div.image) {
     text-align: center;
@@ -331,7 +331,7 @@
   }
   :global(.ProseMirror .outline-flash) {
     transition: background-color 0.3s ease;
-    background: #fff2b0;
+    background: var(--highlight);
   }
 
   /* Lossless fallback placeholders for unknown FB2 elements (see schema.ts
@@ -345,11 +345,11 @@
     background:
       repeating-linear-gradient(
         45deg,
-        #fef7d8 0 6px,
-        #fcebad 6px 12px
+        var(--warn-bg-a) 0 6px,
+        var(--warn-bg-b) 6px 12px
       );
-    border: 1px dashed #b58f00;
-    color: #7a5a10;
+    border: 1px dashed var(--warn);
+    color: var(--warn-fg);
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.85em;
     border-radius: 3px;
@@ -359,9 +359,9 @@
     display: inline-block;
     margin: 0 0.1em;
     padding: 0 0.35em;
-    background: #fef0bc;
-    border: 1px dashed #b58f00;
-    color: #7a5a10;
+    background: var(--warn-bg-inline);
+    border: 1px dashed var(--warn);
+    color: var(--warn-fg);
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.85em;
     border-radius: 3px;
@@ -370,7 +370,7 @@
   }
   :global(.ProseMirror .raw-block.ProseMirror-selectednode),
   :global(.ProseMirror .raw-inline.ProseMirror-selectednode) {
-    outline: 2px solid #b58f00;
+    outline: 2px solid var(--warn);
     outline-offset: 1px;
   }
 </style>

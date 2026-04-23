@@ -30,8 +30,13 @@
           # file-chooser native dialog reading `org.gtk.Settings.FileChooser`)
           # succeed. Without this the binary builds fine but crashes with
           # "Settings schema ... is not installed" when Open/Save is clicked.
+          # Also includes the NixOS system-wide `/run/current-system/sw/share`
+          # and the legacy `/usr/share` so tools that enumerate data dirs
+          # (sysfont's font discovery in particular — see app.go::populate
+          # SystemFonts) find everything the user has installed, not just
+          # what our flake ships.
           xdgDataDirsSetup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-            export XDG_DATA_DIRS="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:${pkgs.glib}/share/gsettings-schemas/${pkgs.glib.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:''${XDG_DATA_DIRS:-}"
+            export XDG_DATA_DIRS="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:${pkgs.glib}/share/gsettings-schemas/${pkgs.glib.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:/run/current-system/sw/share:/usr/share:''${XDG_DATA_DIRS:-}"
           '';
 
           # CGo tag needed to select the webkit2gtk-4.1 ABI in Wails v2 (the

@@ -12,6 +12,16 @@ import (
 	"fmt"
 	"os"
 
+	"log"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/adrg/sysfont"
+	"github.com/adrg/xdg"
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
@@ -28,14 +38,287 @@ type App struct {
 	ctx     context.Context
 	current *doc.FictionBook // currently-open document
 	path    string           // current file path, empty if untitled
+
+	// systemFonts is populated asynchronously on startup by walking the
+	// OS font directories via `sysfont`. Cached as a sorted, deduped
+	// list of family names for the Settings dialog's font-family picker.
+	// Reads are thread-safe behind systemFontsMu.
+	systemFonts   []string
+	systemFontsMu sync.RWMutex
 }
 
 // NewApp constructs the app.
 func NewApp() *App { return &App{} }
 
-// OnStartup is called by Wails once the webview is ready.
+// OnStartup is called by Wails once the webview is ready. It restores the
+// last-seen window position from settings.json (size is already applied via
+// options.App in main.go — position can't be, per Wails v2's API).
 func (a *App) OnStartup(ctx context.Context) {
 	a.ctx = ctx
+
+	if s, err := settings.Load(); err == nil && s != nil {
+		// Only restore a non-zero, non-negative position. First-run (zeros)
+		// keeps the OS default.
+		if s.Window.X != 0 || s.Window.Y != 0 {
+			wailsrt.WindowSetPosition(ctx, s.Window.X, s.Window.Y)
+		}
+	}
+
+	// Enumerate installed fonts in the background so the Settings dialog's
+	// font-family picker shows everything on the system, not just a
+	// curated list. Typical desktops have 200–2 000 families; walking
+	// /System/Library/Fonts + /Library/Fonts + ~/Library/Fonts takes <1 s
+	// even on cold cache. sysfont is pure-Go (no CGo) so this works on
+	// both macOS and Linux from one codepath.
+	go a.populateSystemFonts()
+}
+
+// populateSystemFonts walks the OS font registry, dedupes by family, and
+// caches a sorted slice. Runs once per app launch — fonts rarely change
+// during a session, and the dialog can happily show a stale list if the
+// user installs a family mid-session (they can still type it in the
+// free-text fallback).
+//
+// Augments `xdg.FontDirs` with NixOS-typical locations (`/run/current-system/...`,
+// nix user profiles) and with every `$XDG_DATA_DIRS` entry's `/fonts`
+// subdir, so the Wails flake's reduced XDG_DATA_DIRS on NixOS doesn't
+// leave the finder staring at an empty /usr/share/fonts. No-op on systems
+// where those paths don't exist.
+//
+// For fonts sysfont's filename registry doesn't recognize — common on
+// NixOS because the store-path filenames carry hashes / versions not in
+// the registry — falls back to a filename-to-family heuristic so the
+// user still sees a reasonable label.
+func (a *App) populateSystemFonts() {
+	// On Linux, fontconfig is the source of truth. `fc-list : family` returns
+	// every font the user has configured — system packages, home-manager,
+	// nix profiles, user ~/.fonts, the lot — indexed in a single pass, with
+	// proper family names (not filenames). Filesystem walkers like sysfont
+	// can't match fontconfig's visibility on NixOS: fonts live in dozens of
+	// nix-store paths joined by opaque symlink trees, and nixpkgs-packaged
+	// filenames carry hashes / versions that sysfont's registry doesn't
+	// recognize. Try fontconfig first; fall back to sysfont on macOS (where
+	// fc-list usually isn't installed) or if the command fails.
+	if runtime.GOOS == "linux" {
+		if families, err := listFontsViaFontconfig(); err == nil && len(families) > 0 {
+			log.Printf("[fbe] system fonts: %d families via fontconfig", len(families))
+			a.systemFontsMu.Lock()
+			a.systemFonts = families
+			a.systemFontsMu.Unlock()
+			return
+		}
+	}
+
+	extendFontDirsForNix()
+
+	finder := sysfont.NewFinder(nil)
+	all := finder.List()
+
+	seen := make(map[string]struct{}, len(all))
+	families := make([]string, 0, len(all))
+	recognized := 0
+	heuristic := 0
+	for _, f := range all {
+		if f == nil {
+			continue
+		}
+		family := f.Family
+		if family != "" {
+			recognized++
+		} else if f.Filename != "" {
+			family = familyFromFilename(f.Filename)
+			if family == "" {
+				continue
+			}
+			heuristic++
+		} else {
+			continue
+		}
+		if _, dup := seen[family]; dup {
+			continue
+		}
+		seen[family] = struct{}{}
+		families = append(families, family)
+	}
+	sort.Strings(families)
+
+	log.Printf("[fbe] system fonts: %d files scanned, %d recognized, %d via filename heuristic, %d unique families (sysfont)",
+		len(all), recognized, heuristic, len(families))
+
+	a.systemFontsMu.Lock()
+	a.systemFonts = families
+	a.systemFontsMu.Unlock()
+}
+
+// listFontsViaFontconfig runs `fc-list : family` and parses the output. Each
+// line may be a comma-separated list of family aliases (fontconfig groups
+// equivalents like localized names); we take the first as the canonical
+// display name. Dedupes + sorts the result. Returns an error if the command
+// isn't installed or exits non-zero.
+func listFontsViaFontconfig() ([]string, error) {
+	path, err := exec.LookPath("fc-list")
+	if err != nil {
+		return nil, err
+	}
+	out, err := exec.Command(path, ":", "family").Output()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	families := make([]string, 0, 128)
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		// "Noto Serif,Noto Serif Regular" → "Noto Serif"
+		first := strings.TrimSpace(strings.SplitN(line, ",", 2)[0])
+		if first == "" {
+			continue
+		}
+		if _, dup := seen[first]; dup {
+			continue
+		}
+		seen[first] = struct{}{}
+		families = append(families, first)
+	}
+	sort.Strings(families)
+	return families, nil
+}
+
+// familyFromFilename extracts a human-readable family name from a font
+// file path by stripping the extension, common weight / style suffixes,
+// and replacing separators with spaces. Best-effort heuristic; caller
+// dedupes against already-recognized names.
+//
+//	/nix/store/abc-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSans-Bold.ttf
+//	→ "DejaVu Sans"
+func familyFromFilename(path string) string {
+	base := filepath.Base(path)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+
+	// Strip well-known style tokens. Order matters — longer first so
+	// "BoldItalic" matches before "Bold".
+	suffixes := []string{
+		"BoldItalic", "BoldOblique", "LightItalic", "LightOblique",
+		"MediumItalic", "MediumOblique", "ExtraBold", "SemiBold", "Thin",
+		"Light", "Medium", "Regular", "Bold", "Italic", "Oblique",
+	}
+	for _, s := range suffixes {
+		// Match `-Bold`, `_Bold`, or ` Bold` at the end.
+		for _, sep := range []string{"-", "_", " "} {
+			token := sep + s
+			if strings.HasSuffix(base, token) {
+				base = strings.TrimSuffix(base, token)
+				break
+			}
+		}
+	}
+
+	// Convert CamelCase / snake / kebab into space-separated words.
+	base = strings.ReplaceAll(base, "_", " ")
+	base = strings.ReplaceAll(base, "-", " ")
+	base = splitCamelCase(base)
+	base = strings.TrimSpace(strings.Join(strings.Fields(base), " "))
+	return base
+}
+
+// splitCamelCase inserts spaces before uppercase letters in camelCase
+// sequences: "DejaVuSans" → "DejaVu Sans". Preserves runs of uppercase
+// (e.g. "PTSans" stays "PTSans" rather than "P T Sans").
+func splitCamelCase(s string) string {
+	var b strings.Builder
+	runes := []rune(s)
+	for i, r := range runes {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			prev := runes[i-1]
+			next := rune(0)
+			if i+1 < len(runes) {
+				next = runes[i+1]
+			}
+			prevLower := prev >= 'a' && prev <= 'z'
+			nextLower := next >= 'a' && next <= 'z'
+			if prevLower || (prev >= 'A' && prev <= 'Z' && nextLower) {
+				b.WriteRune(' ')
+			}
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// extendFontDirsForNix appends additional font directories to xdg.FontDirs
+// that sysfont would otherwise miss on NixOS and nix-darwin setups:
+//
+//   - `/run/current-system/sw/share/fonts` — system-wide NixOS packages.
+//   - `$HOME/.nix-profile/share/fonts`     — user-installed via nix profile.
+//   - `/etc/profiles/per-user/<user>/share/fonts` — home-manager style.
+//   - Each entry in `$XDG_DATA_DIRS` joined with `fonts` — this picks up
+//     any activation-script-managed paths a Nix dev shell might inject.
+//
+// Only existing directories are appended. Idempotent per process — the
+// package-level xdg.FontDirs can be mutated multiple times without harm
+// beyond extra duplicate checks inside sysfont's walker.
+func extendFontDirsForNix() {
+	seen := make(map[string]struct{}, len(xdg.FontDirs))
+	for _, p := range xdg.FontDirs {
+		seen[p] = struct{}{}
+	}
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		if _, dup := seen[p]; dup {
+			return
+		}
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			seen[p] = struct{}{}
+			xdg.FontDirs = append(xdg.FontDirs, p)
+		}
+	}
+	add("/run/current-system/sw/share/fonts")
+	if home, err := os.UserHomeDir(); err == nil {
+		add(filepath.Join(home, ".nix-profile/share/fonts"))
+	}
+	if xdgDataDirs := os.Getenv("XDG_DATA_DIRS"); xdgDataDirs != "" {
+		for _, d := range strings.Split(xdgDataDirs, ":") {
+			add(filepath.Join(d, "fonts"))
+		}
+	}
+	log.Printf("[fbe] font dirs: %v", xdg.FontDirs)
+}
+
+// ListSystemFonts returns the sorted, deduped list of family names the
+// host OS knows about. Returns an empty slice if enumeration hasn't
+// finished (first ~100 ms after launch) — the frontend should then fall
+// back to its curated default list.
+func (a *App) ListSystemFonts() []string {
+	a.systemFontsMu.RLock()
+	defer a.systemFontsMu.RUnlock()
+	if len(a.systemFonts) == 0 {
+		return []string{}
+	}
+	out := make([]string, len(a.systemFonts))
+	copy(out, a.systemFonts)
+	return out
+}
+
+// OnShutdown is called by Wails just before the webview tears down. We grab
+// the final window position and size and persist them, so the next launch
+// restores the layout the user left us with. Read/write errors are
+// swallowed — a settings-save hiccup shouldn't delay shutdown.
+func (a *App) OnShutdown(ctx context.Context) {
+	x, y := wailsrt.WindowGetPosition(ctx)
+	w, h := wailsrt.WindowGetSize(ctx)
+	s, err := settings.Load()
+	if err != nil || s == nil {
+		return
+	}
+	s.Window.X = x
+	s.Window.Y = y
+	s.Window.W = w
+	s.Window.H = h
+	_ = settings.Save(s)
 }
 
 // --- Native dialogs (Wails' runtime.OpenFileDialog / SaveFileDialog are Go-only;
@@ -112,6 +395,7 @@ func (a *App) OpenFile(path string) (fb *doc.FictionBook, err error) {
 	}
 	a.current = fb
 	a.path = path
+	recordRecentFile(path)
 	return fb, nil
 }
 
@@ -132,7 +416,71 @@ func (a *App) SaveFile(path string) error {
 		return err
 	}
 	a.path = path
+	recordRecentFile(path)
 	return nil
+}
+
+// recentFilesCap is the maximum length of the Most-Recently-Used list.
+// Chosen to match what the original FBE used (see Settings.h::recentFiles).
+const recentFilesCap = 10
+
+// recordRecentFile prepends `path` to settings.RecentFiles, dedupes earlier
+// occurrences, caps the list at recentFilesCap, and persists. Silent on
+// error — recent-files tracking is a convenience, not a correctness path;
+// we'd rather continue the primary flow than fail Open/Save because
+// settings.json couldn't be written.
+func recordRecentFile(path string) {
+	if path == "" {
+		return
+	}
+	s, err := settings.Load()
+	if err != nil || s == nil {
+		return
+	}
+	out := make([]string, 0, len(s.RecentFiles)+1)
+	out = append(out, path)
+	for _, p := range s.RecentFiles {
+		if p == path {
+			continue
+		}
+		out = append(out, p)
+		if len(out) == recentFilesCap {
+			break
+		}
+	}
+	s.RecentFiles = out
+	_ = settings.Save(s)
+}
+
+// RecentFiles returns the persisted most-recently-used file paths
+// (most-recent first). On read error returns an empty list rather than
+// propagating — the frontend just shows no history in that case.
+func (a *App) RecentFiles() []string {
+	s, err := settings.Load()
+	if err != nil || s == nil {
+		return []string{}
+	}
+	if s.RecentFiles == nil {
+		return []string{}
+	}
+	return s.RecentFiles
+}
+
+// RemoveFromRecent drops a path from the MRU list (e.g. when it no longer
+// exists on disk). No-op if absent.
+func (a *App) RemoveFromRecent(path string) error {
+	s, err := settings.Load()
+	if err != nil || s == nil {
+		return err
+	}
+	out := s.RecentFiles[:0]
+	for _, p := range s.RecentFiles {
+		if p != path {
+			out = append(out, p)
+		}
+	}
+	s.RecentFiles = out
+	return settings.Save(s)
 }
 
 // UpdateDocument replaces the current document with a new version from the frontend.

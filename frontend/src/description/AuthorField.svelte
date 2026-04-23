@@ -83,10 +83,10 @@
 
 <style>
   .author {
-    border: 1px solid #dcdcd0;
+    border: 1px solid var(--border);
     padding: 0.5rem;
     border-radius: 4px;
-    background: #fcfbf6;
+    background: var(--bg-card);
     margin-bottom: 0.5rem;
   }
   .row, .inline {
@@ -103,29 +103,29 @@
     margin-bottom: 0.35rem;
   }
   .stack { display: flex; flex-direction: column; gap: 0.2rem; }
-  label { font-size: 0.8rem; color: #666; padding-top: 0.3rem; }
+  label { font-size: 0.8rem; color: var(--fg-secondary); padding-top: 0.3rem; }
   input {
     padding: 0.25rem 0.4rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-input);
     border-radius: 3px;
     font: inherit;
     flex: 1;
     min-width: 6rem;
   }
   .aux {
-    background: white;
-    border: 1px solid #bbb;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-button);
     border-radius: 3px;
     padding: 0 0.4rem;
     cursor: pointer;
     font-size: 0.9rem;
     line-height: 1.2;
   }
-  .aux:hover { background: #fff8e5; }
+  .aux:hover { background: var(--bg-hover); }
   .disclosure {
     background: none;
     border: none;
-    color: #666;
+    color: var(--fg-secondary);
     cursor: pointer;
     padding: 0.1rem 0;
     font-size: 0.8rem;
@@ -133,7 +133,7 @@
   .link {
     background: none;
     border: none;
-    color: #1a5490;
+    color: var(--fg-link);
     cursor: pointer;
     padding: 0.15rem 0;
     font-size: 0.85rem;

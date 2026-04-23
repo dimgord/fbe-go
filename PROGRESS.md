@@ -6,6 +6,1708 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 67 — 2026-04-22 — Version bump to 0.2.0-beta (Phase 5 close) [dev]
+
+Version: **0.2.0-beta**
+
+Minor-version bump signaling Phase 5 close. Between `v0.1.0-beta`
+(Rev 39) and now we landed:
+
+- Dark mode + centralized palette + theme-hygiene lint (Revs 46–51).
+- Persistence: window geom, last view, pane sizes (Rev 52).
+- Draggable outline + validation-pane resizers (Rev 53).
+- Settings dialog with font picker and NBSP-on-space toggle
+  (Revs 54–56).
+- Real OS font enumeration via `sysfont` + fontconfig fc-list fallback
+  on Linux (Revs 57–61), browse-full combobox (Rev 62).
+- CI matrix: Ubuntu + macOS, svelte-check + vitest + go test
+  (Revs 63–64).
+- Release pipeline: macOS universal DMG + Linux AppImage on `v*` tags
+  (Rev 65).
+- File associations (macOS CFBundleDocumentTypes) + GNOME thumbnailer
+  + shared-MIME registration (Rev 66).
+
+Corpus fidelity (`fidelityBroken == 0`) verified green before cut.
+
+Tag `v0.2.0-beta` fires the release workflow → macOS DMG + Linux
+AppImage + freedesktop tarball artifacts on GitHub Releases,
+auto-marked prerelease.
+
+---
+
+## Rev 66 — 2026-04-22 — File associations + GNOME thumbnailer + shared-MIME registration [dev]
+
+Version: **0.1.27**
+
+### What
+
+Ship FB2 desktop integration on both platforms so `.fb2` files get the
+fbe-go icon in Finder / Files, double-click opens in the editor, and
+Linux file managers render thumbnails from the embedded coverpage.
+
+#### macOS — Wails `fileAssociations`
+
+`wails.json` `info.fileAssociations` gets a single `.fb2` entry with
+`role: Editor`, `iconName: iconfile`. Wails' macOS bundler reads this
+at `wails build` time and renders the corresponding
+`CFBundleDocumentTypes` / `UTExportedTypeDeclarations` blocks into the
+`.app`'s `Info.plist`. Next build + install in `/Applications/` and the
+registration is live: Finder shows the fbe-go icon on `.fb2` files,
+right-click → Open With → FictionBook Editor (Go), double-click routes
+through `AppDelegate.application:openFile:` which Wails already wires
+into the same code path the "Open…" menu uses.
+
+QuickLook *preview pane* (the Swift `.appex` extension showing the
+coverpage + first paragraph) is explicitly **deferred** — it needs a
+separate Xcode project with `NSExtension` plist and code-signing. This
+rev ships the UTI / file-association layer only, which covers the
+bulk of the QuickLook experience (icon, Spotlight, "Open With").
+
+#### Linux — three freedesktop files
+
+New `packaging/` additions (alongside the existing `fbe-go.desktop`
+from Rev 65):
+
+- **`packaging/fbe-go-mime.xml`** — shared-mime-info XML registering
+  `application/x-fictionbook+xml` (the de-facto FB2 MIME; FictionBook
+  never registered with IANA) with:
+    - `<glob pattern="*.fb2"/>` for extension matching,
+    - `<magic priority="60">` looking for the `<FictionBook` signature
+      in the first 1 KiB so extensionless files are also detected,
+    - `<sub-class-of type="application/xml"/>` so XML tooling still
+      applies,
+    - localized `<comment>` for uk / ru.
+    - Secondary type `application/x-zip-compressed-fb2` subclasses
+      `application/zip` so `.fb2.zip` still opens in archive managers
+      while our thumbnailer can target it specifically.
+
+- **`packaging/fbe-go.thumbnailer`** — freedesktop thumbnailer spec
+  honored by GNOME Files, Nautilus, Nemo, Caja, KDE Dolphin.
+  `Exec=fbe thumb %i %o` routes to the existing `cmd/fbe/main.go`
+  `cmdThumb` that writes a PNG of the `<coverpage>` binary. `%s`
+  (requested pixel size) is ignored — the file manager downscales at
+  render time and 128×128 / 256×256 grids look fine from the raw
+  coverpage resolution.
+
+- **`packaging/README.md`** — step-by-step install flow for
+  `~/.local/share/...` (per-user) and `/usr/share/...` (system)
+  plus the required `update-mime-database` /
+  `update-desktop-database` cache refresh.
+
+#### Release workflow ships the packaging files
+
+`.github/workflows/release.yml` gains a **freedesktop tarball**
+artifact on the Linux job: `dist/fbe-go-${TAG}-linux-freedesktop.tar.gz`
+bundles `README.md` + `.desktop` + `-mime.xml` + `.thumbnailer` so
+AppImage users can untar and drop the files into their XDG data dirs
+without cloning the repo. The DMG-vs-AppImage-vs-tarball asset set is
+now the full shipping surface.
+
+### Why
+
+FBE's classic Windows `.fb2` icon + Explorer thumbnail was a distinct
+quality-of-life feature. Phase 5 "polish" targets feature-parity
+with the original editor, and icon integration was the most visible
+gap on both target platforms (macOS Finder had generic .fb2; GNOME
+Files had generic document icon).
+
+### Files
+
+- Modified: `wails.json` (version + fileAssociations).
+- Modified: `frontend/package.json`, `frontend/package-lock.json`
+  (version sync).
+- Modified: `.github/workflows/release.yml` (freedesktop tarball).
+- New: `packaging/fbe-go-mime.xml`.
+- New: `packaging/fbe-go.thumbnailer`.
+- New: `packaging/README.md`.
+
+### Out of scope / follow-ups
+
+- Full macOS QuickLook preview extension (needs Swift `.appex` +
+  signed extension bundle).
+- `.fb2.zip` thumbnailer entry — current thumbnailer only handles
+  uncompressed; `cmd/fbe` `thumb` subcommand already transparently
+  unwraps the zip, so this is one extra `.thumbnailer` file away
+  but deferred until we can verify file-manager behavior with
+  multiple thumbnailers per binary.
+- Signed + notarized `.app` on macOS (unblocks Gatekeeper on first
+  launch; needs Apple Developer credentials as repo secrets).
+
+---
+
+## Rev 65 — 2026-04-23 — Release workflow: macOS DMG + Linux AppImage on v* tags [dev]
+
+Version: **0.1.26**
+
+### What
+
+`.github/workflows/release.yml` fires on `v*` tags (and
+`workflow_dispatch` for reruns). Three jobs:
+
+#### `macos` — universal `.app` + `.dmg`
+
+- Builds the Wails bundle with
+  `wails build -platform darwin/universal -tags xsd`. Universal
+  output covers both Apple Silicon and Intel from one file.
+- `brew install create-dmg` then lays out a classic macOS
+  drag-to-/Applications installer window (600×400, 100-px icons,
+  app at 175,200 and /Applications alias at 425,200).
+- Final artifact: `fbe-go-${TAG}-macos-universal.dmg`.
+
+Note: the bundle is **unsigned**. First launch on a default
+macOS will show *"fbe-go is damaged"* / Gatekeeper refusal. Users
+can run `xattr -d com.apple.quarantine /Applications/fbe-go.app`
+or right-click → Open to bypass. Proper code-signing +
+notarytool submission is a separate rev (needs Apple Developer
+credentials as repo secrets).
+
+#### `linux` — `.AppImage` via `linuxdeploy`
+
+- apt-installs the same native deps as `ci.yml`:
+  `libxml2-dev`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`,
+  `pkg-config`, plus `fuse / libfuse2` (for AppImage self-mount)
+  and `desktop-file-utils`.
+- `wails build -platform linux/amd64 -tags 'xsd webkit2_41'`
+  produces `build/bin/fbe-go`.
+- `linuxdeploy` (downloaded as an AppImage) builds the AppDir
+  from the binary + `packaging/fbe-go.desktop` (new) +
+  `build/appicon.png`, autodetects shared-lib deps, and hands
+  off to `appimagetool` to produce a single self-contained file.
+- Final artifact: `fbe-go-${TAG}-linux-x86_64.AppImage`.
+
+Runs with `--appimage-extract-and-run` because GitHub's hosted
+Linux runner's FUSE is sometimes unhappy.
+
+#### `release` — publish
+
+- `needs: [macos, linux]` with `if: always() && (either succeeded)`
+  — one platform's failure doesn't block shipping the other.
+- Downloads both artifact sets, calls `softprops/action-gh-release@v2`
+  to create / update the tag's GitHub Release.
+- Auto-marks prerelease when the tag name contains `-beta`,
+  `-rc`, or `-alpha`. Bare `v0.2.0` ships as stable.
+- `generate_release_notes: true` pulls commit-log bullets from
+  the merge that produced the tag.
+
+### Supporting additions
+
+- `packaging/fbe-go.desktop` — Freedesktop entry consumed by
+  linuxdeploy. Registers `application/x-fictionbook+xml` MIME
+  type, Office/WordProcessor categories, fb2 keywords.
+- `ci.yml` picks up the same `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`
+  env var to silence the Node 20 deprecation warning on its own
+  runs.
+
+### What's still missing
+
+- **Code signing on macOS** — needs Apple Developer cert +
+  notarytool secrets. Document in a README "Installing" section
+  when we have it.
+- **Signed / sandboxed AppImage on Linux** — unsigned AppImages
+  are the norm; nothing to do here.
+- **Auto-update** — Sparkle on macOS, AppImageUpdate on Linux.
+  Out of scope for a first releasable bundle.
+- **arm64 Linux** — separate runner job. Defer until demand.
+- **QuickLook + GNOME thumbnailer** — Rev 66 candidates.
+
+### Testing plan
+
+1. Push this rev to `dev`. CI stays green (release workflow is
+   inert without a tag).
+2. Merge `dev` → `main` when ready for a cut.
+3. Tag `v0.2.0-beta` (or similar) on `main`. Release workflow
+   builds, publishes the draft release with both artifacts.
+4. Smoke-test: download DMG, open on macOS (Gatekeeper-bypass
+   instructions in release notes). Download AppImage on Linux,
+   `chmod +x` and run.
+
+### Files added / modified
+
+- `.github/workflows/release.yml` (new)
+- `.github/workflows/ci.yml` — `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`
+  env.
+- `packaging/fbe-go.desktop` (new)
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.25 → 0.1.26
+- `frontend/package.json`       0.1.25 → 0.1.26
+- `frontend/package-lock.json`  0.1.25 → 0.1.26
+
+---
+
+## Rev 64 — 2026-04-23 — CI fix: generate Wails bindings before svelte-check [dev]
+
+Version: **0.1.25**
+
+### Symptom (first CI run on Rev 63)
+
+`svelte-check` failed on 3 import paths that resolve to
+`frontend/wailsjs/` — the TS bindings Wails generates from
+`app.go`:
+
+```
+Cannot find module '../../wailsjs/go/models'
+Cannot find module '../../wailsjs/go/main/App'
+Cannot find module '../../wailsjs/runtime/runtime'
+```
+
+Plus 3 `Unused '@ts-expect-error' directive` errors: the
+directives on `App.UpdateDocument(current)` calls sit on top
+of known-intentional type mismatches between hand-written
+`FictionBook` and the Wails-generated one; when wailsjs types
+aren't loaded, both types read as `any` and the directive is
+unused.
+
+### Root cause
+
+`frontend/wailsjs/` is auto-generated by Wails on `wails dev /
+wails build` and gitignored per project convention
+(CLAUDE.md: *"Never edit by hand"*). CI never ran Wails, so
+the directory didn't exist.
+
+### Fix
+
+`frontend` CI job now installs the Wails CLI, the Linux native
+build deps (gtk3-dev, webkit2gtk-4.1-dev, libxml2-dev,
+pkg-config), and runs `wails build -tags 'xsd webkit2_41' -s`
+before touching the frontend. The `-s` flag skips the vite
+frontend build (we want to run svelte-check against that), but
+keeps the Go build + binding-generation, which is all we need.
+The produced binary is thrown away.
+
+Didn't change project convention — `wailsjs/` stays gitignored;
+local dev flow is unchanged. CI runtime adds ~1 min (apt install
++ go install wails + wails build) but matches what local dev
+already does and brings the one-Go-build guarantee that integration
+paths compile on Linux.
+
+### Verification
+
+- Commit-and-see. Second CI run should pass svelte-check
+  cleanly and the `@ts-expect-error` usage will resolve against
+  the real generated types.
+
+### Files modified
+
+- `.github/workflows/ci.yml` — apt-install + wails install +
+  wails build before the frontend checks.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.24 → 0.1.25
+- `frontend/package.json`       0.1.24 → 0.1.25
+- `frontend/package-lock.json`  0.1.24 → 0.1.25
+
+---
+
+## Rev 63 — 2026-04-23 — CI workflow: frontend + Go tests on Ubuntu + macOS [dev]
+
+Version: **0.1.24**
+
+### What
+
+`.github/workflows/ci.yml` runs on every push to `main` / `dev`
+and on every PR targeting those branches. Covers the fast
+signal Phase 5 roadmap requires before we start shipping
+installers:
+
+#### Jobs
+
+- **`frontend`** (ubuntu-latest) — `npm ci` + `npm run check`
+  (svelte-check) + `npm run check:theme` (palette lint) +
+  `npm run test` (vitest). Frontend is pure TS / Svelte, no
+  platform code, so one runner is enough.
+
+- **`go-tests`** (matrix: ubuntu-latest + macos-latest) —
+  `go vet` + `go test` + `go test -tags xsd` against
+  `./internal/...`. Ubuntu installs `libxml2-dev` via apt so
+  the `-tags xsd` path can link. Runs in parallel on both OSes
+  with `fail-fast: false`.
+
+#### Deliberately out of scope
+
+- Root `main` package and `cmd/fbe` aren't tested here. They
+  link Wails' desktop CGo (gtk + webkit on Linux), which needs
+  a much larger apt payload and is best exercised by the
+  release workflow's full `wails build`. Rev 64 will add that.
+- `arm64` architectures — GitHub's free runners are x86_64 by
+  default; `macos-14`+ is arm64 but we stay on `macos-latest`
+  alias for now. Can bump when release needs it.
+
+#### Concurrency control
+
+`cancel-in-progress: true` per ref — a second push to the same
+branch cancels the in-flight run so we don't eat minutes on
+stale commits.
+
+### Verification
+
+Workflow file validates on push to `dev` once this commit lands
+(GitHub Actions runs it). Can't run locally here.
+
+### Files added / modified
+
+- `.github/workflows/ci.yml` (new)
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.23 → 0.1.24
+- `frontend/package.json`       0.1.23 → 0.1.24
+- `frontend/package-lock.json`  0.1.23 → 0.1.24
+
+---
+
+## Rev 62 — 2026-04-23 — Font combobox filter: browse-full from ▾, filter only while typing [dev]
+
+Version: **0.1.23**
+
+### Symptom (beta feedback, Dmitry)
+
+With 31 fonts loaded via fontconfig the dropdown worked, but UX
+was wrong: the input pre-filled with the current family
+("Trebuchet MS"), and the dropdown filtered by that value — so
+clicking ▾ only showed fonts matching "trebuchet". User had to
+erase the input to see the full list.
+
+### Fix
+
+Split "what the input holds" from "what filters the dropdown":
+
+- `draft.font.family` — the stored / editing family (what Apply
+  persists).
+- `fontFilter` — separate string, only non-empty while the user
+  is actively typing to narrow the list.
+
+Rules:
+- **Click ▾** → `fontFilter = ""`, open. User sees full list.
+- **Focus input** → same as ▾: `fontFilter = ""`, open. Users
+  expect to browse, not re-filter by the current value.
+- **Type in input** → `fontFilter = input.value`, menu stays
+  open. Input value (bind:value on `draft.font.family`) and
+  filter stay in sync while typing.
+- **Click an item** → `draft.font.family = item`, close,
+  `fontFilter = ""` (reset for next open).
+- **Click outside** → close. `fontFilter` stays non-empty but
+  dropdown is closed; next reopen via ▾/focus resets it.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 61/61.
+- Dmitry to confirm opening the dialog shows all 31 families in
+  the dropdown without having to clear the input first.
+
+### Files modified
+
+- `frontend/src/settings/SettingsDialog.svelte` — `fontFilter`
+  state, `toggleFontMenu` / `onFontFocus` / `onFontInput` /
+  `selectFont` handlers.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.22 → 0.1.23
+- `frontend/package.json`       0.1.22 → 0.1.23
+- `frontend/package-lock.json`  0.1.22 → 0.1.23
+
+---
+
+## Rev 61 — 2026-04-23 — Font discovery via fontconfig `fc-list` on Linux [dev]
+
+Version: **0.1.22**
+
+### Symptom (more beta feedback)
+
+Rev 60's diagnostic log revealed that on NixOS sysfont walked 70+
+directories but found zero font files (`0 files scanned`). Dmitry's
+system has fonts — they're visible to GNOME, to Firefox — so
+fontconfig clearly knows about them, but sysfont's `filepath.Walk`
+couldn't see them through the chains of symlinks NixOS builds into
+`/run/current-system/sw/share/fonts` and friends.
+
+### Fix
+
+On Linux, ask fontconfig directly:
+
+```
+fc-list : family
+```
+
+That's the authoritative answer — fontconfig is what every
+Linux app uses to resolve font names at runtime, and its cache
+sees through the symlinks. `fc-list` is present on every Linux
+setup that runs a desktop environment (and specifically on
+NixOS + GNOME, which is Dmitry's setup). Parse output:
+comma-separated family aliases, take the first as the canonical
+name, dedupe, sort.
+
+`populateSystemFonts` now prefers fontconfig on Linux, falls
+back to sysfont (with the Rev 60 filename heuristic) if
+`fc-list` is missing or fails. On macOS the sysfont path is
+taken directly — fontconfig is rare there and the system font
+folders are simple enough for sysfont to enumerate.
+
+Log line tells you which path was taken:
+
+- `[fbe] system fonts: 327 families via fontconfig` — Linux
+  happy path.
+- `[fbe] system fonts: N files scanned, R recognized, H via
+  filename heuristic, U unique families (sysfont)` — fallback
+  (macOS or fontconfig missing).
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- Dmitry to re-run on NixOS; expected: triple-digit family count
+  via fontconfig, combobox populated.
+
+### Files modified
+
+- `app.go` — fontconfig path in `populateSystemFonts`; new
+  `listFontsViaFontconfig` helper.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.21 → 0.1.22
+- `frontend/package.json`       0.1.21 → 0.1.22
+- `frontend/package-lock.json`  0.1.21 → 0.1.22
+
+---
+
+## Rev 60 — 2026-04-22 — Font discovery: filename fallback + diagnostic log [dev]
+
+Version: **0.1.21**
+
+### Symptom (beta feedback — Rev 59 didn't fully fix it)
+
+Rev 59 added the NixOS font paths to `xdg.FontDirs`. sysfont now
+walks them, but on NixOS many font files are named after the
+nix-store-path version (e.g.
+`/nix/store/abc-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSans-Bold.ttf`).
+sysfont has a hardcoded filename→family registry that doesn't
+include nixpkgs filename patterns, so `Font.Family` came back
+empty and my "skip if empty" filter dropped everything the
+registry didn't recognize.
+
+### Fix
+
+Two parts:
+
+1. **Filename-to-family heuristic** — for entries where
+   `sysfont.Font.Family` is empty but `Filename` is set, derive
+   the family from the basename: strip extension, strip common
+   weight/style suffixes (`-Bold`, `-Italic`, `-BoldItalic`,
+   `-Light`, `-Regular`, `-SemiBold`, etc.), convert CamelCase /
+   kebab / snake to space-separated words.
+   
+   `DejaVuSans-Bold.ttf` → "DejaVu Sans".
+   `LiberationSerif-Regular.ttf` → "Liberation Serif".
+   
+   Preserves runs of all-caps (`PTSans.ttf` stays "PTSans", not
+   "P T Sans").
+
+2. **Diagnostic log** — logs the resolved `xdg.FontDirs` plus
+   font-counts at startup:
+   ```
+   [fbe] font dirs: [/nix/store/.../share/fonts /usr/share/fonts …]
+   [fbe] system fonts: 243 files scanned, 58 recognized, 119 via
+   filename heuristic, 112 unique families
+   ```
+   Run the binary from terminal to see it; helps diagnose if
+   future regressions happen on fresh distros.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- Logic not unit-tested here — `familyFromFilename` deserves
+  tests, but this rev is small enough to eyeball the string
+  cases. A follow-up can add them.
+- Dmitry to re-test on NixOS: combobox should now show 100+
+  families.
+
+### Files modified
+
+- `app.go` — `familyFromFilename`, `splitCamelCase`, heuristic
+  wired into `populateSystemFonts`, diagnostic log.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.20 → 0.1.21
+- `frontend/package.json`       0.1.20 → 0.1.21
+- `frontend/package-lock.json`  0.1.20 → 0.1.21
+
+---
+
+## Rev 59 — 2026-04-22 — Font discovery on NixOS: extend xdg.FontDirs + flake XDG_DATA_DIRS [dev]
+
+Version: **0.1.20**
+
+### Symptom (beta feedback)
+
+Settings → Font family combobox showed only the four CSS generic
+keywords (`system-ui`, `serif`, `sans-serif`, `monospace`) — no
+real fonts. Dmitry's NixOS has plenty installed, so something
+stopped sysfont from finding them.
+
+### Root cause
+
+`github.com/adrg/sysfont` walks `xdg.FontDirs` from
+`github.com/adrg/xdg`, which is the fixed set:
+
+```
+$XDG_DATA_HOME/fonts, $HOME/.fonts, $HOME/.local/share/fonts,
+/usr/local/share/fonts, /usr/share/fonts,
+and each $XDG_DATA_DIRS entry joined with /fonts.
+```
+
+On NixOS installed fonts live in `/run/current-system/sw/share/fonts`
+(or the user's nix profile), and our Rev 46 shellHook had reduced
+`XDG_DATA_DIRS` to just the three GTK/GLib schema paths — none of
+which have a `/fonts` subdir. The union came out empty; sysfont
+found zero fonts.
+
+### Fix
+
+Two layers:
+
+1. **`flake.nix`** — the dev-shell `XDG_DATA_DIRS` now also includes
+   `/run/current-system/sw/share` and legacy `/usr/share`. That way
+   whatever NixOS activation exposes under those paths is visible to
+   every tool in the shell (fonts, icons, mime types).
+2. **`app.go::extendFontDirsForNix`** — defensive in-code fallback
+   for users who run the release binary outside `nix develop`. On
+   Linux it appends to `xdg.FontDirs`:
+   - `/run/current-system/sw/share/fonts`
+   - `$HOME/.nix-profile/share/fonts`
+   - Every `$XDG_DATA_DIRS` entry joined with `fonts`
+   
+   Only existing directories are appended; no-op on non-NixOS
+   systems where those paths don't exist.
+
+Called from `populateSystemFonts` before the `sysfont.NewFinder`
+walk, so the enumeration sees the real font set.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `nix flake check --all-systems` clean.
+- Live testing is platform-dependent — Dmitry to reopen Settings
+  after pull + `nix develop` exit/re-enter: Font family combobox
+  should now list several hundred installed families.
+
+### Files modified
+
+- `flake.nix` — `XDG_DATA_DIRS` now includes
+  `/run/current-system/sw/share` + `/usr/share`.
+- `app.go` — `extendFontDirsForNix`, called from
+  `populateSystemFonts`.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.19 → 0.1.20
+- `frontend/package.json`       0.1.19 → 0.1.20
+- `frontend/package-lock.json`  0.1.19 → 0.1.20
+
+---
+
+## Rev 58 — 2026-04-22 — Font combobox: explicit dropdown (WebKit datalist is invisible) [dev]
+
+Version: **0.1.19**
+
+### Symptom (beta feedback, Dmitry screenshot)
+
+The `<input list="sd-font-list">` in Rev 57 rendered as a plain text
+input. No down-arrow, no affordance, no popup on focus. WebKitGTK's
+HTML `<datalist>` support is minimal — the dropdown UI just isn't
+drawn. On Chromium-based Wails builds Dmitry would have seen the
+arrow, on WebKit he saw nothing.
+
+### Fix
+
+Replaced the datalist wiring with a custom combobox:
+
+- Wrapper `<div class="combobox">` holds the text input and a
+  `▾` toggle button sharing a border so they read as one control.
+- Click the `▾` or focus / type in the input → a popup `<ul
+  role="listbox">` appears below, showing the font list. Each entry
+  is a `<button>` styled in its own family (same preview trick
+  as the input itself, so users see what they're picking).
+- Clicking an entry fills the input and closes the popup.
+- Typing filters the popup case-insensitively against the font
+  list; if no match, the popup shows an italic "No match — your
+  typed value will be saved as-is" hint so users don't worry
+  they've broken something.
+- A transparent full-viewport backdrop closes the popup on any
+  outside click.
+
+### Still covered
+
+- Free-text fallback (type anything, Apply saves it verbatim).
+- Real OS-wide font list from Rev 57 (sysfont).
+- Inline style on the input previews the chosen font.
+
+### Keyboard (deferred)
+
+No arrow-key navigation of the popup yet. Possible follow-up if
+users ask. For the typical "pick a serif" flow, click-open + type
+to filter is sufficient.
+
+### Verification
+
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 61/61.
+- UI not clicked-through from dev env — Dmitry to confirm the
+  `▾` now opens a list, filter works, click sets the font.
+
+### Files modified
+
+- `frontend/src/settings/SettingsDialog.svelte` — combobox
+  markup, filter state, CSS.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.18 → 0.1.19
+- `frontend/package.json`       0.1.18 → 0.1.19
+- `frontend/package-lock.json`  0.1.18 → 0.1.19
+
+---
+
+## Rev 57 — 2026-04-22 — Font-family picker: real system fonts via sysfont [dev]
+
+Version: **0.1.18**
+
+### What
+
+Free-text input for the editor font-family was bad UX — users had to
+know and spell the family name exactly. New flow:
+
+- On startup the Go side walks OS font directories via
+  `github.com/adrg/sysfont` (pure-Go, no CGo), dedupes by family,
+  caches a sorted slice. Runs in a goroutine so it never blocks
+  launch; typical ~1 s on a warm filesystem, shorter on repeat.
+- `App.ListSystemFonts()` Wails binding returns the cached list
+  (empty slice until enumeration finishes — the first few hundred
+  ms after launch).
+- `SettingsDialog` seeds the font-family `<datalist>` with four
+  generic CSS keywords (`system-ui`, `serif`, `sans-serif`,
+  `monospace`) so the dropdown isn't empty even if the user opens
+  Settings instantly after launch. Then asynchronously merges the
+  real OS list (sorted, deduped) into the same datalist.
+- `<input list="sd-font-list">` gives native dropdown + autocomplete
+  + free-text fallback. Inline `style="font-family: …"` on the
+  input previews the choice live before Apply.
+
+### Why sysfont
+
+Considered:
+
+- **`queryLocalFonts()`** web API — Chromium / Safari 17+ / WebKitGTK
+  2.42+ expose it, but first call prompts the user to allow font
+  enumeration. Wails' in-app webview doesn't need that gate, but
+  the prompt still appears. Rejected.
+- **`system_profiler SPFontsDataType`** on macOS — accurate but
+  5–10 s cold. Unacceptable for background startup.
+- **`fc-list`** on Linux — fast but absent on stock macOS.
+- **Scanning font dirs and parsing name tables ourselves** —
+  doable, ~100 lines of fussy font-file parsing.
+- **`github.com/adrg/sysfont`** — pure-Go, cross-platform, same
+  job done by a maintained library. 4 KB added to `go.sum`. Chosen.
+
+### Field widening
+
+Font-family input bumped from default 18rem to min-14rem /
+max-22rem so "Helvetica Neue" fits without ellipsing.
+
+### Verification
+
+- `go build -tags xsd ./...` clean; `go mod tidy` added sysfont +
+  transitive deps (`adrg/strutil`, `adrg/xdg`).
+- `wails build -tags xsd` — regen picked up `ListSystemFonts` in
+  `App.d.ts`.
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 61/61.
+
+### Files added / modified
+
+- `app.go` — `systemFonts` + `systemFontsMu` cache, background
+  `populateSystemFonts()` on startup, `ListSystemFonts` binding.
+- `go.mod`, `go.sum` — sysfont deps.
+- `frontend/src/settings/SettingsDialog.svelte` — datalist seed +
+  async merge of the real OS list, input preview style, width CSS.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.17 → 0.1.18
+- `frontend/package.json`       0.1.17 → 0.1.18
+- `frontend/package-lock.json`  0.1.17 → 0.1.18
+
+---
+
+## Rev 56 — 2026-04-22 — SettingsDialog stuck on "Loading…" — reactive ordering bug [dev]
+
+Version: **0.1.17**
+
+### Symptom (beta feedback, Dmitry screenshot)
+
+Clicking ⚙ opened the Settings dialog but it stayed on "Loading…"
+indefinitely. `draft` was never populated and no console error
+surfaced.
+
+### Root cause
+
+Two `$:` reactive blocks can't share "detect transition" state in
+Svelte 4 — the compiler topologically orders reactive statements
+by their data-flow dependencies, not by source order:
+
+```svelte
+let wasOpen = false;
+$: if (open && !wasOpen) { load() }    // reader of wasOpen
+$: wasOpen = open;                     // writer of wasOpen
+```
+
+Writer gets ordered before reader → when `open` flips false→true,
+the writer runs first (`wasOpen = true`), then the reader checks
+`open && !wasOpen` = `true && !true` = false, skips the load.
+Dialog mounts, open flips true, nothing happens.
+
+### Fix
+
+Collapse into a single `$:` block where statements run top-to-
+bottom in source order:
+
+```svelte
+let wasOpen = false;
+$: {
+  if (open && !wasOpen) {
+    loaded = false;
+    draft = null;
+    void load();
+  }
+  wasOpen = open;
+}
+```
+
+### Also
+
+Saved the gotcha as a memory (`feedback_svelte_reactive_ordering.md`)
+so future rev-44-range work with transition detection doesn't hit the
+same trap. Index updated in `MEMORY.md`.
+
+### Verification
+
+- `npm run check` 0/0.
+- `npm run test` 61/61.
+- Visual flow not clicked-through from dev env; Dmitry to open ⚙
+  and confirm fields populate.
+
+### Files modified
+
+- `frontend/src/settings/SettingsDialog.svelte` — single-block
+  transition detection + comment.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.16 → 0.1.17
+- `frontend/package.json`       0.1.16 → 0.1.17
+- `frontend/package-lock.json`  0.1.16 → 0.1.17
+
+---
+
+## Rev 55 — 2026-04-22 — Wire Settings.font and Settings.nbspChar to runtime [dev]
+
+Version: **0.1.16**
+
+### What
+
+Rev 54's Settings dialog persisted editor font and NBSP char but
+nothing actually read them. Closed the loop:
+
+- **Editor font family and size** now route through the CSS
+  custom properties `--editor-font-family` / `--editor-font-size`.
+  `Editor.svelte`'s `:global(.ProseMirror)` rule reads them with
+  a fallback to the previous hard-coded values (Trebuchet MS /
+  16px) via `var(name, fallback)`. App.svelte's new
+  `applyEditorFont(font)` sets the vars on `document.documentElement`
+  on settings load and after Settings dialog apply.
+
+- **Paste NBSP handling** now honors `settings.nbspChar`.
+  `paste.ts` grew a module-level `pasteNbspChar` var (default
+  regular space, so existing tests stay deterministic) and a
+  `configurePaste({ nbspChar })` setter called by App.svelte on
+  mount and after apply. Both HTML and text paste paths route
+  U+00A0 / `&nbsp;` through `pasteNbspChar`.
+
+### paste.ts details
+
+- Old behavior: always collapsed NBSP to regular space.
+- New behavior: HTML's `/&nbsp;| /g` and text's `/ /g`
+  replace with `pasteNbspChar`. Default is regular space so the
+  existing "collapse" behavior is preserved for anyone who hasn't
+  opened Settings.
+- `resetPasteConfigForTesting()` exported for unit-test isolation;
+  `afterEach` in `paste.test.ts` calls it.
+- New `configurePaste` tests cover the HTML path, the text path,
+  and the "ignore non-single-char input" branch.
+- Regex literals switched from in-source U+00A0 characters to
+  explicit ` ` escapes for readability (invisible chars in
+  source bite).
+
+### Not done here
+
+- `AnnotationEditor`'s nested ProseMirror sticks with `Georgia,
+  serif` (an intentional look for annotation prose). If that
+  should also follow user-set editor font, it's a separate rev.
+- Font-family picker is a free-text input; a real font list would
+  need FontKit / system-font enumeration. Beta is fine with plain
+  text.
+- Per-document font overrides (FB2 `style` element) aren't
+  plumbed — scope for Phase 4 / later.
+
+### Verification
+
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 61/61 (58 + 3 new configurePaste cases).
+
+### Files modified
+
+- `frontend/src/editor/paste.ts` — `pasteNbspChar`,
+  `configurePaste`, `resetPasteConfigForTesting`; regex swapped to
+  ` `.
+- `frontend/src/editor/paste.test.ts` — `afterEach` reset hook, 3
+  new tests.
+- `frontend/src/editor/Editor.svelte` — `var()`-based font
+  declarations.
+- `frontend/src/App.svelte` — `applyEditorFont` helper, wired
+  into settings-load and `onSettingsApplied`; also calls
+  `configurePaste`.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.15 → 0.1.16
+- `frontend/package.json`       0.1.15 → 0.1.16
+- `frontend/package-lock.json`  0.1.15 → 0.1.16
+
+---
+
+## Rev 54 — 2026-04-22 — Settings dialog (Phase 2 A4) [dev]
+
+Version: **0.1.15**
+
+### What
+
+Toolbar gains a ⚙ button before Help. Clicking opens a modal
+editor for the subset of `settings.Settings` that has a real
+effect today:
+
+- **Appearance → Theme** — radio (System / Light / Dark), mirror of
+  the existing toolbar toggle. Toolbar toggle stays as the quick
+  shortcut; the dialog is for when the user wants to pin an
+  explicit choice.
+- **Editor → Font family** — text input, seeds `Font.Family`.
+- **Editor → Font size** — number (8–32), `Font.Size`.
+- **Editor → NBSP char** — single-character input for
+  `NBSPChar`. Used by paste cleanup for whitespace runs.
+- **Interface → Language** — read-only "English" dropdown, for
+  parity with FBE's settings layout. Live translations aren't in
+  yet; input is disabled with help text.
+- **Layout → Reset panes to defaults** — one-shot button. Clears
+  `settings.panes.{outlineWidth, validationWidth,
+  validationErrorsHeight}` so Rev 52/53's persisted sizes fall
+  back to CSS defaults on next launch.
+- **Privacy → Clear recent files** — one-shot button. Empties
+  `settings.RecentFiles`. Label shows the current count.
+
+### Edit model
+
+Fields use an Apply/Cancel draft pattern (matches original FBE):
+
+- Opening the dialog loads the current settings into a local
+  `draft` state.
+- Typing in fields mutates only the draft; disk isn't touched
+  yet.
+- Apply → `App.SaveSettings(draft)` + dispatches an `apply` event
+  with the new theme so the parent updates live runtime state.
+- Cancel / Escape / backdrop-click / × → discards the draft.
+
+The two "action" buttons (Reset panes, Clear recent) DON'T go
+through the draft — they execute immediately against disk,
+then reload the draft so the dialog stays in sync. Documented
+inline: if the user clicks Cancel after resetting, the reset
+still sticks. Matches their one-shot nature.
+
+### Not implemented here
+
+- **Font + NBSP plumbing** — the values are saved but the editor
+  doesn't yet react to them. Editor.svelte still uses
+  `font-family: "Trebuchet MS"` hard-coded and paste cleanup
+  doesn't consult `NBSPChar`. Wiring those is a separate follow-up
+  rev so this one stays self-contained.
+- **Hotkey editor** — deferred to Phase 4 B (needs key-capture
+  input + conflict detection + runtime rebinding).
+- **Interface language** — no i18n layer yet; input disabled.
+
+### Keyboard
+
+- `Escape` — cancel.
+- `Cmd/Ctrl + Enter` — apply without clicking.
+
+### Verification
+
+- `npm run check` 0/0.
+- `npm run check:theme` clean.
+- `npm run test` 58/58.
+- UI flow not clicked-through from dev env — Dmitry to open the
+  dialog, tweak each field, Apply, relaunch, confirm fields stuck.
+
+### Files added / modified
+
+- `frontend/src/settings/SettingsDialog.svelte` (new)
+- `frontend/src/App.svelte` — import + state + toolbar button +
+  `onSettingsApplied` handler.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.14 → 0.1.15
+- `frontend/package.json`       0.1.14 → 0.1.15
+- `frontend/package-lock.json`  0.1.14 → 0.1.15
+
+---
+
+## Rev 53 — 2026-04-22 — Draggable outline + validation-panel width resizers [dev]
+
+Version: **0.1.14**
+
+### What
+
+Two new vertical drag-handles:
+
+- Between the outline sidebar and the editor (clamped 150–500px).
+- Between the editor and the validation panel when the panel is
+  open (clamped 260px – 70% of available width).
+
+Persisted in `settings.panes.{outlineWidth, validationWidth}` so
+the layout survives restart (already wired via Rev 52's
+`patchSettings` helper). Also works in Description view — the
+validation-panel resizer spans both views via a shared
+`panelWidth` state.
+
+### Go side
+
+`settings.PaneSizes` grows two pixel-valued fields:
+
+```go
+OutlineWidth    int `json:"outlineWidth"`    // 0 = CSS default 260px
+ValidationWidth int `json:"validationWidth"` // 0 = CSS default minmax(320px,30%)
+```
+
+Zero means "use CSS default" — we don't assume stale settings
+from older versions of the app have these fields.
+
+### Frontend
+
+- `App.svelte`:
+  - `outlineWidth` + `panelWidth` state (both `number | null`).
+    Loaded from settings on mount.
+  - `--outline-w` and `--panel-w` CSS custom properties applied
+    inline on the `<main>` and `.description-wrap` elements.
+  - Grid track declarations now reference those properties,
+    falling back to the previous hard-coded defaults.
+  - Pointer-event drag handlers (start/move/end) with a
+    body-level `cursor: ew-resize` during drag so the cursor
+    stays consistent even if the pointer leaves the handle.
+  - Keyboard arrow-L/R support via a shared `onResizerKeyH`
+    helper, lifted to named `onOutlineResizerKey` /
+    `onPanelResizerKey` handlers because Svelte 4's parser
+    rejects `mainEl!` non-null assertions inside inline
+    `on:keydown={…}` expressions (see the
+    `feedback_ts_nonnull_with_reactive_guard` memory note).
+- `.v-resizer` CSS — vertical twin of the horizontal resizer
+  already in ValidationPanel: 6px track, center-dot indicator,
+  hover / focus states, uses palette variables.
+
+### Not done here (intentional)
+
+- Sidebar drag in Description view: DescriptionPanel uses
+  internal tabs, not a split, so there's nothing to resize.
+- No double-click-to-reset — handy but minor; add if beta users
+  ask.
+- Didn't extract a `VerticalResizer.svelte` component. Could
+  dedupe the handler boilerplate later, but with only two call
+  sites the abstraction would cost more reading than it saves.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `wails build -tags xsd` — regen picked up new PaneSizes fields
+  in TS models.
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 58/58.
+
+### Files modified
+
+- `internal/fb2/settings/settings.go` — new fields.
+- `frontend/src/App.svelte` — state, handlers, markup, CSS.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.13 → 0.1.14
+- `frontend/package.json`       0.1.13 → 0.1.14
+- `frontend/package-lock.json`  0.1.13 → 0.1.14
+
+---
+
+## Rev 52 — 2026-04-22 — Persistence: window geom + last-view + errors-pane height [dev]
+
+Version: **0.1.13**
+
+### What
+
+Phase 2 A3 — remembers UI state across launches:
+
+- **Window size + position.** Restored on launch, saved on clean
+  shutdown.
+- **Last-open view** (Body / Description). Restored so the user
+  doesn't have to click Description again after restart.
+- **Validation errors pane height** (the drag-resizer in
+  `ValidationPanel`). Persisted after any drag or keyboard adjust.
+
+### Go side
+
+`settings.Settings` grows three fields + two helper types:
+
+```go
+LastView string      `json:"lastView"`  // "body" | "description"
+Window   WindowGeom  `json:"window"`    // {X, Y, W, H}
+Panes    PaneSizes   `json:"panes"`     // {ValidationErrorsHeight}
+```
+
+`main.go`:
+- Reads `settings.Window.{W,H}` before `wails.Run`; falls back to
+  1280×800 when zero/unset. Wails v2's options.App accepts Width
+  and Height but not initial X/Y — position is restored in
+  OnStartup instead.
+
+`app.go`:
+- `OnStartup`: calls `runtime.WindowSetPosition(X, Y)` if settings
+  has a non-zero coord.
+- `OnShutdown` (new wire-up in main.go's options): reads current
+  `runtime.WindowGetPosition` + `WindowGetSize` and writes them to
+  settings. Errors swallowed — a settings-save hiccup shouldn't
+  delay shutdown.
+
+### Frontend
+
+- `App.svelte`:
+  - `patchSettings(mutate)` helper — load / mutate / save, used by
+    theme, view, panel-resize.
+  - `switchView(v)` replaces the raw toggle-button handlers; the
+    view change is saved alongside the UI update.
+  - `initialErrorsHeight` state populated from
+    `settings.panes.validationErrorsHeight` on mount; fed to
+    `ValidationPanel` as a one-way prop.
+  - `onPanelResize(e)` saves the new height when the panel emits a
+    `resize` event.
+- `ValidationPanel.svelte`:
+  - New `initialErrorsHeight` prop seeds the internal
+    `errorsHeight` state.
+  - `endDrag` and `onResizerKey` now dispatch a typed
+    `resize: { height }` event so persistence lives upstream; the
+    panel stays decoupled from settings.
+
+### Explicit non-goals for this rev
+
+- No persistence for outline-sidebar width or validation-panel
+  horizontal width — those aren't user-draggable yet. Their
+  resizers deserve their own rev if demand shows up.
+- No persistence of `recentFiles` sort order, opened-tab state
+  (we don't have tabs), or scroll positions inside the editor.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `wails build -tags xsd` — regen picked up the new settings
+  fields in TS models automatically.
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 58/58.
+- Dmitry to verify on NixOS: resize window + drag validation
+  resizer + toggle view → quit → relaunch → layout restored.
+
+### Files modified
+
+- `internal/fb2/settings/settings.go` — new fields + helper types.
+- `main.go` — read Window.{W,H} at startup, wire OnShutdown.
+- `app.go` — OnStartup position restore, new OnShutdown method.
+- `frontend/src/App.svelte` — load/save plumbing, switchView,
+  onPanelResize, initialErrorsHeight plumbing.
+- `frontend/src/validation/ValidationPanel.svelte` —
+  `initialErrorsHeight` prop, `resize` event dispatch.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.12 → 0.1.13
+- `frontend/package.json`       0.1.12 → 0.1.13
+- `frontend/package-lock.json`  0.1.12 → 0.1.13
+
+---
+
+## Rev 51 — 2026-04-22 — `check-theme-hygiene.sh` lint + `--backdrop` palette var [dev]
+
+Version: **0.1.12**
+
+### What
+
+New `scripts/check-theme-hygiene.sh`: fails if any file under
+`frontend/src/` contains a hardcoded color literal outside the
+palette block in `App.svelte`. Catches three things the ad-hoc sed
+passes of Rev 46/47/50 each missed:
+
+1. **Hex literals** `#RGB` / `#RRGGBB` / `#RRGGBBAA` — same pattern
+   Rev 47 used, but script-driven so regressions get caught fast.
+2. **Named CSS colors** (`white`, `black`, `red`, …) used as values
+   on color-carrying properties (`background`, `border`, `color`,
+   `outline`, `fill`, `shadow` …). Anchoring on a property name
+   avoids flagging the word "black" in prose.
+3. **`rgb()` / `rgba()` / `hsl()` / `hsla()` literals** — tolerated
+   only inside the palette (e.g. `--shadow: rgba(0,0,0,0.6)`).
+
+Allowed keywords everywhere: `transparent`, `inherit`,
+`currentColor`, `none`, `auto`, `initial`, `unset`, `revert`.
+
+`.test.ts` / `.test.js` files are excluded — they carry HTML/CSS
+fixtures fed to paste parsers, not app styles.
+
+### Output of the initial run
+
+Surfaced three true-positives and zero false-positives:
+
+- `editor/TableDialog.svelte` and `help/HelpDialog.svelte` modal
+  backdrops used `rgba(0, 0, 0, 0.35)` literally. Fixed by promoting
+  that value into the palette as `--backdrop` (with a slightly
+  darker `0.55` opacity in dark mode for stronger dim).
+- `paste.test.ts` had `color:red` inside a parser fixture — correctly
+  ignored after the `*.test.*` exclude pattern went in.
+
+After the two backdrop fixes, script exits 0.
+
+### Wiring
+
+- `scripts/check-theme-hygiene.sh` — executable bash, uses
+  `git rev-parse --show-toplevel` so it works from anywhere.
+- `frontend/package.json` gains a `check:theme` script calling
+  `../scripts/check-theme-hygiene.sh`.
+- `CLAUDE.md` Commands section lists it alongside the existing
+  `check` / `test` scripts.
+
+Not wired into `npm run check` automatically — kept separate so the
+typecheck path stays fast and the theme check remains an explicit
+pre-commit step for anyone touching styles. Ready to be added to CI
+when the github-actions pipeline lands (Rev 48-range of the
+roadmap).
+
+### Verification
+
+- `scripts/check-theme-hygiene.sh` exits 0 with
+  "clean — all colors reference palette variables."
+- `npm run check`, `npm run test`, `npm run check:theme` — all green.
+
+### Files added / modified
+
+- `scripts/check-theme-hygiene.sh` (new, executable)
+- `frontend/package.json` — `check:theme` npm script.
+- `frontend/src/App.svelte` — `--backdrop` var in both light and
+  dark palette blocks.
+- `frontend/src/editor/TableDialog.svelte`,
+  `frontend/src/help/HelpDialog.svelte` — backdrop rgba() →
+  `var(--backdrop)`.
+- `CLAUDE.md` — commands list.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.11 → 0.1.12
+- `frontend/package.json`       0.1.11 → 0.1.12
+- `frontend/package-lock.json`  0.1.11 → 0.1.12
+
+---
+
+## Rev 50 — 2026-04-22 — Dark mode: `background: white` named-color sweep [dev]
+
+Version: **0.1.11**
+
+### Symptom (beta feedback, Dmitry screenshot)
+
+Annotation textarea inside the Description form stayed white in dark
+mode, and several small `.aux` "×" delete buttons next to
+author/genre/sequence/custom rows rendered as white squares.
+
+### Root cause
+
+Rev 47's sweep used a sed pattern matching `#[0-9a-fA-F]{3,8}` — it
+caught 56 hex-color literals but silently skipped **named colors**.
+Seven files had `background: white;` as a literal keyword:
+
+- `AnnotationEditor.svelte` — the nested-ProseMirror container.
+- `AuthorField.svelte`, `CoverpageField.svelte`, `CustomInfoForm.svelte`,
+  `DocumentInfoForm.svelte`, `SequenceField.svelte`,
+  `GenreField.svelte` — all on `.aux` (the per-row × remove button).
+
+None of those were flagged because my regex only looked for hex.
+
+### Fix
+
+One sed pass in `frontend/src/description/`:
+
+```
+sed -i '' 's/background: white;/background: var(--bg-surface);/g' *.svelte
+```
+
+Grep after: `background: white` (and `background: #fff(?!\w)`) empty
+across `frontend/src/`.
+
+Not caught by this pass but worth noting — `background: transparent`,
+`background: none`, and explicit rgba() literals all remain. Those
+are intentionally neutral and should still look right in both modes.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 58/58.
+- Dmitry to re-check dark-mode rendering after pull: annotation
+  editor should be dark-card; ✕ buttons should read as dark chips
+  with the ✕ glyph visible.
+
+### Files modified
+
+- `frontend/src/description/AnnotationEditor.svelte`
+- `frontend/src/description/AuthorField.svelte`
+- `frontend/src/description/CoverpageField.svelte`
+- `frontend/src/description/CustomInfoForm.svelte`
+- `frontend/src/description/DocumentInfoForm.svelte`
+- `frontend/src/description/GenreField.svelte`
+- `frontend/src/description/SequenceField.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.10 → 0.1.11
+- `frontend/package.json`       0.1.10 → 0.1.11
+- `frontend/package-lock.json`  0.1.10 → 0.1.11
+
+---
+
+## Rev 49 — 2026-04-22 — External `<a href>` clicks route through BrowserOpenURL [dev]
+
+Version: **0.1.10**
+
+### Symptom (long-standing)
+
+Clicking a link in the editor (an FB2 `<a l:href="https://…">`)
+navigated the webview away from the editor. No back button on
+desktop — the app was essentially dead until restart. The Help
+dialog was handled with per-link `on:click={openExternal}`
+wrappers (Rev 40), but editor content didn't have that.
+
+### Fix
+
+New `frontend/src/runtime/externalLink.ts`:
+
+- `isExternalUrl(href)` — true for `http(s)`, `ftp`, `mailto`,
+  `file:`, and protocol-relative `//…`. Fragment-only (`#note`),
+  relative (`../foo`), and `javascript:` hrefs pass through to
+  default behavior — we don't want to hijack internal navigation
+  (future citation scroll, etc.) or execute JS URLs externally.
+- `openExternalUrl(url)` — routes via Wails
+  `runtime.BrowserOpenURL`; falls back to `window.open` outside
+  Wails (plain vite dev / dev-server tab).
+- `installExternalLinkHandler()` — document-level capture-phase
+  click listener. One install at app bootstrap catches every
+  external `<a>` click anywhere: editor content, Help modal,
+  future UI. Returns a disposer.
+
+`App.svelte::onMount` installs the handler; cleanup in the
+returned destructor. HelpDialog's local `openExternal` + per-link
+`on:click` wrappers removed — global handler covers them.
+
+Capture phase chosen so we run before component-level handlers;
+only `preventDefault()` (not `stopPropagation()`) so ProseMirror
+can still do its cursor-placement thing when the click lands
+inside an editor link.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 58/58.
+- UI not clicked-through from dev env; Dmitry to verify:
+  (a) editor link → opens in system browser, editor stays put.
+  (b) Help dialog links still open.
+  (c) Hypothetical `href="#foo"` still behaves as fragment nav
+  (no interception).
+
+### Files added / modified
+
+- `frontend/src/runtime/externalLink.ts` (new)
+- `frontend/src/App.svelte` — import + onMount install + cleanup.
+- `frontend/src/help/HelpDialog.svelte` — removed local
+  `openExternal` + per-link wrappers.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.9 → 0.1.10
+- `frontend/package.json`       0.1.9 → 0.1.10
+- `frontend/package-lock.json`  0.1.9 → 0.1.10
+
+---
+
+## Rev 48 — 2026-04-22 — Dark mode: final hex sweep (outline items) [dev]
+
+Version: **0.1.9**
+
+### What
+
+After Rev 46 + 47, only 4 hardcoded hex colors remained outside
+the palette: all in `tree/OutlineItem.svelte`. Converted:
+
+- `#333`    → `var(--fg)`
+- `#e5e5da` → `var(--bg-hover)`
+- `#1a5490` → `var(--fg-link)`
+- `#444`    → `var(--fg-secondary)`
+
+After this rev: every hex in the frontend lives inside the
+palette block in `App.svelte`. Components reference only
+`var(--xxx)`. Adding / tuning a color now means editing one place.
+
+### Verification
+
+- `grep -rE '#[0-9a-fA-F]{3,8}' src/ | grep -v App.svelte | grep -v '{#each…'` → empty.
+- `npm run check` 0/0, `npm run test` 58/58.
+
+### Files modified
+
+- `frontend/src/tree/OutlineItem.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.8 → 0.1.9
+- `frontend/package.json`       0.1.8 → 0.1.9
+- `frontend/package-lock.json`  0.1.8 → 0.1.9
+
+---
+
+## Rev 47 — 2026-04-22 — Dark mode sweep: description-form sub-components [dev]
+
+Version: **0.1.8**
+
+### What
+
+Rev 46 left 10 description-form sub-components (AuthorField,
+CoverpageField, CustomInfoForm, DateField, DocumentInfoForm,
+GenreField, PublishInfoForm, SequenceField, TitleInfoForm,
+AnnotationEditor) still hard-coded with hex colors. On dark
+theme they'd show as light islands inside an otherwise-dark
+DescriptionPanel.
+
+Batch-replaced 11 unique hex colors with var(--xxx) across all
+10 files via a single sed pass. Mappings:
+
+  #ccc     → --border-input
+  #bbb     → --border-button
+  #666     → --fg-secondary
+  #888     → --fg-muted
+  #aaa     → --fg-muted-soft
+  #1a5490  → --fg-link
+  #fff8e5  → --bg-hover
+  #e5e5da  → --border
+  #dcdcd0  → --border
+  #d5d5cb  → --border
+  #fcfbf6  → --bg-card
+
+Grep after: zero hex colors in description/ directory.
+
+### Verification
+
+- `npm run check` 0/0.
+- `npm run test` 58/58.
+- Visually not tested; Dmitry to check all 10 description tabs in
+  both light and dark.
+
+### Files modified
+
+- `frontend/src/description/*.svelte` (10 files)
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.7 → 0.1.8
+- `frontend/package.json`       0.1.7 → 0.1.8
+- `frontend/package-lock.json`  0.1.7 → 0.1.8
+
+---
+
+## Rev 46 — 2026-04-22 — Dark mode (Phase 2 A2) [dev]
+
+Version: **0.1.7**
+
+### What
+
+Toolbar gains a theme cycle button (◐/☀/☾) right after Help.
+Clicking cycles system → light → dark → system. Choice persists in
+`settings.Theme` on the Go side.
+
+When theme is `"system"`, the app live-follows the OS
+`prefers-color-scheme` media query — flipping the OS from light to
+dark re-themes the editor immediately without restart.
+
+### CSS architecture
+
+Added ~30 semantic CSS custom properties at `:root` (light defaults)
+and `[data-theme="dark"]` (dark overrides). Set on
+`document.documentElement` via a reactive `$:` block in `App.svelte`
+that listens to the computed `effectiveTheme`.
+
+Palette covers: surface/chrome/sidebar/card backgrounds, hover and
+active button states, errors pane + errors-title, validation OK
+banner, text colors (strong/default/secondary/muted/link), borders
+(default/strong/input/button), warn family (raw-block dashed yellow),
+highlight (flash-on-jump), drop shadow opacity.
+
+`color-scheme: light | dark` is also declared so native widgets
+(scrollbars, form controls, focus rings in WebKitGTK) adapt.
+
+### Refactor sweep
+
+Replaced 56 unique hex colors across 7 Svelte files with the new
+var(--xxx) references — each hex mapped to the semantically nearest
+variable:
+
+- `App.svelte` — layout chrome, recent-files menu, view-toggle,
+  status/err spans.
+- `editor/Editor.svelte` — ProseMirror chrome, epigraph/cite/
+  annotation colors, table borders, code inline, raw-block hatched
+  placeholders.
+- `editor/Toolbar.svelte` — the inline-mark toolbar chrome.
+- `editor/TableDialog.svelte` — modal.
+- `validation/ValidationPanel.svelte` — panel, resizer, errors list,
+  XML source line gutter + highlight.
+- `help/HelpDialog.svelte` — modal, kbd chips, copy-url buttons,
+  links.
+- `description/DescriptionPanel.svelte` — tabs, prompt button.
+- `tree/DocumentTree.svelte` — empty-state text.
+
+### Settings wiring
+
+- `settings.Settings` gains `Theme string json:"theme"`; `Default()`
+  sets `"system"`.
+- `App.LoadSettings()` / `App.SaveSettings()` are already exposed —
+  no new Go bindings needed.
+- `App.svelte::cycleTheme()` writes the new theme into settings
+  immediately (no explicit Save step on the user side).
+- Wails regen: TS `Settings` type now has `theme: string`.
+
+### Known rough edges
+
+- Dark palette is a first pass; some saturations might feel off on
+  OLED. Real-world beta feedback welcome.
+- Didn't adjust Description-form sub-components (TitleInfoForm,
+  DocumentInfoForm, AnnotationEditor) — they're read-heavy on
+  native inputs which inherit `color-scheme: dark` automatically,
+  but custom wrappers may need follow-up.
+- `color-scheme` media query detection is build-time; no dedicated
+  "auto-switch at time of day" — follows OS as-is.
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- `wails build -tags xsd` — regen picked up `theme: string` on
+  `Settings` (used in `LoadSettings()` / `SaveSettings()`).
+- `npm run check` 0/0.
+- `npm run test` 58/58.
+- UI flow not clicked-through — Dmitry to verify theme cycle +
+  persistence + OS live-follow on NixOS.
+
+### Files modified
+
+- `internal/fb2/settings/settings.go` — Theme field + Default().
+- `frontend/src/App.svelte` — palette, state, toggle button, refactor.
+- `frontend/src/editor/Editor.svelte`
+- `frontend/src/editor/Toolbar.svelte`
+- `frontend/src/editor/TableDialog.svelte`
+- `frontend/src/validation/ValidationPanel.svelte`
+- `frontend/src/help/HelpDialog.svelte`
+- `frontend/src/description/DescriptionPanel.svelte`
+- `frontend/src/tree/DocumentTree.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.6 → 0.1.7
+- `frontend/package.json`       0.1.6 → 0.1.7
+- `frontend/package-lock.json`  0.1.6 → 0.1.7
+
+---
+
+## Rev 45 — 2026-04-22 — Validation errors pane: larger default [dev]
+
+Version: **0.1.6**
+
+### Symptom (beta feedback, Dmitry)
+
+With two XSD errors, only the first was visible in the validation
+panel at default layout — the second hid behind a scrollbar and
+users had to drag the resizer up to see it. Screenshot confirmed
+the errors pane at 35% of panel was ~180px, and two multi-line
+libxml2 messages (each wraps to 3+ lines once the namespace URI
+is inlined in the string) exceed that.
+
+### Fix
+
+Bumped `.errors` default height in `ValidationPanel.svelte` from
+35% to 45% of panel height. Leaves `min-height: 60px` unchanged so
+the drag resizer's `panelBounds.min` (60) isn't fought by the CSS
+clamp when the user wants to shrink the pane manually.
+
+### Not done here
+
+- Didn't switch to `height: auto; max-height: 45%;` even though it
+  would give better UX for single-error cases (pane hugs content,
+  no wasted space). Problem: grid-template-rows `auto` + content
+  max-height doesn't cap the grid track itself — the row is sized
+  by the content's max-content, and max-height only clips the
+  element's visible box inside. Plus the drag path sets inline
+  `height: Npx` which would have to also disable `max-height` via
+  JS. Not worth the complexity for the marginal gain.
+
+### Verification
+
+- `npm run check` 0/0, `npm run test` 58/58.
+- Manual eyeball: two-error case now shows both rows without
+  scrolling on a typical 1080p window; third error would still
+  scroll.
+
+### Files modified
+
+- `frontend/src/validation/ValidationPanel.svelte`
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.5 → 0.1.6
+- `frontend/package.json`       0.1.5 → 0.1.6
+- `frontend/package-lock.json`  0.1.5 → 0.1.6
+
+---
+
+## Rev 44 — 2026-04-22 — Recent files (Phase 2 gap) [dev]
+
+Version: **0.1.5**
+
+### What
+
+Toolbar's "Open…" button grows a split-button dropdown: click the main
+button for the native file picker, click the `▾` caret for the last 10
+opened/saved files. Click an item → opens directly, no picker round-trip.
+
+### Go side
+
+`app.go` gains three things:
+
+- `recordRecentFile(path)` — prepends `path` to `settings.RecentFiles`,
+  dedupes earlier occurrences, caps at 10 (const `recentFilesCap`,
+  matches FBE's `Settings.h`). Silent on error — recent-list is a
+  convenience, not a correctness path, so a settings-write failure
+  doesn't block `OpenFile` / `SaveFile`.
+- `App.RecentFiles()` — Wails binding returning the MRU list for the
+  frontend.
+- `App.RemoveFromRecent(path)` — frontend calls this when a recent-menu
+  click fails (file moved or deleted) so the menu doesn't keep
+  offering a dead entry.
+
+Both `App.OpenFile` and `App.SaveFile` call `recordRecentFile` after
+their primary success path.
+
+### Frontend
+
+- `App.svelte`: `recentFiles: string[]` + `recentMenuOpen: boolean`.
+  `refreshRecent()` fetches the list; called on mount and after every
+  successful Open/Save.
+- `openFile()` now accepts an optional `preset?: string` — when set,
+  skips `PickFB2ToOpen()` and opens that path directly. On failure
+  with a preset, purges the dead entry via `RemoveFromRecent`.
+- Split-button UI: main "Open…" + `▾` caret sharing a border. Caret
+  is disabled when the list is empty. Clicking the caret toggles a
+  positioned dropdown; a transparent full-viewport backdrop closes
+  it on outside-click.
+- Menu items show basename (bold) + directory (dim, small) so the
+  user sees both without hovering for the tooltip.
+
+### What's deferred
+
+- **Thumbnails** next to each item — needs `GetBinaryDataURL` per file
+  (a re-parse of every recent .fb2 on menu open). Worth doing but
+  wants caching first; out of scope for this rev.
+- **"Clear recent" menu item** — simple, skipped for now. Add if beta
+  users ask.
+- **Keyboard navigation of the dropdown** (arrow keys, Enter) — nice
+  a11y polish, deferred.
+
+### Verification
+
+- `go build -tags xsd ./...` — clean.
+- `wails build -tags xsd` — regen pulled `RecentFiles` and
+  `RemoveFromRecent` into `frontend/wailsjs/go/main/App.d.ts`
+  automatically.
+- `npm run check` 0/0, `npm run test` 58/58.
+
+### Files added / modified
+
+- `app.go` — three new methods + `recordRecentFile` helper + integrate
+  into OpenFile/SaveFile success paths.
+- `frontend/src/App.svelte` — state, refresh wiring, split-button UI,
+  dropdown menu, styles.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.4 → 0.1.5
+- `frontend/package.json`       0.1.4 → 0.1.5
+- `frontend/package-lock.json`  0.1.4 → 0.1.5
+
+---
+
 ## Rev 43 — 2026-04-22 — New app icon (blue squircle + book + code brackets) [dev]
 
 Version: **0.1.4**

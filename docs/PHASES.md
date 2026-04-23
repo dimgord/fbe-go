@@ -82,9 +82,15 @@ Order of implementation (lowest → highest risk):
 C++ FBE remains the Windows story. Platform-native bits (thumbnailers, QuickLook)
 may be written in Rust or C where Go is awkward.
 
-- [ ] macOS DMG + UTI + QuickLook generator (Swift or Rust)
-- [ ] Linux AppImage + .desktop + GNOME thumbnailer shim (calls `fbe thumb`)
-- [ ] CI builds for macOS (arm64 + x86_64) and Linux (x86_64 + arm64)
+- [x] macOS DMG (Rev 65) + UTI / file associations (Rev 66). QuickLook
+      `.appex` preview extension deferred — needs a separate Xcode project
+      with code-signing; parked until hardware refresh.
+- [x] Linux AppImage (Rev 65) + `.desktop` (Rev 65) + GNOME thumbnailer
+      shim calling `fbe thumb` + shared-MIME registration (Rev 66).
+- [x] CI builds for macOS (universal .app: arm64 + x86_64) and Linux
+      (x86_64) (Revs 63–65). Linux arm64 deferred — GitHub's hosted
+      runners are x86_64-only; would need self-hosted or
+      `docker/setup-qemu-action` cross-build.
 - [ ] Auto-update (optional — Wails has no built-in; consider Sparkle for macOS)
 
 **Exit criterion:** downloadable `.dmg` / `.AppImage`, drag-and-drop in Finder
