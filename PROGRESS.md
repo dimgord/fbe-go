@@ -6,6 +6,150 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 76 — 2026-04-23 — Configurable hotkeys + scripts deferred — Phase 4 close [dev]
+
+Wraps the Phase 4 tail. Scripts compatibility is formally deferred
+post-1.0 in `docs/PHASES.md` and `docs/OPERATIONS.md` (was "optional —
+decide per user demand"; now "DEFERRED post-1.0" with rationale —
+hundreds of FBE macros = separate-project scale, not parity table
+fodder). The remaining open checkbox, **configurable hotkeys**, is
+now fully wired end-to-end.
+
+### Problem
+
+`internal/fb2/settings/settings.Hotkeys` had been a `map[string]string`
+since day one with a hand-picked default map, but nothing read it.
+Every shortcut was hardcoded — in `Editor.svelte`'s PM keymap, in
+`App.svelte`'s window-level `onKeyDown` (Cmd-S / Cmd-F / Cmd-H),
+and in the Toolbar tooltips. A returning FBE user had no way to
+rebind Insert Poem from `Ctrl+Shift+P` (or notice that
+`InsertTable = Ctrl+Shift+T` was stored but inert).
+
+### Catalog
+
+New `frontend/src/settings/hotkeys.ts` owns the canonical catalog:
+
+- `HOTKEY_ACTIONS[]` — 31 actions across 6 categories
+  (File / Edit / Format / Paragraph / Blocks / Dialogs).
+  `editor: true` actions are dispatched by ProseMirror, `editor: false`
+  by the window-level handler in `App.svelte`.
+- `parseAccel` / `formatAccel` — canonicalize to the on-disk form
+  `Ctrl+Shift+P`. Treats `Ctrl` / `Cmd` / `Mod` as synonyms so one
+  binding carries across macOS and Linux.
+- `toPMKey` — translate to `Mod-Shift-p` for `prosemirror-keymap`
+  (PM resolves `Mod` → ⌘ on mac, Ctrl elsewhere at runtime).
+- `matchesEvent` — test a `KeyboardEvent` against a canonical accel
+  (same Mod unification).
+- `accelFromEvent` — used by the UI to record the user's keystroke.
+- `findConflicts` — returns duplicate-binding groups for the UI
+  warning layer.
+- `displayAccel` — renders `⌘⇧P` on mac, `Ctrl+Shift+P` on Linux.
+
+Paired Go update: `DefaultHotkeys()` in `internal/fb2/settings/` is
+now the full canonical list (31 entries), and `settings.Load` calls
+`MergeDefaultHotkeys` to backfill any action id missing from the
+user's `config.json` — upgrades don't drop the user into a broken
+state when we add new actions. Empty-string entries are preserved
+(user explicitly unbound); unknown entries from future versions are
+preserved too.
+
+### Editor.svelte
+
+Replaced the hardcoded keymap with `buildKeymap(hotkeys)` driven
+from the catalog. `EDITOR_COMMANDS` maps action id → PM Command.
+Non-configurable stays hardcoded:
+
+- `Mod-z` / `Mod-y` / `Mod-Shift-z` (undo/redo) — rebinding these
+  invariably breaks in ways users don't expect.
+- `F3` / `Shift-F3` as FindNext/FindPrev aliases — legacy Windows
+  affordance, independent of the user's `Ctrl+G` remap.
+
+Prop `hotkeys: Record<string, string>`. On change (fresh object
+identity from App after Settings → Apply), runs
+`view.updateState(state.reconfigure({...}))` instead of
+re-mounting. Document state, selection, undo history, and active
+search all survive — `prosemirror-history` uses a stable
+`historyKey: PluginKey`, and our `searchPlugin` exports
+`searchPluginKey`; PM matches plugins by key across reconfigures.
+
+### App.svelte
+
+Rewrote the window-level `onKeyDown` to walk `HOTKEY_ACTIONS` and
+dispatch through `APP_ACTIONS` (Save, SaveAs, Find, Replace,
+InsertTable, OpenBinaries, OpenSettings, OpenHelp). First match
+wins — `preventDefault` stops the event reaching the editor's PM
+keymap and double-firing.
+
+On mount, loads `settings.hotkeys` into `hotkeys = {...s.hotkeys}`
+(fresh-identity spread so the reactive reconfigure in Editor runs).
+`onSettingsApplied` mirrors that for Settings → Apply.
+
+### Settings dialog
+
+New "Keyboard shortcuts" section. Per-category tables render
+action label + clickable accel button:
+
+- Click a cell → `capturingId` flips; next real keydown (via the
+  same `onKey` listener that handles Escape/Enter) calls
+  `accelFromEvent`, canonicalizes, writes into `draft.hotkeys`.
+- `Esc` during capture cancels, `Backspace` / `Delete` clear the
+  binding.
+- Conflicts highlighted with the `--warn` palette; `title` attr
+  names the other action(s) sharing the accel — user-visible but
+  not blocking, since the first-match-wins dispatch order is
+  deterministic.
+- "Reset to defaults" writes an empty `hotkeys: {}` then reloads,
+  tripping `MergeDefaultHotkeys` on the Go side to rehydrate the
+  canonical map.
+
+### Strikethrough conflict
+
+Old `Ctrl+Shift+S` binding was shadowed in practice because
+`App.svelte::onKeyDown` intercepts `Ctrl+Shift+S` for SaveAs.
+Moved default to `Ctrl+Shift+D` so the out-of-box experience
+works; users who prefer the original can rebind and drop SaveAs.
+
+### Modified
+
+- `internal/fb2/settings/settings.go` — full canonical
+  `DefaultHotkeys()`, `MergeDefaultHotkeys`, `Load` backfills.
+- `internal/fb2/settings/settings_test.go` — new; covers merge
+  semantics (user overrides preserved, empty-string preserved,
+  unknown actions preserved, missing backfilled, nil-map init)
+  plus JSON round-trip.
+- `frontend/src/settings/hotkeys.ts` — new catalog + parser +
+  matcher + conflict finder + display helpers.
+- `frontend/src/settings/hotkeys.test.ts` — new; 19 tests covering
+  parse/format/toPMKey/matchesEvent/findConflicts/displayAccel.
+- `frontend/src/editor/Editor.svelte` — data-driven keymap;
+  reconfigure on hotkeys change.
+- `frontend/src/App.svelte` — catalog-driven `onKeyDown`; load and
+  re-seed `hotkeys` on mount + Apply.
+- `frontend/src/settings/SettingsDialog.svelte` — new Shortcuts
+  section (table UI, capture, conflict highlight, reset).
+- `docs/PHASES.md` — scripts row flipped from `[ ]` (optional) to
+  `[~]` (deferred post-1.0) with rationale.
+- `docs/OPERATIONS.md` — §10 Scripts retitled "DEFERRED post-1.0";
+  design sketch preserved.
+
+### Tests
+
+`go test ./internal/fb2/settings/` — 2/2 pass.
+`npm run check` — 0 errors.
+`npm run check:theme` — clean.
+`npm run test` — 80/80 pass (19 new).
+
+### Not doing
+
+- Not exposing `Mod-z` / `Mod-y` / `F3` / `Shift-F3` as user-bindable.
+- No "import/export hotkey preset" — YAGNI, users can copy
+  `config.json` by hand.
+- No per-context bindings (body vs description view) — actions
+  that don't apply in a view are no-ops, which is the simplest
+  correct behavior.
+
+---
+
 ## Rev 75 — 2026-04-23 — Binary Manager UI + inline image rendering — Phase 4 [dev]
 
 Second half of the Phase 4 "Binary manager" pickup. Ships the

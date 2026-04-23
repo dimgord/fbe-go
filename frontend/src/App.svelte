@@ -13,6 +13,7 @@
   import { configurePaste } from "./editor/paste";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
+  import { HOTKEY_ACTIONS, matchesEvent } from "./settings/hotkeys";
 
   type View = "body" | "description";
   let view: View = "body";
@@ -53,6 +54,12 @@
   let showSettings = false;
   let showBinaries = false;
 
+  /** User-configurable keyboard shortcuts, loaded from settings.Hotkeys on
+      mount and refreshed after Settings → Apply. Passed into Editor as a
+      prop so its PM keymap rebuilds on change, and consulted here for the
+      window-level actions (Save, Find, dialogs). */
+  let hotkeys: Record<string, string> = {};
+
   // Search/Replace inline bar state. Bar is non-modal and only shown in the
   // body view because description is edited in a separate PM instance.
   let searchOpen = false;
@@ -63,12 +70,23 @@
   }
 
   function onSettingsApplied(
-    e: CustomEvent<{ theme: Theme; settings: { font: { family: string; size: number }; nbspChar: string } }>
+    e: CustomEvent<{
+      theme: Theme;
+      settings: {
+        font: { family: string; size: number };
+        nbspChar: string;
+        hotkeys?: Record<string, string>;
+      };
+    }>
   ) {
     // Sync live runtime state with what the dialog just wrote to disk.
     theme = e.detail.theme;
     applyEditorFont(e.detail.settings.font);
     configurePaste({ nbspChar: e.detail.settings.nbspChar });
+    // Fresh object identity so Editor's reactive reconfigure fires.
+    if (e.detail.settings.hotkeys) {
+      hotkeys = { ...e.detail.settings.hotkeys };
+    }
     // Refresh recent-files list in case the dialog cleared it.
     void refreshRecent();
   }
@@ -412,28 +430,39 @@
     }
   }
 
-  // Keyboard shortcut: Cmd-S / Ctrl-S saves.
-  // Cmd-F / Cmd-H open the Search bar — handled here instead of in the PM
-  // keymap because the SearchBar lives outside the editor DOM.
+  // Table of app-level actions that need a window-level keyboard listener:
+  // either they sit outside the editor DOM (SearchBar, dialogs) or they
+  // must run in both views (Save). Editor-internal commands (Bold, etc.)
+  // are handled by ProseMirror's keymap inside Editor.svelte, built from
+  // the same hotkeys map — see Editor.svelte::buildKeymap.
+  const APP_ACTIONS: Record<string, () => void> = {
+    Save:         () => save(false),
+    SaveAs:       () => save(true),
+    Find:         () => { if (view === "body") openSearch("find"); },
+    Replace:      () => { if (view === "body") openSearch("replace"); },
+    InsertTable:  () => { if (view === "body") editor?.openTableDialog(); },
+    OpenBinaries: () => { if (view === "body") showBinaries = true; },
+    OpenSettings: () => { showSettings = true; },
+    OpenHelp:     () => { showHelp = true; },
+  };
+
   function onKeyDown(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-      e.preventDefault();
-      save(e.shiftKey); // Shift-Cmd-S → Save As
-      return;
-    }
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "f" || e.key === "F")) {
-      if (view === "body") {
-        e.preventDefault();
-        openSearch("find");
+    // Walk the catalog rather than the APP_ACTIONS keys so actions without
+    // a binding are cheap no-ops. Stop at the first match — once an action
+    // fires, we preventDefault and return so the event doesn't also reach
+    // the editor's PM keymap and double-dispatch.
+    for (const action of HOTKEY_ACTIONS) {
+      if (action.editor) continue; // PM handles editor-level bindings
+      const accel = hotkeys[action.id];
+      if (!accel) continue;
+      if (matchesEvent(e, accel)) {
+        const handler = APP_ACTIONS[action.id];
+        if (handler) {
+          e.preventDefault();
+          handler();
+        }
+        return;
       }
-      return;
-    }
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "h" || e.key === "H")) {
-      if (view === "body") {
-        e.preventDefault();
-        openSearch("replace");
-      }
-      return;
     }
   }
 
@@ -482,6 +511,11 @@
         }
         if (s?.nbspChar) {
           configurePaste({ nbspChar: s.nbspChar });
+        }
+        if (s?.hotkeys) {
+          // Fresh object so Editor's reactive reconfigure runs once on first
+          // load even if the Wails binding happens to return the same ref.
+          hotkeys = { ...s.hotkeys };
         }
       } catch { /* leave defaults */ }
     })();
@@ -605,7 +639,7 @@
         on:pointercancel={endDragOutline}
         on:keydown={onOutlineResizerKey}
       ></div>
-      <section><Editor bind:this={editor} bind:view={editorView} {fb} /></section>
+      <section><Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} /></section>
       {#if showPanel}
         <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->

@@ -72,9 +72,14 @@ Order of implementation (lowest → highest risk):
 - [ ] Description form (full metadata editor — 7 sections)
 - [ ] Binary manager (upload, rename, preview, delete)
 - [ ] HTML export (Go templates)
-- [ ] Scripts compatibility (optional — decide per user demand)
+- [~] Scripts compatibility — **deferred to post-1.0**. FBE ships hundreds
+      of `.js` macros, and reimplementing the `apiRunCmd` / `apiProcessCmd`
+      surface plus a migration path is a separate-project-scale effort
+      (est. 4–6 weeks of undefined scope). Revisit when there is concrete
+      user demand with named scripts to port. See OPERATIONS.md §10.
 
-**Exit criterion:** a returning FBE user finds everything they used.
+**Exit criterion:** a returning FBE user finds everything they used *except
+scripts* — that is explicitly punted.
 
 ## Phase 5 — Platform polish (1.5 weeks)
 

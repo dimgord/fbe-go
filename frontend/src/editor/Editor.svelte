@@ -21,11 +21,19 @@
     insertCite, insertPoem, insertTableCmd,
     mergeContainers,
   } from "./commands";
+  import { HOTKEY_ACTIONS, toPMKey } from "../settings/hotkeys";
+  import type { Command } from "prosemirror-state";
   import TableDialog from "./TableDialog.svelte";
   import type { FictionBook, Binary } from "../fb2/types";
   import type { NodeView } from "prosemirror-view";
 
   export let fb: FictionBook | null = null;
+
+  /** User-configurable hotkey map, loaded from settings.Hotkeys. Passing a
+      new object identity triggers a reconfigure — history / document survive,
+      but the keymap plugin is swapped. Empty / missing actions are simply
+      not bound. */
+  export let hotkeys: Record<string, string> = {};
 
   /** Export the EditorView so the toolbar in App.svelte can dispatch commands. */
   export let view: EditorView | undefined = undefined;
@@ -198,6 +206,60 @@
     return nv;
   }
 
+  /** Map of action id → PM Command. Non-PM actions (Save, Find, dialogs) are
+      handled at the App level and not listed here. Keep in sync with the
+      `editor: true` rows of HOTKEY_ACTIONS. */
+  const EDITOR_COMMANDS: Record<string, Command> = {
+    ToggleStrong: toggleStrong,
+    ToggleEmphasis: toggleEmphasis,
+    ToggleStrikethrough: toggleStrikethrough,
+    ToggleSub: toggleSub,
+    ToggleSup: toggleSup,
+    ToggleCode: toggleCode,
+    StyleNormal: styleNormal,
+    StyleSubtitle: styleSubtitle,
+    StyleTextAuthor: styleTextAuthor,
+    InsertEmptyLine: insertEmptyLine,
+    CloneContainer: cloneContainer,
+    RemoveOuterContainer: removeOuterContainer,
+    AddTitle: addTitle,
+    AddEpigraph: addEpigraph,
+    AddAnnotation: addAnnotation,
+    AddTextAuthor: addTextAuthor,
+    InsertCite: insertCite,
+    InsertPoem: insertPoem,
+    MergeContainers: mergeContainers,
+    FindNext: (_s, _d, v) => (v ? searchFindNext(v) : false),
+    FindPrev: (_s, _d, v) => (v ? searchFindPrev(v) : false),
+  };
+
+  /** Build a PM keymap record from the current hotkeys map. Always includes
+      the undo/redo stack — those are hardcoded because rebinding them
+      invariably breaks in ways users don't expect. Also keeps F3 / Shift-F3
+      aliases for FindNext / FindPrev (legacy Windows affordance; independent
+      of the user's Ctrl-G remap). */
+  function buildKeymap(hk: Record<string, string>): Record<string, Command> {
+    const bindings: Record<string, Command> = {
+      "Mod-z": undo,
+      "Mod-y": redo,
+      "Mod-Shift-z": redo,
+    };
+    for (const action of HOTKEY_ACTIONS) {
+      if (!action.editor) continue;
+      const raw = hk[action.id];
+      if (!raw) continue;
+      const pmKey = toPMKey(raw);
+      const cmd = EDITOR_COMMANDS[action.id];
+      if (!pmKey || !cmd) continue;
+      bindings[pmKey] = cmd;
+    }
+    // F3 / Shift-F3 stay hardcoded as Windows-convention aliases — users can
+    // still rebind FindNext to something else without losing these.
+    bindings["F3"] = (_s, _d, v) => (v ? searchFindNext(v) : false);
+    bindings["Shift-F3"] = (_s, _d, v) => (v ? searchFindPrev(v) : false);
+    return bindings;
+  }
+
   function mount(doc: PMNode) {
     view?.destroy();
     const state = EditorState.create({
@@ -205,25 +267,7 @@
       doc,
       plugins: [
         history(),
-        keymap({
-          "Mod-z": undo,
-          "Mod-y": redo,
-          "Mod-Shift-z": redo,
-          "Mod-b": toggleStrong,
-          "Mod-i": toggleEmphasis,
-          "Mod-Shift-s": toggleStrikethrough,
-          "Mod-,": toggleSub,
-          "Mod-.": toggleSup,
-          "Mod-Shift-c": toggleCode,
-          // Find-next / find-prev. `Mod-f` and `Mod-h` are handled at App
-          // level (they need to show the SearchBar, which lives outside the
-          // editor DOM); these two stay here because they only need the
-          // plugin state to advance, regardless of whether the bar is open.
-          "Mod-g": (_state, _dispatch, v) => (v ? searchFindNext(v) : false),
-          "Mod-Shift-g": (_state, _dispatch, v) => (v ? searchFindPrev(v) : false),
-          "F3": (_state, _dispatch, v) => (v ? searchFindNext(v) : false),
-          "Shift-F3": (_state, _dispatch, v) => (v ? searchFindPrev(v) : false),
-        }),
+        keymap(buildKeymap(hotkeys)),
         keymap(baseKeymap),
         searchPlugin(),
       ],
@@ -238,6 +282,24 @@
         image_inline: (node) => createImageView(node),
       },
     });
+    lastHotkeys = hotkeys;
+  }
+
+  /** Rebuild just the user-facing keymap without re-mounting — preserves
+      document state, selection, and undo history via PluginKey continuity
+      in prosemirror-history (historyKey) and our searchPlugin (searchPluginKey).
+      Called when the parent writes a new `hotkeys` object (Settings → Apply). */
+  let lastHotkeys: Record<string, string> | null = null;
+  $: if (view && hotkeys !== lastHotkeys) {
+    lastHotkeys = hotkeys;
+    view.updateState(view.state.reconfigure({
+      plugins: [
+        history(),
+        keymap(buildKeymap(hotkeys)),
+        keymap(baseKeymap),
+        searchPlugin(),
+      ],
+    }));
   }
 
   /**
