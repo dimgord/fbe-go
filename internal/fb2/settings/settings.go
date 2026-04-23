@@ -21,10 +21,39 @@ type Settings struct {
 	NBSPChar          string            `json:"nbspChar"`          // configured non-breaking space replacement
 	Font              FontSettings      `json:"font"`
 	Colors            ColorSettings     `json:"colors"`
+	Theme             string            `json:"theme"`    // "system" (default) | "light" | "dark"
+	LastView          string            `json:"lastView"` // "body" | "description"
+	Window            WindowGeom        `json:"window"`
+	Panes             PaneSizes         `json:"panes"`
 	Hotkeys           map[string]string `json:"hotkeys"` // action -> accelerator (e.g. "InsertPoem": "Ctrl+Shift+P")
 	RecentFiles       []string          `json:"recentFiles"`
 	WordsList         []WordsEntry      `json:"wordsList"`
 	FastMode          bool              `json:"fastMode"`
+}
+
+// WindowGeom captures the OS window's last-seen position and size so the
+// app can restore it on next launch. Zero values mean "never saved" and
+// the startup code should fall back to compiled-in defaults (1280x800
+// at the OS-default position).
+type WindowGeom struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+// PaneSizes holds user-adjusted sizes of splitter panes inside the editor.
+// Kept in a dedicated struct so we can grow it without further field sprawl
+// on Settings. All values are in CSS pixels; 0 means "use the CSS default".
+type PaneSizes struct {
+	// OutlineWidth — width of the left outline sidebar.
+	OutlineWidth int `json:"outlineWidth"`
+	// ValidationWidth — width of the right validation / XML-source panel
+	// when it's open.
+	ValidationWidth int `json:"validationWidth"`
+	// ValidationErrorsHeight — pixels from the bottom of the validation
+	// panel given to the errors list.
+	ValidationErrorsHeight int `json:"validationErrorsHeight"`
 }
 
 // FontSettings mirrors FBE's editor-view font config.
@@ -99,6 +128,7 @@ func Default() *Settings {
 		NBSPChar:          " ",
 		Font:              FontSettings{Family: "Trebuchet MS", Size: 12},
 		Colors:            ColorSettings{FG: "#000000", BG: "#FFFFFF"},
+		Theme:             "system",
 		Hotkeys:           defaultHotkeys(),
 	}
 }

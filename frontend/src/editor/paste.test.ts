@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { cleanPastedHTML, cleanPastedText } from "./paste";
+import { describe, it, expect, afterEach } from "vitest";
+import { cleanPastedHTML, cleanPastedText, configurePaste, resetPasteConfigForTesting } from "./paste";
+
+afterEach(() => resetPasteConfigForTesting());
 
 describe("cleanPastedHTML", () => {
   it("strips Word conditional comments", () => {
@@ -59,5 +61,23 @@ describe("cleanPastedText", () => {
   });
   it("normalizes nbsp to space", () => {
     expect(cleanPastedText("a b")).toBe("a b");
+  });
+});
+
+describe("configurePaste", () => {
+  it("lets user pick a different replacement for NBSP (HTML path)", () => {
+    configurePaste({ nbspChar: " " });
+    expect(cleanPastedHTML("<p>a&nbsp;b</p>")).toBe("<p>a b</p>");
+  });
+
+  it("lets user pick a different replacement for NBSP (text path)", () => {
+    configurePaste({ nbspChar: " " });
+    expect(cleanPastedText("a b")).toBe("a b");
+  });
+
+  it("ignores non-single-character input", () => {
+    configurePaste({ nbspChar: "  " });
+    // Still the default regular space from resetPasteConfigForTesting().
+    expect(cleanPastedHTML("<p>a&nbsp;b</p>")).toBe("<p>a b</p>");
   });
 });

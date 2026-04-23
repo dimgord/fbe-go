@@ -51,24 +51,24 @@
   .nested {
     margin-left: 1.5rem;
     margin-top: 0.3rem;
-    border-left: 2px solid #d5d5cb;
+    border-left: 2px solid var(--border);
     padding-left: 0.5rem;
   }
-  label { font-size: 0.8rem; color: #666; }
+  label { font-size: 0.8rem; color: var(--fg-secondary); }
   input {
     padding: 0.25rem 0.4rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-input);
     border-radius: 3px;
     font: inherit;
     flex: 1;
   }
   .num { flex: 0 0 4rem; text-align: center; }
   .aux {
-    background: white;
-    border: 1px solid #bbb;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-button);
     border-radius: 3px;
     padding: 0 0.4rem;
     cursor: pointer;
   }
-  .aux:hover { background: #fff8e5; }
+  .aux:hover { background: var(--bg-hover); }
 </style>

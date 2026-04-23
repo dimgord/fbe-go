@@ -1,7 +1,7 @@
 {
   "name": "fbe-go-frontend",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.2.0-beta",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check:theme": "../scripts/check-theme-hygiene.sh",
     "test": "vitest run",
     "test:watch": "vitest"
   },

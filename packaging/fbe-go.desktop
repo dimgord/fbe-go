@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=FictionBook Editor (Go)
+GenericName=FB2 Document Editor
+Comment=Edit and validate FictionBook 2.x e-books
+Exec=fbe-go %F
+Icon=fbe-go
+Terminal=false
+StartupNotify=true
+StartupWMClass=fbe-go
+Categories=Office;WordProcessor;Publishing;
+MimeType=application/x-fictionbook+xml;application/x-zip-compressed-fb2;
+Keywords=fb2;fictionbook;ebook;editor;

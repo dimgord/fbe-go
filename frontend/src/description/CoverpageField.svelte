@@ -42,7 +42,7 @@
   }
   .title {
     font-size: 0.8rem;
-    color: #666;
+    color: var(--fg-secondary);
   }
   .row {
     display: flex;
@@ -52,14 +52,14 @@
   select {
     flex: 0 0 14rem;
     padding: 0.25rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border-input);
     border-radius: 3px;
   }
-  .custom { flex: 1; padding: 0.25rem 0.4rem; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
-  .aux { background: white; border: 1px solid #bbb; border-radius: 3px; padding: 0 0.4rem; cursor: pointer; }
-  .aux:hover { background: #fff8e5; }
+  .custom { flex: 1; padding: 0.25rem 0.4rem; border: 1px solid var(--border-input); border-radius: 3px; font: inherit; }
+  .aux { background: var(--bg-surface); border: 1px solid var(--border-button); border-radius: 3px; padding: 0 0.4rem; cursor: pointer; }
+  .aux:hover { background: var(--bg-hover); }
   .link {
-    background: none; border: none; color: #1a5490;
+    background: none; border: none; color: var(--fg-link);
     cursor: pointer; padding: 0.15rem 0; font-size: 0.85rem; text-align: left;
     align-self: flex-start;
   }
