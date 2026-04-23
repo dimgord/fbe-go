@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import { EditorState, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
   import { history, redo, undo } from "prosemirror-history";
@@ -22,7 +22,8 @@
     mergeContainers,
   } from "./commands";
   import TableDialog from "./TableDialog.svelte";
-  import type { FictionBook } from "../fb2/types";
+  import type { FictionBook, Binary } from "../fb2/types";
+  import type { NodeView } from "prosemirror-view";
 
   export let fb: FictionBook | null = null;
 
@@ -117,6 +118,86 @@
 
   let container: HTMLDivElement;
 
+  // Image rendering: schema.ts' toDOM generates `fb2://binary${href}` which
+  // relies on a custom asset-server handler we never wired up — images would
+  // otherwise render as broken icons. We resolve href → `data:` URL on the
+  // fly via NodeViews, closed over a shared binariesRef that we refresh
+  // whenever fb.Binaries identity changes (file open, upload, rename,
+  // delete). `refreshImageViews()` iterates every active NodeView and
+  // re-resolves its src — cheap, since each view only reassigns img.src.
+  //
+  // Serialization is unaffected: pmDocToFB2 only reads node.attrs.href.
+  let binariesRef: { current: Binary[] } = { current: [] };
+  $: binariesRef.current = fb?.Binaries ?? [];
+  const imageViews = new Set<ImageNodeView>();
+
+  interface ImageNodeView extends NodeView {
+    refresh(): void;
+  }
+
+  function resolveBinary(href: string | undefined): string {
+    if (!href) return "";
+    const id = href.replace(/^#/, "");
+    const bin = binariesRef.current.find(b => b.ID === id);
+    return bin ? `data:${bin.ContentType};base64,${bin.Data}` : "";
+  }
+
+  function refreshImageViews(): void {
+    for (const v of imageViews) v.refresh();
+  }
+
+  // Re-resolve every image whenever the binaries array changes identity —
+  // new upload / delete / rename cascades here and images pick up fresh
+  // data: URLs without needing a PM remount (which would blow undo history).
+  $: void fb?.Binaries, refreshImageViews();
+
+  function createImageView(node: PMNode): ImageNodeView {
+    const blockLevel = node.type.name === "image_block";
+    const wrap = document.createElement(blockLevel ? "div" : "span");
+    wrap.className = "image";
+    if (node.attrs.href) wrap.setAttribute("data-href", node.attrs.href);
+    if (node.attrs.title) wrap.title = node.attrs.title;
+
+    const img = document.createElement("img");
+    img.alt = node.attrs.alt || "";
+    const resolved = resolveBinary(node.attrs.href);
+    if (resolved) {
+      img.src = resolved;
+    } else {
+      img.classList.add("missing");
+    }
+    wrap.appendChild(img);
+
+    // Keep a mutable reference to the current node so refresh() uses the
+    // latest href (after setNodeMarkup) without needing another update()
+    // round-trip.
+    let current = node;
+    const nv: ImageNodeView = {
+      dom: wrap,
+      update(next) {
+        if (next.type !== current.type) return false;
+        current = next;
+        wrap.setAttribute("data-href", next.attrs.href || "");
+        wrap.title = next.attrs.title || "";
+        img.alt = next.attrs.alt || "";
+        const src = resolveBinary(next.attrs.href);
+        img.src = src;
+        img.classList.toggle("missing", !src);
+        return true;
+      },
+      refresh() {
+        const src = resolveBinary(current.attrs.href);
+        img.src = src;
+        img.classList.toggle("missing", !src);
+      },
+      destroy() {
+        imageViews.delete(nv);
+      },
+    };
+    imageViews.add(nv);
+    return nv;
+  }
+
   function mount(doc: PMNode) {
     view?.destroy();
     const state = EditorState.create({
@@ -152,6 +233,10 @@
       attributes: { spellcheck: "true", lang },
       transformPastedHTML: cleanPastedHTML,
       transformPastedText: cleanPastedText,
+      nodeViews: {
+        image_block: (node) => createImageView(node),
+        image_inline: (node) => createImageView(node),
+      },
     });
   }
 
@@ -189,13 +274,27 @@
     });
   }
 
-  onMount(() => mount(toPMDoc(fb)));
+  // Dedupe mount on fb identity, not just "fb is truthy" — otherwise onMount
+  // + the reactive block both fire on initial load, creating two EditorView
+  // instances and leaking the first. The leaked view's docView stays linked
+  // to the DOM, and later Svelte scheduler flushes can call methods on it
+  // (e.g. via a sibling's dispatch through bind:view), triggering
+  // `TypeError: null is not an object (evaluating 'this.docView.matchesNode')`.
+  let lastMountedFB: FictionBook | null = null;
 
-  onDestroy(() => view?.destroy());
-
-  $: if (view && fb) {
+  $: if (container && fb && lastMountedFB !== fb) {
+    lastMountedFB = fb;
     mount(toPMDoc(fb));
   }
+
+  onDestroy(() => {
+    view?.destroy();
+    // Null out so `bind:view` propagates "no live view" to the parent and
+    // siblings (SearchBar, BinaryManagerDialog) don't dispatch against a
+    // destroyed EditorView after a view-switch.
+    view = undefined;
+    lastMountedFB = null;
+  });
 
   export function exec(cmd: (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean): void {
     if (!view) return;
@@ -338,6 +437,25 @@
   :global(.ProseMirror img) {
     max-width: 100%;
     height: auto;
+  }
+  /* Dangling image ref — binary id not found in current fb.Binaries.
+     Show a visible placeholder so users can spot broken references
+     instead of getting a blank gap. */
+  :global(.ProseMirror img.missing) {
+    display: inline-block;
+    min-width: 80px;
+    min-height: 40px;
+    background: var(--warn-bg-a);
+    border: 1px dashed var(--warn);
+    color: var(--warn-fg);
+  }
+  :global(.ProseMirror img.missing::after) {
+    content: attr(alt) " (missing)";
+    display: block;
+    padding: 0.5em;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.8em;
+    color: var(--warn-fg);
   }
   :global(.ProseMirror .outline-flash) {
     transition: background-color 0.3s ease;

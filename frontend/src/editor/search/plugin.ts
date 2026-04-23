@@ -224,15 +224,27 @@ export function searchPlugin(): Plugin<SearchState> {
 // ── Imperative commands. The SearchBar component calls these directly on the
 //    EditorView; it's cleaner than wrapping every dispatch in a PM command. ──
 
+/**
+ * `view.docView` is null on a destroyed EditorView — guard all entry points
+ * so stale refs propagated through `bind:view` during a view-switch don't
+ * trip PM's internal `docView.matchesNode` on a dead view.
+ */
+function isAlive(view: EditorView | undefined): view is EditorView {
+  return !!view && (view as unknown as { docView: unknown }).docView !== null;
+}
+
 export function setSearch(view: EditorView, pattern: string, flags: SearchFlags): void {
+  if (!isAlive(view)) return;
   view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "set-query", pattern, flags }));
 }
 
 export function clearSearch(view: EditorView): void {
+  if (!isAlive(view)) return;
   view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "clear" }));
 }
 
 export function findNext(view: EditorView): boolean {
+  if (!isAlive(view)) return false;
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return false;
   view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "next" }));
@@ -241,6 +253,7 @@ export function findNext(view: EditorView): boolean {
 }
 
 export function findPrev(view: EditorView): boolean {
+  if (!isAlive(view)) return false;
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return false;
   view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "prev" }));
@@ -286,6 +299,7 @@ function scrollActiveIntoView(view: EditorView): void {
  * happened.
  */
 export function replaceActive(view: EditorView, replacement: string): boolean {
+  if (!isAlive(view)) return false;
   const st = searchPluginKey.getState(view.state);
   if (!st || st.active < 0) return false;
   const m = st.matches[st.active];
@@ -307,6 +321,7 @@ export function replaceActive(view: EditorView, replacement: string): boolean {
  * so earlier positions stay valid as later ones shrink/grow.
  */
 export function replaceAll(view: EditorView, replacement: string): number {
+  if (!isAlive(view)) return 0;
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return 0;
   const tr = view.state.tr;

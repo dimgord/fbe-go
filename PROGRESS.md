@@ -6,6 +6,117 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 75 — 2026-04-23 — Binary Manager UI + inline image rendering — Phase 4 [dev]
+
+Second half of the Phase 4 "Binary manager" pickup. Ships the
+user-facing dialog plus a long-latent fix: embedded images were
+never actually rendering in the editor body (the schema's `toDOM`
+emitted a `fb2://binary${href}` URL but no asset handler was ever
+registered, so every `<img>` was a broken icon).
+
+### Binary Manager dialog
+
+`frontend/src/binary/BinaryManagerDialog.svelte` — modal with:
+
+- Thumbnail preview for each `<binary>` in the doc.
+- Inline id rename (click ✎ → input appears → Enter / Save).
+- Delete with dangling-ref warning.
+- Upload via system picker → preview → name-this-binary sub-overlay.
+- COVER badge on the binary currently referenced as
+  `Description.{Src,}TitleInfo.Coverpage.Images[0]`.
+
+**Not using `window.alert/confirm/prompt`.** Wails v2's WKWebView
+doesn't pipe those through, they just return without showing a
+dialog. Replaced with three in-component sub-overlays:
+`uploadStaged` (name new binary), `deleting` (delete confirm),
+`errorMessage` (validation errors). Stack Esc-dismisses inner
+overlay first, then the main dialog.
+
+`frontend/src/binary/refs.ts` — cross-reference walker:
+
+- `renameBinary(fb, view, oldId, newId)` — updates the binary's
+  `ID`, cascades to `Description.{Src,}TitleInfo.Coverpage.Images[].Href`,
+  dispatches a single PM transaction that rewrites every image
+  node's `href` attr whose stripped form matches `oldId`. One
+  transaction = one undo step for the whole rename.
+- `countBinaryRefs` — used by delete confirm to show "N dangling
+  refs".
+- `isCoverBinary` — drives the COVER badge.
+
+`Toolbar.svelte` gets a `📎 Binaries…` button at the end of the row
+that dispatches `openBinaries`; App.svelte listens and flips
+`showBinaries = true`.
+
+### Inline image rendering (pre-existing bug fix)
+
+The schema has `image_block` and `image_inline` nodes whose
+`toDOM` returned `["img", { src: \`fb2://binary${href}\`, ... }]`.
+No custom protocol handler was ever registered in `main.go`'s
+`assetserver.Options` — so those URLs loaded as
+`unsupported URL` and every embedded image rendered blank. Cover
+still worked on the description screen because CoverpageField
+uses its own <img> hookup.
+
+Fix: register PM `nodeViews` for both image types in Editor.svelte.
+The NodeView closes over a mutable `binariesRef.current` which is
+refreshed whenever `fb.Binaries` identity changes; a small
+`imageViews: Set<ImageNodeView>` lets us iterate and re-set every
+`img.src` on binary-array changes (upload / rename / delete via
+the dialog) without remounting the editor (which would nuke undo
+history).
+
+Missing references get `class="missing"` + a hatched-yellow CSS
+placeholder that shows the alt text — so dangling `<image
+l:href="#gone"/>` is visible instead of silently blank.
+
+### Collateral: Editor double-mount fix
+
+While wiring the above I traced a `TypeError: null is not an
+object (evaluating 'this.docView.matchesNode')` that surfaced on
+description ↔ body view-switch + HMR updates. Root cause:
+`onMount(() => mount(...))` + the reactive
+`$: if (view && fb) { mount(...) }` **both** fired on initial
+load, creating two `EditorView` instances. The first leaked — its
+destroyed-but-still-subscribed `docView` got touched by Svelte's
+flush later, erroring out.
+
+Fix: drop `onMount`, dedupe mount via `lastMountedFB` identity
+check so the reactive block runs exactly once per actual
+fb-identity change. On destroy we now null `view` so
+`bind:view={editorView}` propagates "no live view" to siblings
+(SearchBar, BinaryManagerDialog) — they in turn added an
+`isAlive(view)` guard (via `view.docView !== null`) on every
+dispatch so late Svelte flushes against stale views are no-ops
+instead of crashes.
+
+### Files
+
+- New: `frontend/src/binary/BinaryManagerDialog.svelte`.
+- New: `frontend/src/binary/refs.ts`.
+- Modified: `frontend/src/editor/Editor.svelte` — NodeView
+  factories for image_block/image_inline, `binariesRef` closure,
+  missing-ref CSS placeholder, mount dedup via `lastMountedFB`,
+  `view = undefined` in onDestroy.
+- Modified: `frontend/src/editor/search/plugin.ts` — `isAlive`
+  guard on all imperative entry points.
+- Modified: `frontend/src/editor/Toolbar.svelte` — new
+  `📎 Binaries…` button + `openBinaries` event dispatcher.
+- Modified: `frontend/src/App.svelte` — mount
+  `BinaryManagerDialog`, `showBinaries` state,
+  `editorView` bound from Editor.
+
+### Tests
+
+Frontend unit tests (61/61) still pass — no tests added for the
+new surfaces yet. Manual QA covered: open 9-binary fb2 → all body
+images render; rename cover in Binary Manager → body image + title
+panel cover preview both update via the NodeView cascade; delete
+inline-referenced binary → body image shows the "(missing)"
+placeholder, coverpage dropdown keeps the dangling href until
+user picks a replacement.
+
+---
+
 ## Rev 74 — 2026-04-23 — Binary Manager foundation — Go helpers [dev]
 
 First half of Phase 4 "Binary manager" pickup. This rev lands only
