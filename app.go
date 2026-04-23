@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/adrg/sysfont"
 	"github.com/adrg/xdg"
@@ -29,6 +30,7 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
+	"github.com/dimgord/fbe-go/internal/fb2/updates"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -696,4 +698,26 @@ func (a *App) LoadSettings() (*settings.Settings, error) {
 // SaveSettings writes settings to disk.
 func (a *App) SaveSettings(s *settings.Settings) error {
 	return settings.Save(s)
+}
+
+// --- Updates ---
+
+// AppVersion returns the compiled-in product version so the frontend can
+// display "fbe-go vX.Y.Z" without embedding duplicated version constants.
+func (a *App) AppVersion() string {
+	return Version
+}
+
+// CheckForUpdate polls GitHub's Releases API for a newer build. Returns an
+// `*updates.Info` describing the latest release + whether it's strictly
+// newer than the currently-running binary.
+//
+// Errors (rate-limit, offline, 5xx) propagate so the frontend can log them
+// to the console; the banner itself silently hides when the call fails —
+// an update banner that never disappears after a flaky check is worse than
+// no banner at all.
+func (a *App) CheckForUpdate() (*updates.Info, error) {
+	ctx, cancel := context.WithTimeout(a.ctx, 6*time.Second)
+	defer cancel()
+	return updates.Check(ctx, updates.DefaultRepo, Version, nil)
 }
