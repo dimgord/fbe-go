@@ -6,6 +6,108 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 78 — 2026-04-23 — macOS codesign + notarize in release.yml (1.0 blocker) [dev]
+
+First of three revs to clear the v1.0.0 runway. Wires Developer-ID
+codesigning + notarization into the release workflow so downloaded
+DMGs clear Gatekeeper without the "cannot verify developer" dialog.
+
+### Not yet active
+
+The workflow changes are conditional on five GitHub repository
+secrets. Until they're configured (see
+`packaging/macos/SIGNING.md`), the macOS job falls back to
+producing an unsigned DMG — older tag rebuilds continue to work
+without backporting the cert setup. Once Dmitry adds the secrets
+and pushes a `v0.2.0-signtest` throwaway tag to verify the
+pipeline, the next real tag (`v1.0.0-rc1`) ships signed.
+
+### Workflow changes (`.github/workflows/release.yml`)
+
+1. **Job-level `env:` block** surfaces the five secrets on every
+   step. Signing steps guard with `if: env.APPLE_TEAM_ID != ''`.
+2. **Import Developer ID cert** — creates an ephemeral keychain
+   in `$RUNNER_TEMP`, decodes the base64-encoded `.p12`,
+   `security import`s with `-T /usr/bin/codesign`, then calls
+   `security set-key-partition-list` so codesign can use the
+   private key without an interactive prompt. Prepends the new
+   keychain to the user keychain list so
+   `find-identity / codesign --sign "Developer ID Application: …"`
+   picks our identity before any runner-default. Extracts the
+   full CN from `security find-identity` and exports as
+   `$SIGN_IDENTITY` so downstream quoting is safe.
+3. **Codesign .app** — `--force --deep --timestamp --options
+   runtime --entitlements packaging/macos/entitlements.plist
+   --sign "$SIGN_IDENTITY"` on `build/bin/fbe-go.app`. Followed
+   by `codesign --verify --strict` and an informational
+   `spctl --assess`.
+4. **Notarize .app** — `ditto -c -k --keepParent` to zip the
+   bundle (notary rejects raw .app directories), `xcrun
+   notarytool submit --wait --timeout 30m`, then `xcrun stapler
+   staple` + `stapler validate`.
+5. **Package DMG** (unchanged — existing create-dmg step).
+6. **Codesign + notarize DMG** — sign the DMG itself, submit,
+   staple. Final `spctl --assess --context
+   context:primary-signature` should print `source=Notarized
+   Developer ID`.
+7. **Cleanup** — `security delete-keychain` with `if: always()`
+   so a failed notary run doesn't leak the ephemeral keychain
+   (matters mostly for hypothetical self-hosted runners;
+   `macos-latest` resets between jobs anyway).
+
+### Entitlements (`packaging/macos/entitlements.plist`)
+
+Only one named entitlement: `com.apple.security.cs.allow-jit`.
+Required for the embedded WKWebView's JavaScriptCore JIT —
+without it PM document rendering falls back to baseline tier
+and noticeably crawls on medium/large FB2s. We do **not** grant
+`cs.disable-library-validation` (we only load Apple-system libs
+and ones we sign), `cs.allow-unsigned-executable-memory` (JIT
+is the more specific entitlement), `network.client`, or
+`files.*` — those apply only under App Sandbox, not Developer
+ID distribution.
+
+### Secrets checklist (`packaging/macos/SIGNING.md`)
+
+One-time setup doc, checked in so it survives secret wipes and
+fork-and-sign:
+
+- Finding the Team ID
+- Exporting the Developer ID Application cert from Keychain
+  Access (covers the "did you export with the private key?"
+  pitfall — `openssl pkcs12 -info` to verify)
+- Generating an app-specific password at appleid.apple.com
+- Base64-encoding the p12 for GitHub Secrets
+- Names of the five secrets (`APPLE_TEAM_ID`, `APPLE_ID`,
+  `APPLE_APP_SPECIFIC_PASSWORD`,
+  `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`,
+  `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`)
+- Test procedure (disposable `v0.2.0-signtest` tag) with
+  `spctl --assess` verification on a fresh Mac
+- Rotation cadence + troubleshooting ladder for the three
+  common failure modes (wrong p12 pwd, missing private key,
+  wrong cert type)
+
+### Modified / new
+
+- `.github/workflows/release.yml` — job-level env + 4 new
+  conditional steps around the existing build + DMG flow.
+- `packaging/macos/entitlements.plist` — new, hardened-runtime
+  + allow-jit.
+- `packaging/macos/SIGNING.md` — new, one-time setup doc.
+
+### Next
+
+- Dmitry: run through `packaging/macos/SIGNING.md` steps 1–5,
+  push `v0.2.0-signtest` tag, verify the resulting DMG passes
+  `spctl --assess`.
+- Rev 79: corpus fidelity re-verification + README v1.0
+  messaging + new user-facing CHANGELOG.md + HelpDialog "About"
+  section with `App.AppVersion`.
+- Rev 80: bump triple to `1.0.0-rc1`, merge dev → main, tag.
+
+---
+
 ## Rev 77 — 2026-04-23 — Auto-update check (GitHub Releases poll + banner) — Phase 5 close [dev]
 
 Closes the last open Phase 5 checkbox with the lightweight
