@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 
+	"log"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -81,28 +82,112 @@ func (a *App) OnStartup(ctx context.Context) {
 // subdir, so the Wails flake's reduced XDG_DATA_DIRS on NixOS doesn't
 // leave the finder staring at an empty /usr/share/fonts. No-op on systems
 // where those paths don't exist.
+//
+// For fonts sysfont's filename registry doesn't recognize — common on
+// NixOS because the store-path filenames carry hashes / versions not in
+// the registry — falls back to a filename-to-family heuristic so the
+// user still sees a reasonable label.
 func (a *App) populateSystemFonts() {
 	extendFontDirsForNix()
 
 	finder := sysfont.NewFinder(nil)
 	all := finder.List()
+
 	seen := make(map[string]struct{}, len(all))
 	families := make([]string, 0, len(all))
+	recognized := 0
+	heuristic := 0
 	for _, f := range all {
-		if f == nil || f.Family == "" {
+		if f == nil {
 			continue
 		}
-		if _, dup := seen[f.Family]; dup {
+		family := f.Family
+		if family != "" {
+			recognized++
+		} else if f.Filename != "" {
+			family = familyFromFilename(f.Filename)
+			if family == "" {
+				continue
+			}
+			heuristic++
+		} else {
 			continue
 		}
-		seen[f.Family] = struct{}{}
-		families = append(families, f.Family)
+		if _, dup := seen[family]; dup {
+			continue
+		}
+		seen[family] = struct{}{}
+		families = append(families, family)
 	}
 	sort.Strings(families)
+
+	log.Printf("[fbe] system fonts: %d files scanned, %d recognized, %d via filename heuristic, %d unique families",
+		len(all), recognized, heuristic, len(families))
 
 	a.systemFontsMu.Lock()
 	a.systemFonts = families
 	a.systemFontsMu.Unlock()
+}
+
+// familyFromFilename extracts a human-readable family name from a font
+// file path by stripping the extension, common weight / style suffixes,
+// and replacing separators with spaces. Best-effort heuristic; caller
+// dedupes against already-recognized names.
+//
+//	/nix/store/abc-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSans-Bold.ttf
+//	→ "DejaVu Sans"
+func familyFromFilename(path string) string {
+	base := filepath.Base(path)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+
+	// Strip well-known style tokens. Order matters — longer first so
+	// "BoldItalic" matches before "Bold".
+	suffixes := []string{
+		"BoldItalic", "BoldOblique", "LightItalic", "LightOblique",
+		"MediumItalic", "MediumOblique", "ExtraBold", "SemiBold", "Thin",
+		"Light", "Medium", "Regular", "Bold", "Italic", "Oblique",
+	}
+	for _, s := range suffixes {
+		// Match `-Bold`, `_Bold`, or ` Bold` at the end.
+		for _, sep := range []string{"-", "_", " "} {
+			token := sep + s
+			if strings.HasSuffix(base, token) {
+				base = strings.TrimSuffix(base, token)
+				break
+			}
+		}
+	}
+
+	// Convert CamelCase / snake / kebab into space-separated words.
+	base = strings.ReplaceAll(base, "_", " ")
+	base = strings.ReplaceAll(base, "-", " ")
+	base = splitCamelCase(base)
+	base = strings.TrimSpace(strings.Join(strings.Fields(base), " "))
+	return base
+}
+
+// splitCamelCase inserts spaces before uppercase letters in camelCase
+// sequences: "DejaVuSans" → "DejaVu Sans". Preserves runs of uppercase
+// (e.g. "PTSans" stays "PTSans" rather than "P T Sans").
+func splitCamelCase(s string) string {
+	var b strings.Builder
+	runes := []rune(s)
+	for i, r := range runes {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			prev := runes[i-1]
+			next := rune(0)
+			if i+1 < len(runes) {
+				next = runes[i+1]
+			}
+			prevLower := prev >= 'a' && prev <= 'z'
+			nextLower := next >= 'a' && next <= 'z'
+			if prevLower || (prev >= 'A' && prev <= 'Z' && nextLower) {
+				b.WriteRune(' ')
+			}
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // extendFontDirsForNix appends additional font directories to xdg.FontDirs
@@ -143,6 +228,7 @@ func extendFontDirsForNix() {
 			add(filepath.Join(d, "fonts"))
 		}
 	}
+	log.Printf("[fbe] font dirs: %v", xdg.FontDirs)
 }
 
 // ListSystemFonts returns the sorted, deduped list of family names the
