@@ -147,11 +147,16 @@ jobs:
           # `build/bin/fbe` (not `fbe-go`). `.desktop` still carries the
           # user-facing name "fbe-go"; `--icon-filename fbe-go` matches the
           # `Icon=fbe-go` line in the desktop file.
+          # linuxdeploy rejects icons outside the canonical size set
+          # (…256, 384, 480, 512) — our build/appicon.png is 1024×1024
+          # because macOS wants the high-res source for .icns generation.
+          # `build/appicon-linux.png` is a pre-scaled 512×512 version kept
+          # in the repo alongside the original.
           ./linuxdeploy --appimage-extract-and-run \
             --appdir AppDir \
             --executable build/bin/fbe \
             --desktop-file packaging/fbe-go.desktop \
-            --icon-file build/appicon.png \
+            --icon-file build/appicon-linux.png \
             --icon-filename fbe-go \
             --output appimage
           mv fbe-go-*.AppImage "dist/fbe-go-${TAG}-linux-x86_64.AppImage"
