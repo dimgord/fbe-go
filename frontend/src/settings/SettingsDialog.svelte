@@ -20,6 +20,15 @@
   let fontFamilies: string[] = [
     "system-ui", "serif", "sans-serif", "monospace",
   ];
+
+  // Custom combobox state (WebKit's built-in <datalist> dropdown is invisible
+  // in WebKitGTK — no arrow affordance and the popup sometimes doesn't
+  // appear — so we render our own list under the input).
+  let fontMenuOpen = false;
+  $: filteredFonts = draft?.font?.family
+    ? fontFamilies.filter((f) =>
+        f.toLowerCase().includes((draft?.font?.family ?? "").toLowerCase()))
+    : fontFamilies;
   // Snapshot taken at open time — used as the Cancel baseline for fields
   // we've applied live (reset panes / clear recent); Apply writes `draft`.
   let loaded = false;
@@ -188,21 +197,45 @@
           <h4>Editor</h4>
           <div class="row">
             <label class="label" for="sd-font-family">Font family</label>
-            <input
-              id="sd-font-family"
-              type="text"
-              list="sd-font-list"
-              bind:value={draft.font.family}
-              placeholder="Trebuchet MS"
-              autocomplete="off"
-              style={`font-family: ${draft.font.family || "inherit"}`}
-            />
-            <datalist id="sd-font-list">
-              {#each fontFamilies as f}
-                <option value={f}></option>
-              {/each}
-            </datalist>
-            <span class="help">Pick from the list or type any locally-installed family.</span>
+            <div class="combobox">
+              <input
+                id="sd-font-family"
+                type="text"
+                bind:value={draft.font.family}
+                placeholder="Trebuchet MS"
+                autocomplete="off"
+                style={`font-family: ${draft.font.family || "inherit"}`}
+                on:focus={() => (fontMenuOpen = true)}
+                on:input={() => (fontMenuOpen = true)}
+              />
+              <button
+                type="button"
+                class="combobox-toggle"
+                title="Show installed fonts"
+                aria-label="Toggle font list"
+                on:click={() => (fontMenuOpen = !fontMenuOpen)}
+              >▾</button>
+              {#if fontMenuOpen}
+                <!-- svelte-ignore a11y-click-events-have-key-events -->
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
+                <div class="combobox-backdrop" on:click={() => (fontMenuOpen = false)}></div>
+                <ul class="combobox-menu" role="listbox">
+                  {#each filteredFonts as f}
+                    <li>
+                      <button
+                        type="button"
+                        class="combobox-item"
+                        style={`font-family: ${f}`}
+                        on:click={() => { if (draft) { draft.font.family = f; } fontMenuOpen = false; }}
+                      >{f}</button>
+                    </li>
+                  {:else}
+                    <li class="combobox-empty">No match — your typed value will be saved as-is.</li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+            <span class="help">Type to filter; click a font to pick it. Custom family names are saved even if not in the list.</span>
           </div>
           <div class="row">
             <label class="label" for="sd-font-size">Font size</label>
@@ -330,6 +363,74 @@
   }
   /* Font-family field is wider so names like "Helvetica Neue" fit. */
   .row input#sd-font-family { min-width: 14rem; max-width: 22rem; }
+
+  /* Explicit combobox (WebKit's <datalist> dropdown is invisible there). */
+  .combobox {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    max-width: 24rem;
+  }
+  .combobox input#sd-font-family {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: none;
+  }
+  button.combobox-toggle {
+    padding: 0 0.55rem;
+    border: 1px solid var(--border-input);
+    background: var(--bg-chrome);
+    color: var(--fg-secondary);
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+  }
+  button.combobox-toggle:hover { background: var(--bg-hover); }
+  .combobox-backdrop {
+    position: fixed;
+    inset: 0;
+    background: transparent;
+    z-index: 101;
+  }
+  ul.combobox-menu {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 102;
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 0;
+    max-height: 18rem;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 6px 18px var(--shadow);
+    font-size: 0.88rem;
+  }
+  ul.combobox-menu li { margin: 0; padding: 0; }
+  button.combobox-item {
+    all: unset;
+    display: block;
+    width: 100%;
+    padding: 0.25rem 0.7rem;
+    cursor: pointer;
+    box-sizing: border-box;
+    color: var(--fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  button.combobox-item:hover { background: var(--bg-hover); }
+  .combobox-empty {
+    padding: 0.4rem 0.7rem;
+    color: var(--fg-muted);
+    font-size: 0.82rem;
+    font-style: italic;
+  }
   .row input.mono {
     font-family: "SF Mono", Menlo, Consolas, monospace;
     width: 3rem;
