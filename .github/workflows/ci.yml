@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# Cancel in-progress runs for the same branch / PR when a new commit lands.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Frontend: typecheck + theme-hygiene + unit tests. Single OS — the frontend
+  # is pure TS/Svelte, no platform code, so running it on one runner is enough.
+  frontend:
+    name: frontend (svelte-check + vitest + theme)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run check:theme
+      - run: npm run test
+
+  # Go library tests: internal/fb2/* round-trip / parser / writer / xsd /
+  # export / binary / zip. Skips the root `main` package and `cmd/fbe`
+  # because those pull in Wails' desktop CGo (gtk + webkit on Linux) — that
+  # route is exercised by the separate release workflow's full `wails build`.
+  go-tests:
+    name: go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: go.sum
+
+      # Linux -tags xsd compiles lestrrat-go/libxml2 against the system
+      # libxml2 headers. Ubuntu 24.04 ships libxml2 2.9.x which the binding
+      # supports; the libxml2_13 pin from our Nix flake is specifically a
+      # nixpkgs-unstable workaround (2.15.x ABI change). Non-Nix distros
+      # remain fine.
+      - name: Install libxml2-dev (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-dev
+
+      - name: go vet
+        run: go vet ./internal/...
+
+      - name: go test (stub XSD)
+        run: go test ./internal/...
+
+      - name: go test -tags xsd (real libxml2)
+        run: go test -tags xsd ./internal/...
