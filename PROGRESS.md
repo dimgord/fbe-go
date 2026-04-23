@@ -6,6 +6,84 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 55 — 2026-04-22 — Wire Settings.font and Settings.nbspChar to runtime [dev]
+
+Version: **0.1.16**
+
+### What
+
+Rev 54's Settings dialog persisted editor font and NBSP char but
+nothing actually read them. Closed the loop:
+
+- **Editor font family and size** now route through the CSS
+  custom properties `--editor-font-family` / `--editor-font-size`.
+  `Editor.svelte`'s `:global(.ProseMirror)` rule reads them with
+  a fallback to the previous hard-coded values (Trebuchet MS /
+  16px) via `var(name, fallback)`. App.svelte's new
+  `applyEditorFont(font)` sets the vars on `document.documentElement`
+  on settings load and after Settings dialog apply.
+
+- **Paste NBSP handling** now honors `settings.nbspChar`.
+  `paste.ts` grew a module-level `pasteNbspChar` var (default
+  regular space, so existing tests stay deterministic) and a
+  `configurePaste({ nbspChar })` setter called by App.svelte on
+  mount and after apply. Both HTML and text paste paths route
+  U+00A0 / `&nbsp;` through `pasteNbspChar`.
+
+### paste.ts details
+
+- Old behavior: always collapsed NBSP to regular space.
+- New behavior: HTML's `/&nbsp;| /g` and text's `/ /g`
+  replace with `pasteNbspChar`. Default is regular space so the
+  existing "collapse" behavior is preserved for anyone who hasn't
+  opened Settings.
+- `resetPasteConfigForTesting()` exported for unit-test isolation;
+  `afterEach` in `paste.test.ts` calls it.
+- New `configurePaste` tests cover the HTML path, the text path,
+  and the "ignore non-single-char input" branch.
+- Regex literals switched from in-source U+00A0 characters to
+  explicit ` ` escapes for readability (invisible chars in
+  source bite).
+
+### Not done here
+
+- `AnnotationEditor`'s nested ProseMirror sticks with `Georgia,
+  serif` (an intentional look for annotation prose). If that
+  should also follow user-set editor font, it's a separate rev.
+- Font-family picker is a free-text input; a real font list would
+  need FontKit / system-font enumeration. Beta is fine with plain
+  text.
+- Per-document font overrides (FB2 `style` element) aren't
+  plumbed — scope for Phase 4 / later.
+
+### Verification
+
+- `npm run check` 0/0, `npm run check:theme` clean,
+  `npm run test` 61/61 (58 + 3 new configurePaste cases).
+
+### Files modified
+
+- `frontend/src/editor/paste.ts` — `pasteNbspChar`,
+  `configurePaste`, `resetPasteConfigForTesting`; regex swapped to
+  ` `.
+- `frontend/src/editor/paste.test.ts` — `afterEach` reset hook, 3
+  new tests.
+- `frontend/src/editor/Editor.svelte` — `var()`-based font
+  declarations.
+- `frontend/src/App.svelte` — `applyEditorFont` helper, wired
+  into settings-load and `onSettingsApplied`; also calls
+  `configurePaste`.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.15 → 0.1.16
+- `frontend/package.json`       0.1.15 → 0.1.16
+- `frontend/package-lock.json`  0.1.15 → 0.1.16
+
+---
+
 ## Rev 54 — 2026-04-22 — Settings dialog (Phase 2 A4) [dev]
 
 Version: **0.1.15**

@@ -8,6 +8,7 @@
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
   import { installExternalLinkHandler } from "./runtime/externalLink";
+  import { configurePaste } from "./editor/paste";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
 
@@ -46,12 +47,34 @@
   let showHelp = false;
   let showSettings = false;
 
-  function onSettingsApplied(e: CustomEvent<{ theme: Theme }>) {
+  function onSettingsApplied(
+    e: CustomEvent<{ theme: Theme; settings: { font: { family: string; size: number }; nbspChar: string } }>
+  ) {
     // Sync live runtime state with what the dialog just wrote to disk.
-    // Theme is the one field whose visual effect is immediate.
     theme = e.detail.theme;
+    applyEditorFont(e.detail.settings.font);
+    configurePaste({ nbspChar: e.detail.settings.nbspChar });
     // Refresh recent-files list in case the dialog cleared it.
     void refreshRecent();
+  }
+
+  // applyEditorFont sets CSS custom properties on <html> so the editor's
+  // `:global(.ProseMirror) { font-family: var(--editor-font-family); … }`
+  // picks them up. Empty / invalid values fall through to the
+  // var()-declared defaults in Editor.svelte.
+  function applyEditorFont(font: { family?: string; size?: number }) {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    if (font.family && font.family.trim()) {
+      root.style.setProperty("--editor-font-family", font.family);
+    } else {
+      root.style.removeProperty("--editor-font-family");
+    }
+    if (typeof font.size === "number" && font.size >= 8 && font.size <= 48) {
+      root.style.setProperty("--editor-font-size", `${font.size}px`);
+    } else {
+      root.style.removeProperty("--editor-font-size");
+    }
   }
 
   // Most-recently-used files, fed from settings.json on the Go side.
@@ -421,6 +444,12 @@
         const pw = s?.panes?.validationWidth;
         if (typeof pw === "number" && pw >= PANEL_MIN) {
           panelWidth = pw;
+        }
+        if (s?.font) {
+          applyEditorFont({ family: s.font.family, size: s.font.size });
+        }
+        if (s?.nbspChar) {
+          configurePaste({ nbspChar: s.nbspChar });
         }
       } catch { /* leave defaults */ }
     })();
