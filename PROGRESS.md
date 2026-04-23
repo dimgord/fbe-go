@@ -6,6 +6,70 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 61 — 2026-04-23 — Font discovery via fontconfig `fc-list` on Linux [dev]
+
+Version: **0.1.22**
+
+### Symptom (more beta feedback)
+
+Rev 60's diagnostic log revealed that on NixOS sysfont walked 70+
+directories but found zero font files (`0 files scanned`). Dmitry's
+system has fonts — they're visible to GNOME, to Firefox — so
+fontconfig clearly knows about them, but sysfont's `filepath.Walk`
+couldn't see them through the chains of symlinks NixOS builds into
+`/run/current-system/sw/share/fonts` and friends.
+
+### Fix
+
+On Linux, ask fontconfig directly:
+
+```
+fc-list : family
+```
+
+That's the authoritative answer — fontconfig is what every
+Linux app uses to resolve font names at runtime, and its cache
+sees through the symlinks. `fc-list` is present on every Linux
+setup that runs a desktop environment (and specifically on
+NixOS + GNOME, which is Dmitry's setup). Parse output:
+comma-separated family aliases, take the first as the canonical
+name, dedupe, sort.
+
+`populateSystemFonts` now prefers fontconfig on Linux, falls
+back to sysfont (with the Rev 60 filename heuristic) if
+`fc-list` is missing or fails. On macOS the sysfont path is
+taken directly — fontconfig is rare there and the system font
+folders are simple enough for sysfont to enumerate.
+
+Log line tells you which path was taken:
+
+- `[fbe] system fonts: 327 families via fontconfig` — Linux
+  happy path.
+- `[fbe] system fonts: N files scanned, R recognized, H via
+  filename heuristic, U unique families (sysfont)` — fallback
+  (macOS or fontconfig missing).
+
+### Verification
+
+- `go build -tags xsd ./...` clean.
+- Dmitry to re-run on NixOS; expected: triple-digit family count
+  via fontconfig, combobox populated.
+
+### Files modified
+
+- `app.go` — fontconfig path in `populateSystemFonts`; new
+  `listFontsViaFontconfig` helper.
+- `PROGRESS.md`, `wails.json`, `frontend/package.json`,
+  `frontend/package-lock.json`.
+
+### Versions bumped
+
+- `wails.json`                  0.1.21 → 0.1.22
+- `frontend/package.json`       0.1.21 → 0.1.22
+- `frontend/package-lock.json`  0.1.21 → 0.1.22
+
+---
+
 ## Rev 60 — 2026-04-22 — Font discovery: filename fallback + diagnostic log [dev]
 
 Version: **0.1.21**

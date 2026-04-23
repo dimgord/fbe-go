@@ -13,7 +13,9 @@ import (
 	"os"
 
 	"log"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -88,6 +90,25 @@ func (a *App) OnStartup(ctx context.Context) {
 // the registry — falls back to a filename-to-family heuristic so the
 // user still sees a reasonable label.
 func (a *App) populateSystemFonts() {
+	// On Linux, fontconfig is the source of truth. `fc-list : family` returns
+	// every font the user has configured — system packages, home-manager,
+	// nix profiles, user ~/.fonts, the lot — indexed in a single pass, with
+	// proper family names (not filenames). Filesystem walkers like sysfont
+	// can't match fontconfig's visibility on NixOS: fonts live in dozens of
+	// nix-store paths joined by opaque symlink trees, and nixpkgs-packaged
+	// filenames carry hashes / versions that sysfont's registry doesn't
+	// recognize. Try fontconfig first; fall back to sysfont on macOS (where
+	// fc-list usually isn't installed) or if the command fails.
+	if runtime.GOOS == "linux" {
+		if families, err := listFontsViaFontconfig(); err == nil && len(families) > 0 {
+			log.Printf("[fbe] system fonts: %d families via fontconfig", len(families))
+			a.systemFontsMu.Lock()
+			a.systemFonts = families
+			a.systemFontsMu.Unlock()
+			return
+		}
+	}
+
 	extendFontDirsForNix()
 
 	finder := sysfont.NewFinder(nil)
@@ -121,12 +142,48 @@ func (a *App) populateSystemFonts() {
 	}
 	sort.Strings(families)
 
-	log.Printf("[fbe] system fonts: %d files scanned, %d recognized, %d via filename heuristic, %d unique families",
+	log.Printf("[fbe] system fonts: %d files scanned, %d recognized, %d via filename heuristic, %d unique families (sysfont)",
 		len(all), recognized, heuristic, len(families))
 
 	a.systemFontsMu.Lock()
 	a.systemFonts = families
 	a.systemFontsMu.Unlock()
+}
+
+// listFontsViaFontconfig runs `fc-list : family` and parses the output. Each
+// line may be a comma-separated list of family aliases (fontconfig groups
+// equivalents like localized names); we take the first as the canonical
+// display name. Dedupes + sorts the result. Returns an error if the command
+// isn't installed or exits non-zero.
+func listFontsViaFontconfig() ([]string, error) {
+	path, err := exec.LookPath("fc-list")
+	if err != nil {
+		return nil, err
+	}
+	out, err := exec.Command(path, ":", "family").Output()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	families := make([]string, 0, 128)
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		// "Noto Serif,Noto Serif Regular" → "Noto Serif"
+		first := strings.TrimSpace(strings.SplitN(line, ",", 2)[0])
+		if first == "" {
+			continue
+		}
+		if _, dup := seen[first]; dup {
+			continue
+		}
+		seen[first] = struct{}{}
+		families = append(families, first)
+	}
+	sort.Strings(families)
+	return families, nil
 }
 
 // familyFromFilename extracts a human-readable family name from a font
