@@ -7,6 +7,7 @@
   import ValidationPanel from "./validation/ValidationPanel.svelte";
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
+  import SearchBar from "./editor/search/SearchBar.svelte";
   import { installExternalLinkHandler } from "./runtime/externalLink";
   import { configurePaste } from "./editor/paste";
   import { SAMPLE_BOOK } from "./fb2/sample";
@@ -21,6 +22,9 @@
   let status = "";
   let error = "";
   let editor: Editor | undefined = undefined;
+  /** Bound to Editor.view so SearchBar (and any other sibling) gets a
+      reactive reference to the live PM EditorView. */
+  let editorView: import("prosemirror-view").EditorView | undefined = undefined;
 
   // Validation / XML-source panel state.
   let showPanel = false;
@@ -46,6 +50,15 @@
 
   let showHelp = false;
   let showSettings = false;
+
+  // Search/Replace inline bar state. Bar is non-modal and only shown in the
+  // body view because description is edited in a separate PM instance.
+  let searchOpen = false;
+  let searchMode: "find" | "replace" = "find";
+  function openSearch(mode: "find" | "replace") {
+    searchMode = mode;
+    searchOpen = true;
+  }
 
   function onSettingsApplied(
     e: CustomEvent<{ theme: Theme; settings: { font: { family: string; size: number }; nbspChar: string } }>
@@ -398,10 +411,27 @@
   }
 
   // Keyboard shortcut: Cmd-S / Ctrl-S saves.
+  // Cmd-F / Cmd-H open the Search bar — handled here instead of in the PM
+  // keymap because the SearchBar lives outside the editor DOM.
   function onKeyDown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === "s") {
       e.preventDefault();
       save(e.shiftKey); // Shift-Cmd-S → Save As
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "f" || e.key === "F")) {
+      if (view === "body") {
+        e.preventDefault();
+        openSearch("find");
+      }
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "h" || e.key === "H")) {
+      if (view === "body") {
+        e.preventDefault();
+        openSearch("replace");
+      }
+      return;
     }
   }
 
@@ -543,6 +573,13 @@
 
   {#if view === "body"}
     <Toolbar {editor} />
+    {#if searchOpen}
+      <SearchBar
+        view={editorView}
+        bind:mode={searchMode}
+        on:close={() => (searchOpen = false)}
+      />
+    {/if}
     <main
       bind:this={mainEl}
       class:with-panel={showPanel}
@@ -566,7 +603,7 @@
         on:pointercancel={endDragOutline}
         on:keydown={onOutlineResizerKey}
       ></div>
-      <section><Editor bind:this={editor} {fb} /></section>
+      <section><Editor bind:this={editor} bind:view={editorView} {fb} /></section>
       {#if showPanel}
         <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
@@ -677,6 +714,12 @@
     --highlight:       #fce6a0;
     --shadow:          rgba(0, 0, 0, 0.25);
     --backdrop:        rgba(0, 0, 0, 0.35);   /* modal dim */
+
+    /* Search/replace match highlighting — light wash on inactive hits,
+       saturated orange on the currently-focused one (matches VS Code). */
+    --search-match-bg:            #ffe89a;
+    --search-match-active-bg:     #ffb347;
+    --search-match-active-border: #d07b0a;
   }
 
   :global([data-theme="dark"]) {
@@ -718,6 +761,10 @@
     --highlight:       #5a4a10;
     --shadow:          rgba(0, 0, 0, 0.6);
     --backdrop:        rgba(0, 0, 0, 0.55);   /* modal dim — stronger in dark mode */
+
+    --search-match-bg:            #6b5814;
+    --search-match-active-bg:     #c88420;
+    --search-match-active-border: #e8a850;
   }
 
   :global(body), :global(html) {

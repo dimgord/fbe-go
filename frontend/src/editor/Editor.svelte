@@ -10,6 +10,7 @@
   import { fb2ToPMDoc } from "./parse";
   import { pmDocToFB2 } from "./serialize";
   import { cleanPastedHTML, cleanPastedText } from "./paste";
+  import { searchPlugin, findNext as searchFindNext, findPrev as searchFindPrev } from "./search/plugin";
   import {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
     toggleSub, toggleSup, toggleCode, toggleLink,
@@ -133,8 +134,17 @@
           "Mod-,": toggleSub,
           "Mod-.": toggleSup,
           "Mod-Shift-c": toggleCode,
+          // Find-next / find-prev. `Mod-f` and `Mod-h` are handled at App
+          // level (they need to show the SearchBar, which lives outside the
+          // editor DOM); these two stay here because they only need the
+          // plugin state to advance, regardless of whether the bar is open.
+          "Mod-g": (_state, _dispatch, v) => (v ? searchFindNext(v) : false),
+          "Mod-Shift-g": (_state, _dispatch, v) => (v ? searchFindPrev(v) : false),
+          "F3": (_state, _dispatch, v) => (v ? searchFindNext(v) : false),
+          "Shift-F3": (_state, _dispatch, v) => (v ? searchFindPrev(v) : false),
         }),
         keymap(baseKeymap),
+        searchPlugin(),
       ],
     });
     view = new EditorView(container, {
@@ -332,6 +342,19 @@
   :global(.ProseMirror .outline-flash) {
     transition: background-color 0.3s ease;
     background: var(--highlight);
+  }
+
+  /* Search/replace highlighting — inactive matches get a pale wash, the
+     currently-focused hit stands out with a stronger accent so the user can
+     track ◀/▶ navigation at a glance. Palette vars are defined in App.svelte
+     for both light and dark themes. */
+  :global(.ProseMirror .search-match) {
+    background: var(--search-match-bg);
+    border-radius: 2px;
+  }
+  :global(.ProseMirror .search-match-active) {
+    background: var(--search-match-active-bg);
+    outline: 1px solid var(--search-match-active-border);
   }
 
   /* Lossless fallback placeholders for unknown FB2 elements (see schema.ts
