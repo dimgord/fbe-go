@@ -139,17 +139,23 @@ FBE's original list.
 | `CSpellDialog` (Speller.h:78) | Ignore / Change / Add modal | native right-click menu for now; custom modal in Phase 4 |
 | Per-word replacements (`WordsItem` in Settings.h) | User dictionary | `settings.WordsList` (future) |
 
-## 10. Scripts (user automation)
+## 10. Scripts (user automation) — DEFERRED post-1.0
 
 FBE loads JS files from `FBE/files/Scripts/*.js` via `#userCmd` slot (main.html:9). Calls `apiRunCmd(path)` / `apiProcessCmd(path)` (main.js:612/639).
 
-| Feature | Go/Wails equivalent |
+**Status:** not shipping in 1.0. FBE's script ecosystem ships hundreds of
+macros, and porting the `apiRunCmd` / `apiProcessCmd` surface plus a
+migration path for existing `.js` files is separate-project scale. The
+shape below is kept as a design sketch only — revisit when there is
+concrete user demand with named scripts to port.
+
+| Feature | Go/Wails equivalent (when revisited) |
 |---|---|
-| Load `.js` at runtime | Dynamic import in webview or pass via `App.RunScript(src)` |
-| Script API | Expose `App.*` Wails methods to scripts; mirror of old `window.external.*` |
+| Load `.js` at runtime | `App.RunScript(src)` — goja (Go JS VM) in `internal/fb2/scripts/` |
+| Script API | Expose narrow surface of `App.*` methods; mirror of old `window.external.*` |
 | Script UI | Menu populated from scripts folder; `dialogs/ScriptRunner.svelte` |
 
-⚠️ Scripts are a substantial portion of user workflow (FBE ships hundreds of them in `FBE/files/Scripts/`). Consider keeping script compatibility as a separate project, or provide a migration tool.
+When the time comes, start with a read-only subset (query document, walk sections) before exposing mutation — the FBE scripts do aggressive DOM surgery that assumes the old engine's quirks.
 
 ## 11. Hotkeys
 
