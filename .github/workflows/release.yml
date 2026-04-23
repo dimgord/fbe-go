@@ -143,15 +143,17 @@ jobs:
           # linuxdeploy builds an AppDir from our binary + .desktop + icon,
           # copies transitive shared libs it can detect, then hands to
           # appimagetool to produce the self-contained AppImage.
-          # wails.json sets `outputfilename: fbe`, so the Linux binary is
-          # `build/bin/fbe` (not `fbe-go`). `.desktop` still carries the
-          # user-facing name "fbe-go"; `--icon-filename fbe-go` matches the
-          # `Icon=fbe-go` line in the desktop file.
-          # linuxdeploy rejects icons outside the canonical size set
-          # (…256, 384, 480, 512) — our build/appicon.png is 1024×1024
-          # because macOS wants the high-res source for .icns generation.
-          # `build/appicon-linux.png` is a pre-scaled 512×512 version kept
-          # in the repo alongside the original.
+          # - wails.json sets `outputfilename: fbe`, so the Linux binary is
+          #   `build/bin/fbe` (not `fbe-go`).
+          # - build/appicon-linux.png is a 512×512 rescale of the 1024-px
+          #   source; linuxdeploy rejects anything outside its canonical
+          #   size set.
+          # - OUTPUT env var controls the final .AppImage filename (the
+          #   AppImage output plugin honors it). Without it the name is
+          #   derived from the desktop `Name=` field, which gives a
+          #   whitespace-y ugly string like FictionBook_Editor_(Go)-*.AppImage.
+          OUTPUT="fbe-go-${TAG}-linux-x86_64.AppImage"
+          export OUTPUT
           ./linuxdeploy --appimage-extract-and-run \
             --appdir AppDir \
             --executable build/bin/fbe \
@@ -159,7 +161,7 @@ jobs:
             --icon-file build/appicon-linux.png \
             --icon-filename fbe-go \
             --output appimage
-          mv fbe-go-*.AppImage "dist/fbe-go-${TAG}-linux-x86_64.AppImage"
+          mv "$OUTPUT" dist/
 
       - name: Package freedesktop integration tarball
         env:
