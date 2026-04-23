@@ -237,8 +237,8 @@
   :global(.ProseMirror) {
     outline: none;
     line-height: 1.65;
-    font-family: "Trebuchet MS", -apple-system, sans-serif;
-    font-size: 16px;
+    font-family: var(--editor-font-family, "Trebuchet MS", -apple-system, sans-serif);
+    font-size: var(--editor-font-size, 16px);
   }
   :global(.ProseMirror p) {
     margin: 0 0 0.6em 0;
