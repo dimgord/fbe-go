@@ -6,6 +6,58 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 73 — 2026-04-23 — Search UX: follow active match + Unicode whole-word [dev]
+
+Two Search/Replace UX fixes caught during first hands-on with Rev 71.
+
+### 1. `◀` / `▶` did not scroll to keep the active match on-screen
+
+Symptom: after a few ▶ clicks the orange highlight drifted below the
+viewport and the user had to scroll manually to find it.
+
+Root cause: `tr.scrollIntoView()` scrolls whatever PM considers its
+scroll container, which in our layout is `view.dom` — but the real
+scrollbar lives on the outer `<section>` that wraps the editor. PM's
+built-in scroll only affects the wrong element.
+
+Fix: replicate the scroll-ancestor walk from `Editor.scrollToPath` —
+from `view.dom` up until we find an element whose `scrollHeight >
+clientHeight`, then nudge its `scrollTop` based on
+`view.coordsAtPos(match.from)` vs. the container's rect. Only scrolls
+when the hit is within `MARGIN=80px` of an edge, so comfortably-
+visible matches don't trigger jumps.
+
+### 2. `\b` (whole-word) matched nothing in Cyrillic text
+
+Symptom: toggle `\b` on, search for "слово" in a Cyrillic FB2 file → 0
+matches. Works fine for English.
+
+Root cause: JavaScript's `\b` is ASCII-only — it's defined as "between
+`[A-Za-z0-9_]` and not". Cyrillic letters are not in that set, so `\b`
+fails to mark boundaries around them. `\bслово\b` anchors on two
+positions that can't both match in Cyrillic text.
+
+Fix: substitute `\b` with Unicode-aware lookarounds using
+`\p{L}`/`\p{N}` property escapes and the `u` flag:
+
+```ts
+source = `(?<![\\p{L}\\p{N}_])(?:${source})(?![\\p{L}\\p{N}_])`;
+jsFlags += "u";
+```
+
+The `u` flag is only added when `wholeWord` is on, so user-supplied
+regex (via `.*` toggle) keeps its default non-Unicode semantics to
+avoid breaking patterns that rely on `\w` matching `[A-Za-z0-9_]`
+only.
+
+### Files
+
+- Modified: `frontend/src/editor/search/plugin.ts` — rewrote
+  `scrollActiveIntoView` + swapped `\b` for Unicode lookarounds in
+  `buildRegex`.
+
+---
+
 ## Rev 72 — 2026-04-23 — Release workflow: purge existing releases before publish [dev]
 
 Preventive fix for the softprops/action-gh-release race that bit us
