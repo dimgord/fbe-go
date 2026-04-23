@@ -152,10 +152,27 @@ jobs:
             --output appimage
           mv fbe-go-*.AppImage "dist/fbe-go-${TAG}-linux-x86_64.AppImage"
 
+      - name: Package freedesktop integration tarball
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          # Ship thumbnailer + shared-MIME + .desktop + README separately so
+          # users can drop them into ~/.local/share/... — the AppImage alone
+          # gets Finder-like integration but not thumbnail previews or MIME
+          # registration. See packaging/README.md for install flow.
+          tar -C packaging -czf \
+            "dist/fbe-go-${TAG}-linux-freedesktop.tar.gz" \
+            README.md fbe-go.desktop fbe-go-mime.xml fbe-go.thumbnailer
+
       - uses: actions/upload-artifact@v4
         with:
           name: linux-appimage
           path: dist/*.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-freedesktop
+          path: dist/*.tar.gz
 
   # Collect artifacts from both build jobs into a single GitHub Release.
   # Separate job so a failure on one platform doesn't block uploading the

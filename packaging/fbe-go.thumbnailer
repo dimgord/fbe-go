@@ -1,0 +1,14 @@
+[Thumbnailer Entry]
+# GNOME / Nautilus / Nemo / Caja / KDE Dolphin all honor this spec. When
+# the user browses a directory of .fb2 files, the file manager invokes
+# `fbe thumb <input> <output>` for each, expecting a PNG/JPG written to
+# the output path. Our `fbe` CLI already does exactly that — see
+# cmd/fbe/main.go::cmdThumb. %s (requested pixel size) is ignored for
+# now; the file manager downscales the original coverpage at render
+# time, which is plenty for the typical 128×128 / 256×256 grid.
+#
+# Install to /usr/share/thumbnailers/fbe-go.thumbnailer (system-wide)
+# or ~/.local/share/thumbnailers/ (per-user). `fbe` must be on PATH.
+TryExec=fbe
+Exec=fbe thumb %i %o
+MimeType=application/x-fictionbook+xml;
