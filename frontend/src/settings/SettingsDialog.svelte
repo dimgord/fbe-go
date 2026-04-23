@@ -12,6 +12,14 @@
   // Draft state. Loaded on open (watched via $:) and mutated by inputs;
   // committed to disk only on Apply. Cancel discards without saving.
   let draft: SettingsNS.Settings | null = null;
+
+  // System font list. Seeded with a handful of generic CSS fallbacks so the
+  // dialog always has something to show on first open (if `ListSystemFonts`
+  // hasn't finished enumerating yet, see app.go::populateSystemFonts).
+  // Real list arrives asynchronously; we merge + dedupe.
+  let fontFamilies: string[] = [
+    "system-ui", "serif", "sans-serif", "monospace",
+  ];
   // Snapshot taken at open time — used as the Cancel baseline for fields
   // we've applied live (reset panes / clear recent); Apply writes `draft`.
   let loaded = false;
@@ -29,6 +37,19 @@
       loaded = true;
     } catch (e) {
       console.warn("[fbe] load settings failed:", e);
+    }
+    // Fetch real font list from the OS. Don't block the main load path on
+    // it — settings-load needs to unblock the dialog first, fonts can
+    // arrive a tick later and merge into the datalist.
+    try {
+      const fonts = (await App.ListSystemFonts()) ?? [];
+      if (fonts.length > 0) {
+        const set = new Set<string>(fontFamilies);
+        for (const f of fonts) set.add(f);
+        fontFamilies = Array.from(set).sort((a, b) => a.localeCompare(b));
+      }
+    } catch (e) {
+      console.warn("[fbe] list fonts failed:", e);
     }
   }
 
@@ -167,7 +188,21 @@
           <h4>Editor</h4>
           <div class="row">
             <label class="label" for="sd-font-family">Font family</label>
-            <input id="sd-font-family" type="text" bind:value={draft.font.family} placeholder="Trebuchet MS" />
+            <input
+              id="sd-font-family"
+              type="text"
+              list="sd-font-list"
+              bind:value={draft.font.family}
+              placeholder="Trebuchet MS"
+              autocomplete="off"
+              style={`font-family: ${draft.font.family || "inherit"}`}
+            />
+            <datalist id="sd-font-list">
+              {#each fontFamilies as f}
+                <option value={f}></option>
+              {/each}
+            </datalist>
+            <span class="help">Pick from the list or type any locally-installed family.</span>
           </div>
           <div class="row">
             <label class="label" for="sd-font-size">Font size</label>
@@ -293,6 +328,8 @@
     font: inherit;
     max-width: 18rem;
   }
+  /* Font-family field is wider so names like "Helvetica Neue" fit. */
+  .row input#sd-font-family { min-width: 14rem; max-width: 22rem; }
   .row input.mono {
     font-family: "SF Mono", Menlo, Consolas, monospace;
     width: 3rem;
