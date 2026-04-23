@@ -60,8 +60,16 @@ function buildRegex(pattern: string, flags: SearchFlags): RegExp | null {
   if (!pattern) return null;
   try {
     let source = flags.regex ? pattern : escapeRegex(pattern);
-    if (flags.wholeWord) source = `\\b(?:${source})\\b`;
-    return new RegExp(source, flags.caseSensitive ? "g" : "gi");
+    let jsFlags = flags.caseSensitive ? "g" : "gi";
+    if (flags.wholeWord) {
+      // JS regex `\b` is ASCII-only — `\bслово\b` matches nothing in
+      // Cyrillic (or any non-Latin) text because letters outside [A-Za-z0-9_]
+      // aren't considered word characters by default. Substitute with
+      // Unicode-aware lookarounds requiring `u` flag.
+      source = `(?<![\\p{L}\\p{N}_])(?:${source})(?![\\p{L}\\p{N}_])`;
+      jsFlags += "u";
+    }
+    return new RegExp(source, jsFlags);
   } catch {
     return null;
   }
@@ -246,9 +254,29 @@ function scrollActiveIntoView(view: EditorView): void {
   if (!st || st.active < 0) return;
   const m = st.matches[st.active];
   if (!m) return;
-  const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, m.from, m.to));
-  tr.scrollIntoView();
-  view.dispatch(tr);
+
+  // Move selection so typing / replace target the hit.
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, m.from, m.to)));
+
+  // PM's built-in `tr.scrollIntoView()` scrolls whatever container IT
+  // considers scrollable, which in our layout is typically the wrong one
+  // — `<section>` wraps the editor and owns the scrollbar, not
+  // `view.dom`. Walk up until we find a scrollable ancestor (same idiom
+  // as Editor.scrollToPath) and nudge it manually. Only scroll when the
+  // hit is near the viewport edges so already-visible matches don't cause
+  // the page to jump on every ▶ click.
+  const coords = view.coordsAtPos(m.from);
+  let el: HTMLElement | null = view.dom as HTMLElement;
+  while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement;
+  if (!el) return;
+
+  const rect = el.getBoundingClientRect();
+  const MARGIN = 80;
+  if (coords.top < rect.top + MARGIN) {
+    el.scrollTop += coords.top - rect.top - MARGIN;
+  } else if (coords.bottom > rect.bottom - MARGIN) {
+    el.scrollTop += coords.bottom - rect.bottom + MARGIN;
+  }
 }
 
 /**
