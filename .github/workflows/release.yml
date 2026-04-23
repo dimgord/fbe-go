@@ -206,6 +206,35 @@ jobs:
       - name: List collected artifacts
         run: ls -lah dist/
 
+      - name: Purge any pre-existing release for this tag
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          # softprops/action-gh-release@v2 has a race that surfaces when
+          # we force-re-push a tag after a prior run's Publish step failed
+          # mid-way: the previous run leaves an empty *published* release
+          # on the tag, and the fresh attempt then creates a second
+          # *draft* with the uploads — the finalize call to flip the
+          # draft to published trips over the zombie with
+          # `Validation Failed: already_exists`. See
+          # https://github.com/softprops/action-gh-release/issues/363 .
+          #
+          # Workaround: before the action runs, delete every release
+          # (draft or published) attached to this tag. We just built the
+          # artifacts — recreating is cheap and gives a clean slate.
+          IDS=$(gh api "repos/$REPO/releases" \
+                  --paginate --jq ".[] | select(.tag_name == \"$TAG\") | .id")
+          if [ -z "$IDS" ]; then
+            echo "No existing releases for $TAG — nothing to purge."
+          else
+            for ID in $IDS; do
+              echo "Deleting release $ID for tag $TAG"
+              gh api "repos/$REPO/releases/$ID" -X DELETE
+            done
+          fi
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
