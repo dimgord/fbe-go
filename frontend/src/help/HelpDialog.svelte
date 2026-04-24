@@ -6,10 +6,27 @@
 
   const dispatch = createEventDispatcher<{ close: void }>();
 
-  const version = pkg.version;
+  // Version is sourced from App.AppVersion() (compiled-in Go const) when
+  // running inside Wails — this is the canonical 1.0 source of truth,
+  // kept in lockstep with wails.json + package.json + version.go by the
+  // revision-bump checklist. The package.json value is a fallback for
+  // the vite-dev browser tab, where the Wails bridge isn't attached.
+  let version = pkg.version;
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform);
   const mod = isMac ? "⌘" : "Ctrl";
   const shift = isMac ? "⇧" : "Shift";
+
+  async function loadVersion(): Promise<void> {
+    try {
+      const App = await import("../../wailsjs/go/main/App").catch(() => null);
+      if (App && typeof App.AppVersion === "function") {
+        const v = await App.AppVersion();
+        if (v) version = v;
+      }
+    } catch {
+      // Keep the package.json fallback — browser tab / non-Wails dev.
+    }
+  }
 
   // External-link routing lives in src/runtime/externalLink.ts; App.svelte
   // installs a document-wide capture-phase handler, so every <a href> click
@@ -49,19 +66,34 @@
     }
   }
 
-  // Keyboard shortcuts — kept in sync by hand with Editor.svelte's keymap
-  // and App.svelte's Cmd-S handler. If you change a binding, update this
-  // table too.
+  // Default keyboard shortcuts — these match
+  // internal/fb2/settings/settings.go::DefaultHotkeys() verbatim, minus
+  // undo/redo which we keep hardcoded (rebinding them breaks in ways
+  // users don't expect). The real live bindings are editable under
+  // Settings → Keyboard shortcuts (Rev 76); this table only documents
+  // the out-of-box state, so if the user has customized, the actual
+  // keystrokes won't match what's shown here. We note that below the
+  // table.
   const shortcuts: Array<{ keys: string; action: string }> = [
-    { keys: `${mod}-S`, action: "Save" },
-    { keys: `${shift}-${mod}-S`, action: "Save As…" },
-    { keys: `${mod}-Z`, action: "Undo" },
-    { keys: `${mod}-Y  /  ${shift}-${mod}-Z`, action: "Redo" },
-    { keys: `${mod}-B`, action: "Bold (strong)" },
-    { keys: `${mod}-I`, action: "Italic (emphasis)" },
-    { keys: `${shift}-${mod}-S`, action: "Strikethrough" },
-    { keys: `${mod}-,`, action: "Subscript" },
-    { keys: `${mod}-.`, action: "Superscript" },
+    { keys: `${mod}-S`,                              action: "Save" },
+    { keys: `${shift}-${mod}-S`,                     action: "Save As…" },
+    { keys: `${mod}-F`,                              action: "Find" },
+    { keys: `${mod}-H`,                              action: "Find & Replace" },
+    { keys: `${mod}-G  /  ${shift}-${mod}-G`,        action: "Find Next / Previous" },
+    { keys: `${mod}-Z  /  ${mod}-Y`,                 action: "Undo / Redo" },
+    { keys: `${mod}-B`,                              action: "Bold" },
+    { keys: `${mod}-I`,                              action: "Italic" },
+    { keys: `${shift}-${mod}-D`,                     action: "Strikethrough" },
+    { keys: `${mod}-,  /  ${mod}-.`,                 action: "Subscript / Superscript" },
+    { keys: `${shift}-${mod}-C`,                     action: "Inline code" },
+    { keys: `${shift}-${mod}-U`,                     action: "Subtitle paragraph" },
+    { keys: `${shift}-${mod}-L`,                     action: "Empty line" },
+    { keys: `${shift}-${mod}-E`,                     action: "Add epigraph" },
+    { keys: `${shift}-${mod}-A`,                     action: "Add annotation" },
+    { keys: `${shift}-${mod}-Q`,                     action: "Wrap in cite" },
+    { keys: `${shift}-${mod}-P`,                     action: "Wrap in poem" },
+    { keys: `${shift}-${mod}-T`,                     action: "Insert table…" },
+    { keys: `${shift}-${mod}-M`,                     action: "Merge with next sibling" },
   ];
 
   function close() {
@@ -79,6 +111,7 @@
 
   onMount(() => {
     window.addEventListener("keydown", onKey);
+    void loadVersion();
     return () => window.removeEventListener("keydown", onKey);
   });
 </script>
@@ -105,12 +138,15 @@
       </header>
 
       <section class="about">
-        <p><strong>Version {version}-beta</strong> · MIT-licensed ·
+        <p><strong>Version {version}</strong> · MIT-licensed ·
           <a href="https://github.com/dimgord/fbe-go/blob/main/LICENSE"
              target="_blank" rel="noreferrer noopener">LICENSE</a>
           ·
           <a href="https://github.com/dimgord/fbe-go/blob/main/NOTICE.md"
              target="_blank" rel="noreferrer noopener">NOTICE</a>
+          ·
+          <a href="https://github.com/dimgord/fbe-go/blob/main/CHANGELOG.md"
+             target="_blank" rel="noreferrer noopener">CHANGELOG</a>
         </p>
         <p>
           A Go + <a href="https://wails.io" target="_blank" rel="noreferrer noopener">Wails v2</a> port of the
@@ -136,6 +172,10 @@
             </tr>
           {/each}
         </table>
+        <p class="hint">
+          Defaults shown. Rebind any action under
+          <strong>Settings → Keyboard shortcuts</strong>.
+        </p>
       </section>
 
       <section>
@@ -231,6 +271,13 @@
 
   .about p { margin: 0.35rem 0; line-height: 1.45; }
   .about p.credits { font-size: 0.82rem; color: var(--fg-secondary); }
+  p.hint {
+    margin: 0.4rem 0 0;
+    font-size: 0.78rem;
+    color: var(--fg-muted);
+    line-height: 1.4;
+  }
+  p.hint strong { color: var(--fg-secondary); font-weight: 600; }
   .about a, section a {
     color: var(--fg-link);
     text-decoration: none;

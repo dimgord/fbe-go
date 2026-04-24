@@ -6,6 +6,98 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 80 — 2026-04-24 — Docs polish for 1.0: README + CHANGELOG + About + NOTICE [dev]
+
+Second of three pre-1.0 revs. Pure docs + HelpDialog wire-up; no
+behavior change beyond the About dialog now pulling its version
+string from `App.AppVersion()` instead of `package.json` (which had
+a hardcoded `-beta` suffix that would break at `1.0.0` tag).
+
+Also runs the corpus fidelity re-verification: `fidelityBroken=0`
+holds on the local `~/Documents/books` corpus (8 files, 7.3 MB,
+3/8 XSD-valid at source, our output preserves all 3 plus reduces
+one pre-existing error via legitimate element-position
+normalization). Gating invariant green for the 1.0 cut.
+
+### README
+
+`Project status` section rewritten from
+"v0.1.0-beta — Phase 3 MVP + Phase 4 polish shipped" to a real
+feature-complete-for-1.0 bullet list covering each Phase-0–5 area:
+editing, round-trip fidelity, description form, binary manager,
+search/replace, configurable hotkeys, platform polish (signed DMG +
+AppImage), auto-update notify, HTML export, XSD validation. Plus an
+explicit "Not shipping in 1.0" block (Windows, scripts, Hunspell
+CGo, QuickLook, Linux arm64, Sparkle auto-install) with a one-line
+rationale each, so someone clicking through the repo understands
+the scope contract.
+
+Cross-links to `CHANGELOG.md` + `PROGRESS.md` + `docs/PHASES.md` +
+`docs/OPERATIONS.md` so each reader audience lands on the right doc.
+
+### CHANGELOG.md — new
+
+User-facing release history, Keep-a-Changelog compatible, versions
+follow SemVer. Target audience: someone who just downloaded the
+DMG and wants to know what they're getting. `1.0.0` entry covers
+every user-visible feature from Phases 0–5, plus "Not shipping"
+so nobody files issues against deferred items. `0.2.0-beta`
+(Rev 67) and `0.1.0-beta` (approx Rev 39) earlier entries
+summarize what each pre-1.0 milestone shipped. Explicit pointer to
+`PROGRESS.md` for the per-revision deep-dive.
+
+### HelpDialog — About refresh
+
+- Version string now loads from `App.AppVersion()` (compiled-in
+  `version.go::Version`, kept in the triple-sync with
+  `wails.json` + `package.json`), with a `pkg.version` fallback
+  for the vite-dev browser tab where the Wails bridge isn't
+  attached. Dropped the `-beta` suffix hardcode that would
+  display "1.0.0-beta" at the 1.0 tag.
+- Shortcuts table rewritten from 9 hardcoded rows to 18 rows
+  matching `DefaultHotkeys()` in `settings/settings.go` verbatim
+  (marks, paragraph styles, block inserts, search, save). Undo/
+  Redo kept as a single row because they stay hardcoded in the
+  keymap.
+- Added a hint line under the table: "Defaults shown. Rebind any
+  action under Settings → Keyboard shortcuts" — so customized
+  users don't find stale keys.
+- Added CHANGELOG link alongside LICENSE / NOTICE in the
+  header row.
+
+### NOTICE.md
+
+Added `adrg/sysfont` (MIT) and `adrg/xdg` (MIT) — direct
+dependencies introduced in Revs 57–61 for font discovery that
+weren't in the third-party notices. Both ship in the binary at
+runtime.
+
+### Modified / new
+
+- `README.md` — Project status section rewritten.
+- `CHANGELOG.md` — new, user-facing release history.
+- `NOTICE.md` — +2 Go dep attributions.
+- `frontend/src/help/HelpDialog.svelte` — AppVersion wire-up,
+  18-row shortcuts table, reset-hint, CHANGELOG link.
+
+### Tests
+
+`go test ./...` — green (no code changes).
+`FBE_CORPUS_DIR=~/Documents/books go test -tags 'corpus xsd' -v
+./internal/fb2/ -run TestCorpus` — **fidelityBroken=0** on 8 files.
+`npm run check` — 0 errors.
+`npm run check:theme` — clean.
+`npm run test` — 80/80 pass.
+
+### Next
+
+Rev 81: bump triple (version.go + wails.json + package.json) to
+`1.0.0-rc1`, merge dev → main, tag `v1.0.0-rc1`. The signing
+pipeline (Rev 78/79) should kick in on that tag, producing the
+first signed+notarized DMG for public RC soak.
+
+---
+
 ## Rev 79 — 2026-04-24 — Switch notarization to App Store Connect API key [dev]
 
 Follow-up to Rev 78 (signing pipeline was still pre-test). Swaps the
