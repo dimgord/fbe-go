@@ -6,6 +6,92 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 79 — 2026-04-24 — Switch notarization to App Store Connect API key [dev]
+
+Follow-up to Rev 78 (signing pipeline was still pre-test). Swaps the
+notarize auth path from the legacy `--apple-id / --team-id /
+--password` flow to App Store Connect API key (`--key / --key-id /
+--issuer`). Apple's notarytool docs now promote the API-key path
+first; it's the right long-term choice for CI and makes the secret
+footprint cleaner.
+
+### Why
+
+Dmitry couldn't locate the "App-Specific Passwords" UI at
+`appleid.apple.com/account/manage` — Apple reorganized that
+dashboard and the pane is now buried under
+`account.apple.com → Sign-In and Security`, and only appears when
+2FA is active. Rather than chase the UI, we move to the API-key
+path that Apple explicitly recommends for automation:
+
+- Not tied to an individual Apple ID email (no breakage if the
+  holder's email changes).
+- Revocable per-key without touching your ability to sign in.
+- Scope-minimal (`Developer` role on the key = notary submit
+  only; no App Store Connect write access).
+- `xcrun notarytool submit --key <.p8> --key-id <10-char>
+  --issuer <UUID>` is the form notarytool's own help documents
+  first.
+
+### Workflow change
+
+`.github/workflows/release.yml`:
+- Job `env:` block drops `APPLE_ID` and `APPLE_APP_SPECIFIC_PASSWORD`,
+  adds `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`,
+  `APPLE_API_KEY_P8_BASE64`. `APPLE_TEAM_ID` is no longer needed —
+  the full signing-identity CN is derived from
+  `security find-identity` and notarytool infers the team from the
+  API key.
+- Guard expression flips from `env.APPLE_TEAM_ID != ''` to
+  `env.APPLE_API_KEY_ID != ''`.
+- `Notarize .app` step decodes the .p8 to `$RUNNER_TEMP/asc_api_key.p8`
+  (chmod 600), exports `$API_KEY=<path>` via `$GITHUB_ENV` so the
+  downstream DMG step reuses the same file, and calls notarytool
+  with `--key / --key-id / --issuer`.
+- `Codesign + notarize DMG` step likewise uses `$API_KEY`.
+- Cleanup step renamed → `Remove ephemeral keychain + API key`,
+  shreds the .p8 with `rm -f` alongside `security delete-keychain`.
+  `if: always()` ensures a failed notary run still cleans up.
+
+Net secret count stays at 5, with a cleaner separation: 2 cert
+secrets for codesigning + 3 API-key secrets for notarization.
+
+### Secrets checklist rewrite
+
+`packaging/macos/SIGNING.md` reshaped:
+
+- Step 1 (cert export) unchanged — still need the Developer ID
+  Application .p12 for codesigning.
+- Step 2 replaced: "App Store Connect API key" flow —
+  appstoreconnect.apple.com → Users and Access → Integrations →
+  App Store Connect API → Generate API Key → role: Developer.
+  One-shot .p8 download; Issuer ID + Key ID noted separately.
+- Step 3 rewritten for two base64 blobs (.p12 + .p8).
+- Step 4 — new secret table with 5 names.
+- Step 5 — unchanged verification procedure
+  (`v0.2.0-signtest` tag → `spctl --assess`).
+- Step 6 — rotation schedule for the API key alongside the cert.
+- New closing section explaining why API-key beats
+  app-specific-password for CI (useful context if someone forks
+  later and asks).
+
+### Modified
+
+- `.github/workflows/release.yml` — env + 4 signing steps + cleanup.
+- `packaging/macos/SIGNING.md` — rewritten around API-key flow.
+
+### Next
+
+- Dmitry: run through `packaging/macos/SIGNING.md` steps 1–4,
+  push `v0.2.0-signtest` tag, verify `spctl --assess` on the
+  resulting DMG.
+- Rev 80: corpus fidelity re-verification + README v1.0
+  messaging + user-facing `CHANGELOG.md` + HelpDialog "About"
+  section.
+- Rev 81: bump triple to `1.0.0-rc1`, merge dev → main, tag.
+
+---
+
 ## Rev 78 — 2026-04-23 — macOS codesign + notarize in release.yml (1.0 blocker) [dev]
 
 First of three revs to clear the v1.0.0 runway. Wires Developer-ID
