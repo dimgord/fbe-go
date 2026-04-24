@@ -19,16 +19,76 @@ the Developer ID Application certificate — that part hasn't moved.
 
 ## 1. Export the Developer ID Application cert (for codesigning)
 
-Most developer accounts already have one. If not:
+Apple issues several distinct certificate types — **only
+`Developer ID Application` works for notarized distribution outside the
+Mac App Store**. The one you probably already have in Keychain (`Apple
+Development`) is for local Xcode builds on your own devices and is
+**not** accepted by notarytool. Check before you waste 15 minutes:
 
-1. Xcode → Settings → Accounts → your Apple ID → Manage Certificates → `+`
-   → **Developer ID Application**. (You need at least **Admin** or
-   **Account Holder** role; personal / solo accounts have it by default.)
-2. Keychain Access → **login** keychain → Category: **My Certificates** →
-   find `Developer ID Application: Your Name (TEAMID)` → right-click →
-   **Export** → save as `developer_id_application.p12`. You'll be prompted
-   for an **export password** — pick any strong string; you'll paste it
-   into Secrets later as `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`.
+```bash
+security find-identity -v -p codesigning \
+  | grep -i "developer id application"
+```
+
+No output → you don't have one yet; create it first (§1a). Output
+exists → skip to §1b and export.
+
+### 1a. Create a new Developer ID Application cert
+
+**Preferred path — Xcode:**
+
+1. Xcode → Settings (`⌘,`) → **Accounts**.
+2. Select your Apple ID in the left list → **Manage Certificates…**.
+3. Bottom-left `+` → **Developer ID Application**.
+4. Xcode generates a CSR locally, requests the cert, and installs it in
+   your login keychain automatically.
+
+(Requires **Admin** or **Account Holder** role on your developer team;
+solo / personal accounts have this by default.)
+
+**Fallback path — manual, via developer.apple.com:**
+
+If Xcode refuses ("You already have a current cert" when the existing
+one is a different type, or silent no-op):
+
+1. Keychain Access → menu **Keychain Access** → **Certificate Assistant**
+   → **Request a Certificate From a Certificate Authority…**
+   - User Email Address: your Apple ID email
+   - Common Name: your name
+   - CA Email Address: leave blank
+   - Request is: **Saved to disk** (mandatory — don't pick "Emailed")
+   - Save the `.certSigningRequest` file somewhere
+   - Keychain silently generates a paired private key in your login
+     keychain; keep it there until the issued cert is installed.
+2. <https://developer.apple.com/account/resources/certificates/list>
+   → blue `+` button → under **Software** pick **Developer ID
+   Application** → Continue.
+3. CA selection prompt: pick **G2 Sub-CA (Xcode 11.4.1 or later)**.
+4. Upload the `.certSigningRequest` → Continue → Download the issued
+   `.cer` file.
+5. Double-click the `.cer` to install into the login keychain. Since
+   the matching private key is already there (step 1), Keychain Access
+   automatically pairs them.
+
+### 1b. Verify and export
+
+In Keychain Access, **switch to the `My Certificates` tab** (top bar) —
+not the `Certificates` tab, which lists *all* CA certs including
+Apple's intermediate authorities (names like `Developer ID
+Certification Authority` — these are Apple's internal signing CAs, not
+your personal cert; clicking them doesn't get you anything).
+
+Find the entry named literally `Developer ID Application: Your Name
+(TEAMID)`. Click the disclosure triangle — a child row with the 🔑 icon
+and name matching the cert must be visible. **No key visible → the
+cert is orphaned; don't bother exporting.** Go back to §1a and re-do
+the CSR path.
+
+Right-click the cert (not the key inside it) → **Export** → `.p12`
+format → `developer_id_application.p12`. You'll be prompted for an
+**export password**; pick any strong string and record it — this is
+the value of the `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD` secret
+in step 4.
 
 **Verify the .p12 is complete** (cert + private key):
 
@@ -37,10 +97,25 @@ openssl pkcs12 -info -in developer_id_application.p12 -nodes -legacy \
   | grep -E "friendlyName|subject="
 ```
 
-You should see at least one **private key** entry and the matching
-certificate subject. If there's no private key, re-export and make sure
-you select *both* the certificate and its attached key in Keychain Access
-before File → Export.
+Expected output:
+
+```
+friendlyName: Developer ID Application: Your Name (TEAMID)
+subject=UID=TEAMID, CN=Developer ID Application: Your Name (TEAMID), ...
+friendlyName: Mac Developer ID Application: Your Name
+```
+
+Three things to confirm:
+
+- `friendlyName` / `CN` starts with **`Developer ID Application:`** —
+  not `Apple Development:`, `iPhone Developer:`, or `Mac Installer:`.
+  Those are different certs that look similar in the UI but don't work
+  for distribution notarization.
+- `UID` matches your Team ID (10 alphanumeric chars).
+- A `Mac Developer ID Application: …` entry for the **private key** also
+  appears. If this line is missing, the .p12 has no key in it —
+  Keychain Access's Export skips the key when it can't find one for
+  the cert. Re-check §1b's "child row" visibility and re-export.
 
 ## 2. Generate an App Store Connect API key (for notarization)
 
@@ -77,10 +152,29 @@ base64 -i AuthKey_ABCD1E2345.p8        -o AuthKey.p8.base64
 On macOS, `base64` is from coreutils and produces single-line output by
 default — paste the entire file contents straight into the Secret value.
 
+**⚠️ The base64 outputs are sensitive.** Despite looking like noise,
+they decode back to your real private key material. Treat them with
+password-level discipline: don't paste into chats, screenshots, pastebins,
+ChatGPT, or public logs. If one leaks, revoke immediately (§6) — for the
+.p8 that's a 30-second fix in App Store Connect; for the .p12 you'd need
+to revoke the cert in developer.apple.com which breaks stapled already-
+signed artifacts.
+
+To move the blob into GitHub's Secret field without typos, pipe through
+`pbcopy`:
+
+```bash
+cat developer_id_application.p12.base64 | pbcopy
+# → switch to browser, paste into the Secret value field
+cat AuthKey.p8.base64 | pbcopy
+# → same
+```
+
 ## 4. Add five repository secrets
 
-Repository → Settings → Secrets and variables → **Actions** → New
-repository secret. Add these five, exactly these names:
+Repository → Settings → Secrets and variables → **Actions** → green
+**New repository secret** button on the right. Add these five, exactly
+these names:
 
 | Secret name                                       | Value                                                 |
 |---------------------------------------------------|-------------------------------------------------------|
@@ -89,6 +183,40 @@ repository secret. Add these five, exactly these names:
 | `APPLE_API_KEY_P8_BASE64`                         | Contents of `AuthKey.p8.base64`                       |
 | `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`       | Contents of `developer_id_application.p12.base64`     |
 | `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`     | Export password you chose in step 1                   |
+
+### GitHub UI gotchas
+
+The **New repository secret** form has two separate fields, stacked:
+
+```
+Name *
+┌─────────────────────────────────────┐
+│ APPLE_API_KEY_P8_BASE64             │   ← short identifier [A-Z0-9_]
+└─────────────────────────────────────┘
+
+Secret *
+┌─────────────────────────────────────┐
+│ LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0t... │   ← the actual value (any content)
+│                                     │
+└─────────────────────────────────────┘
+
+            [ Add secret ]
+```
+
+- **Name** is strict: only `[a-zA-Z0-9_]`, must start with a letter or
+  underscore. GitHub rejects with:
+  > Secret names can only contain alphanumeric characters ([a-z],
+  > [A-Z], [0-9]) or underscores (\_). Spaces are not allowed.
+  - **No leading/trailing whitespace** — pasting a secret name with a
+    stray space at the start trips this too. Copy-paste the names from
+    the table above exactly; double-check before Save.
+- **Secret** (value) field accepts anything — whitespace, newlines,
+  giant base64 blobs. This is where the actual content goes.
+- The cursor defaults to the **Name** field when the form opens. If you
+  auto-paste immediately (⌘V after Add secret), the blob lands in the
+  wrong field. Click into Secret first.
+
+### Detection
 
 The release workflow detects these via `APPLE_API_KEY_ID != ''`. If the
 API Key ID secret is missing, all signing + notarization steps skip and
@@ -176,6 +304,52 @@ to see the specific entitlements / signature rejection.
 Common Name doesn't start with `Developer ID Application:`. If you
 accidentally exported an "Apple Development" or "Mac App Distribution"
 cert, re-export the Developer ID one specifically.
+
+## Trust model
+
+Uploading signing secrets to GitHub is a trust decision. What you're
+trusting:
+
+- **GitHub's backend** — secrets are encrypted at rest (LibSodium sealed
+  box, per-repo key), served over TLS 1.3 to the browser, write-only in
+  the UI (plaintext never re-displayed after Save), auto-masked in
+  public Action logs, and not exposed to workflows triggered by forked
+  PRs. GitHub's SOC 2 Type II audit covers the operational side. You
+  are **not** getting a zero-knowledge guarantee — GitHub's systems
+  decrypt secrets at workflow runtime.
+- **Your own machine at upload time** — the secret exists in plaintext
+  on your laptop during base64 encoding and pbcopy. Clean browser
+  session (no rogue extensions with "read all site data") and a
+  private network reduce the attack surface to "my own OS".
+
+What you're risking if something leaks despite this:
+
+- **API key (.p8)** compromise → attacker can submit notary jobs as
+  your team. Mitigation: **revoke in 2 clicks** at App Store Connect
+  (Users and Access → Integrations → your key → Revoke). Generate a
+  new one, rotate the three `APPLE_API_*` secrets, move on.
+- **Developer ID cert (.p12)** compromise → attacker can codesign
+  binaries as you. Mitigation is harder: revoke the cert at
+  developer.apple.com — but revocation also **invalidates every
+  previously-stapled artifact** you've already shipped, because
+  Gatekeeper re-checks the cert chain. For a beta with few users this
+  is acceptable; for production you'd plan the response before it
+  matters.
+
+For a solo open-source beta project this trust model is industry-norm
+(Electron, Tauri, Obsidian, every Rust/Go project that ships signed
+macOS releases lives on the same model). If you grow and need stronger
+guarantees, the standard upgrade paths are:
+
+- **OIDC federation** — GitHub Actions swaps a short-lived token with
+  AWS KMS / HashiCorp Vault at runtime; no long-lived secrets in GH.
+- **Self-hosted runner** on your Mac mini — secrets live in local
+  keychain, GitHub sees only build output.
+- **Hardware tokens** (YubiKey for codesign, CloudHSM for notary) —
+  enterprise-grade, significant setup cost.
+
+None of these are warranted at Phase-5 stage; listing them here so the
+upgrade path is clear when scale changes.
 
 ## Why not app-specific passwords?
 
