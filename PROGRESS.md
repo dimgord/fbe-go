@@ -6,6 +6,87 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 81 — 2026-04-24 — v1.0.0-rc1 cut [dev]
+
+Third and final pre-1.0 rev. Bumps the version triple to
+`1.0.0-rc1` so the `v1.0.0-rc1` tag produces a first-ever
+signed + notarized release candidate through the Rev 78/79
+pipeline, verified live as `v0.2.0-signtest` earlier today
+(`spctl --assess` → `accepted / source=Notarized Developer ID`).
+
+### Scope — tag strategy
+
+Per CLAUDE.md's "NEVER push to main/master without explicit
+confirmation" rule, **RC stays on `dev`**:
+
+- `v1.0.0-rc1` tag points at dev's current HEAD.
+- `main` doesn't move until the RC soaks successfully (2–3 days
+  of manual QA on the signed DMG + AppImage) and the final
+  `v1.0.0` tag is cut — that merge will be its own rev with
+  explicit confirmation.
+- Canonical GitFlow would merge to main now; we explicitly don't
+  because a regression found during RC soak would then force a
+  `git reset --hard` / force-push on main. Keeping main frozen
+  at the previous stable (currently nothing — first 1.0 cut)
+  trades off visible "we're almost there" for safer rollback.
+
+### Version triple sync
+
+- `version.go` → `const Version = "1.0.0-rc1"` (compiled into
+  the binary; source of truth for `App.AppVersion` and
+  `App.CheckForUpdate`'s current-version compare).
+- `wails.json` → `info.productVersion: "1.0.0-rc1"` (used by
+  Wails for the .app bundle's Info.plist version fields).
+- `frontend/package.json` → `version: "1.0.0-rc1"` (fallback
+  for HelpDialog when Wails bridge isn't attached, e.g. in
+  vite-dev browser tab).
+- `frontend/package-lock.json` — resync via
+  `npm install --package-lock-only`.
+
+Test fixtures in `internal/fb2/updates/updates_test.go` and
+example strings in `release.yml` / `updates.go` docstrings
+intentionally left at `v0.2.0-beta` — they're example inputs
+to the semver comparator, not ties to the actual product
+version.
+
+### CHANGELOG
+
+Prepended a `[1.0.0-rc1] — 2026-04-24` entry pointing readers
+to the `[1.0.0]` section for the actual feature list. Sets
+expectation: this is an RC; file regressions against it.
+
+### Release process from here
+
+1. Commit this rev, push to `origin/dev`.
+2. `git tag v1.0.0-rc1 && git push origin v1.0.0-rc1`.
+3. The `v*` tag triggers `.github/workflows/release.yml`.
+   macOS + Linux jobs build in parallel; macOS goes through
+   the signing + notarize path (secrets confirmed working).
+   Expected duration ~5–10 min total (Apple notary usually
+   ~1–3 min per submission during weekdays).
+4. A GitHub Release is published automatically as a
+   **prerelease** (the workflow's `prerelease:` expression
+   detects `-rc` in the tag name).
+5. Manual QA on the signed artifacts over the next 2–3 days —
+   fresh macOS Mac + Linux box if possible, verifying:
+   `spctl --assess` Notarized verdict; drag-to-Applications
+   works without Gatekeeper warning; AppImage launches with
+   thumbnailer integration; open / edit / save cycle on a
+   real .fb2; hotkeys tab in Settings; Binary Manager; search;
+   HTML export.
+6. If clean: Rev 82 merges dev → main and tags `v1.0.0`.
+7. If regression: Rev 82 patches on dev, RC2 tag, repeat.
+
+### Modified
+
+- `version.go` — 0.2.0-beta → 1.0.0-rc1.
+- `wails.json` — productVersion bump.
+- `frontend/package.json` — version bump.
+- `frontend/package-lock.json` — auto-synced via npm.
+- `CHANGELOG.md` — [1.0.0-rc1] entry added.
+
+---
+
 ## Rev 80 — 2026-04-24 — Docs polish for 1.0: README + CHANGELOG + About + NOTICE [dev]
 
 Second of three pre-1.0 revs. Pure docs + HelpDialog wire-up; no
