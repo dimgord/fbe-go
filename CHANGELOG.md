@@ -6,6 +6,14 @@ log (every code change, every rev, every fix) see
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use
 [SemVer](https://semver.org/).
 
+## [1.0.0-rc1] — 2026-04-24
+
+First release candidate for 1.0. Feature set below (see `1.0.0` entry)
+plus the full signed + notarized DMG pipeline live for the first time
+(see Revs 78/79 in `PROGRESS.md`). Soaking for 2–3 days of manual QA
+before the final 1.0 tag; please file issues against any regression or
+packaging glitch you find against this tag.
+
 ## [1.0.0] — unreleased
 
 First stable release. Feature-complete port of FictionBook Editor to
