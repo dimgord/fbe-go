@@ -94,6 +94,8 @@
     { keys: `${shift}-${mod}-P`,                     action: "Wrap in poem" },
     { keys: `${shift}-${mod}-T`,                     action: "Insert table…" },
     { keys: `${shift}-${mod}-M`,                     action: "Merge with next sibling" },
+    { keys: `${mod}-Click`,                          action: "Follow internal link / footnote" },
+    { keys: `${mod}-[`,                              action: "Back from followed link" },
   ];
 
   function close() {

@@ -34,12 +34,26 @@ func Parse(r io.Reader) (*doc.FictionBook, error) {
 		return nil, err
 	}
 
-	dec := xml.NewDecoder(br)
+	// When a BOM forced a non-UTF-8 encoding (UTF-16 LE/BE), pre-decode
+	// the byte stream into UTF-8 *before* xml.NewDecoder reads it.
+	// Reason: encoding/xml reads the `<?xml encoding="..."?>` declaration
+	// with the raw bytes, assuming UTF-8, and only consults CharsetReader
+	// after parsing the declaration. UTF-16 LE bytes start with `<\x00?\x00…`
+	// which the decoder fails on as "expected element name after <" — so
+	// CharsetReader never gets a chance.
+	xmlInput := io.Reader(br)
+	if forced != nil && forced != unicode.UTF8 {
+		xmlInput = forced.NewDecoder().Reader(br)
+	}
+
+	dec := xml.NewDecoder(xmlInput)
 	dec.DefaultSpace = doc.NSFictionBook
 	dec.Strict = false // FBE output isn't always canonical
 	if forced != nil {
-		dec.CharsetReader = func(c string, in io.Reader) (io.Reader, error) {
-			return forced.NewDecoder().Reader(in), nil
+		// xmlInput is already UTF-8; if the declaration names a non-UTF-8
+		// encoding, returning a passthrough avoids double-decoding.
+		dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) {
+			return in, nil
 		}
 	} else {
 		dec.CharsetReader = charsetReader
