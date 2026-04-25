@@ -6,6 +6,29 @@ log (every code change, every rev, every fix) see
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use
 [SemVer](https://semver.org/).
 
+## [1.0.0-rc3] — 2026-04-25
+
+Third release candidate. Replaces `1.0.0-rc2`.
+
+### Fixed
+
+- UTF-16 LE / BE FB2 files (with BOM) now parse correctly.
+  Previously `parser.Parse` failed on the very first line because
+  Go's encoding/xml reads the XML declaration assuming UTF-8 before
+  consulting the configured charset reader. The fix pre-decodes
+  UTF-16 streams into UTF-8 *before* the XML decoder sees them.
+  See Rev 83 in `PROGRESS.md`.
+
+### Added
+
+- **Cmd/Ctrl-click on a footnote or any internal link** in the
+  editor now jumps to the target node (any element with the
+  matching `id` — typically a `<section>` inside `<body name="notes">`)
+  and scrolls it to the top of the viewport.
+- **Cmd/Ctrl+[** pops one step back through the navigation stack —
+  the same gesture as "back" in JetBrains IDEs.
+- HelpDialog → Keyboard shortcuts table lists both new bindings.
+
 ## [1.0.0-rc2] — 2026-04-25
 
 Second release candidate. Replaces `1.0.0-rc1`.

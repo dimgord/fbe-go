@@ -11,6 +11,7 @@
   import { pmDocToFB2 } from "./serialize";
   import { cleanPastedHTML, cleanPastedText } from "./paste";
   import { searchPlugin, findNext as searchFindNext, findPrev as searchFindPrev } from "./search/plugin";
+  import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
   import {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
     toggleSub, toggleSup, toggleCode, toggleLink,
@@ -268,8 +269,10 @@
       plugins: [
         history(),
         keymap(buildKeymap(hotkeys)),
+        keymap({ "Mod-[": noteLinksBack }),
         keymap(baseKeymap),
         searchPlugin(),
+        noteLinksPlugin(),
       ],
     });
     view = new EditorView(container, {
@@ -296,8 +299,10 @@
       plugins: [
         history(),
         keymap(buildKeymap(hotkeys)),
+        keymap({ "Mod-[": noteLinksBack }),
         keymap(baseKeymap),
         searchPlugin(),
+        noteLinksPlugin(),
       ],
     }));
   }

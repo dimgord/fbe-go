@@ -6,6 +6,160 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 83 — 2026-04-25 — UTF-16 parse + note-link navigation → v1.0.0-rc3 [dev]
+
+Two more soak-QA findings on `v1.0.0-rc2`. Both pre-existing
+gaps surfaced as the test corpus grew (UTF-16) and as Dmitry
+manually exercised footnote-heavy books in the editor
+(note-link click). Bundled into one rev to keep the RC cycle
+tight: shared release, shared soak window.
+
+### Fix 1 — UTF-16 LE/BE BOM parse failure
+
+#### Symptom
+
+`parser.Parse` failed on `~/Documents/books/The Long Watch.fb2`
+(UTF-16 LE with BOM) with
+`XML syntax error on line 1: expected element name after <`.
+Surfaced as the only ❌ in the Rev 82 corpus run after the
+author fix shrank the failure list.
+
+#### Root cause
+
+`detectBOM` correctly identifies the BOM and discards the two
+header bytes, then `xml.NewDecoder` is constructed over the
+remaining UTF-16 bytes. Go's encoding/xml reads the
+`<?xml encoding="…"?>` declaration **assuming UTF-8** before
+consulting `CharsetReader` — so it sees `<\x00?\x00x\x00m\x00l…`
+(null bytes between every UTF-16 LE character) and fails
+immediately. CharsetReader never gets called, even though we
+configured it.
+
+#### Fix
+
+When `detectBOM` returns a forced non-UTF-8 encoding, wrap the
+post-BOM `bufio.Reader` in `forced.NewDecoder().Reader(br)`
+*before* handing it to `xml.NewDecoder`. The decoder now sees
+real UTF-8 bytes and parses the XML declaration normally.
+`CharsetReader` becomes a passthrough — the underlying stream is
+already decoded, so honouring the in-document `encoding="utf-16"`
+attribute would mean double-decoding.
+
+### Fix 2 — Cmd/Ctrl+click navigates internal links
+
+#### Symptom
+
+In an open `.fb2` document, clicking a footnote reference in the
+ProseMirror editor put the cursor inside the link text but did
+**not** navigate to the note. Same `<a l:href="#…">` survived
+fine through `export html` and was clickable in the exported
+HTML — feature gap, not a fidelity bug.
+
+#### Fix
+
+New module `frontend/src/editor/noteLinks.ts` with two pieces:
+
+- `noteLinksPlugin()` — PM Plugin whose `handleClick` prop fires
+  on `Cmd/Ctrl+click`. Walks the doc to find the node carrying
+  `attrs.id === href.slice(1)`, dispatches a `setSelection` to
+  that text position, and pushes the originating cursor position
+  onto a per-view back-stack held in plugin state.
+- `noteLinksBack` — a PM `Command` that pops the stack and
+  navigates back. Bound to `Mod-[` in `Editor.svelte`'s keymap
+  (matches IDE convention; survives WKWebView since it's caught
+  by PM before the webview's gesture handler).
+
+#### Scroll-to-top, not minimal scroll
+
+`tr.scrollIntoView()` alone uses PM's minimal-scroll heuristic:
+when the target is far below the viewport, it lands on the
+*last visible line*, hiding the body of the note. Workaround:
+after dispatch, schedule a microtask that calls
+`element.scrollIntoView({ block: "start" })` on the target's
+DOM. Try `view.nodeDOM(targetPos)` first (works for block
+boundaries like `<section>`), fall back to `view.domAtPos(sel.from)`
+which works for text positions inside paragraphs (the back-jump
+case — original cursor was in mid-paragraph, not at a node
+boundary).
+
+#### Discovery — false-positive "back doesn't work"
+
+During wiring, the back command appeared broken: cursor moved
+in plugin state but the user couldn't see it happen.
+Root cause: `view.nodeDOM` returns `null` for text positions,
+so the `scrollIntoView` no-op'd silently for back jumps. Fix
+above (nodeDOM → domAtPos fallback) handles both block and text
+target positions. Diagnostic logs that surfaced the issue
+(`[fbe] noteLinks push from … → …` and `[fbe] noteLinksBack
+invoked, stack: …`) are removed before commit.
+
+#### HelpDialog
+
+Two new entries appended to the Keyboard shortcuts table:
+
+- `⌘-Click` — Follow internal link / footnote
+- `⌘-[` — Back from followed link
+
+### Schema audit
+
+No schema or struct changes in this rev. UTF-16 fix touches
+`internal/fb2/parser/parser.go` only. Note-link click is
+frontend-only.
+
+### Tests
+
+- `internal/fb2/parser/parser_test.go` — `TestParseUTF16LEWithBOM`,
+  `TestParseUTF16BEWithBOM`. Both red before fix, green after.
+- Existing UTF-8 / UTF-8-BOM / Windows-1251 / KOI8-R tests still
+  pass — the new pre-decode path only triggers when `detectBOM`
+  returns a non-UTF-8 forced encoding.
+- Frontend `npm run check` (svelte-check) and `npm test` (vitest,
+  80 cases) both green; `npm run build` clean. No new vitest
+  coverage for `noteLinks.ts` — manual verification on the live
+  webview via Cmd-click + Cmd-[ on Nevelichka drama footnotes.
+
+### Corpus impact
+
+Same `~/Documents/books` corpus from Rev 82, now 166 files
+(one more added during soak):
+
+|                       | Rev 82 (after) | Rev 83 (after) |
+|-----------------------|---------------:|---------------:|
+| `parse OK`            |        165/166 |        166/166 |
+| `fidelityBroken`      |              0 |              0 |
+| `outValid` / 166      |        132/166 |        133/166 |
+| `srcValid` / 166      |        110/166 |        111/166 |
+
+`The Long Watch.fb2` flips from ❌ to ✅. `fidelityBroken=0`
+held across both fixes.
+
+### Modified
+
+- `internal/fb2/parser/parser.go` — pre-decode UTF-16 → UTF-8
+  before `xml.NewDecoder`; CharsetReader becomes pass-through
+  on forced-encoding path.
+- `internal/fb2/parser/parser_test.go` — UTF-16 LE + BE tests.
+- `frontend/src/editor/noteLinks.ts` — new module (plugin +
+  back command + scroll helper).
+- `frontend/src/editor/Editor.svelte` — wire `noteLinksPlugin`
+  + `Mod-[` keymap into both initial mount and reconfigure
+  blocks.
+- `frontend/src/help/HelpDialog.svelte` — two new shortcut rows.
+- `version.go` — 1.0.0-rc2 → 1.0.0-rc3.
+- `wails.json` — productVersion bump.
+- `frontend/package.json` — version bump.
+- `frontend/package-lock.json` — auto-synced via npm.
+- `CHANGELOG.md` — [1.0.0-rc3] entry added.
+
+### Release process
+
+Tag `v1.0.0-rc3` on `dev`, release workflow produces signed +
+notarized artifacts. Same soak window expectation as RC2: 2-3
+days of manual QA before the `v1.0.0` cut. If clean, Rev 84
+merges dev → main + tags `v1.0.0`.
+
+---
+
 ## Rev 82 — 2026-04-25 — author round-trip fidelity fix → v1.0.0-rc2 [dev]
 
 Soak QA on `v1.0.0-rc1` surfaced a fidelity regression on
