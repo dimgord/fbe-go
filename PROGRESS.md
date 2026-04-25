@@ -6,6 +6,137 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 82 — 2026-04-25 — author round-trip fidelity fix → v1.0.0-rc2 [dev]
+
+Soak QA on `v1.0.0-rc1` surfaced a fidelity regression on
+`Nevelichka drama.fb2` (one of the books in the
+`rozstrilyane_pokolinnya/` subdirectory added to the local corpus
+after Rev 80's "fidelityBroken=0 holds" check — Rev 80 ran against
+8 files; the corpus is now 165). The validation panel reported
+the round-tripped XML as XSD-invalid even though the source was
+valid.
+
+### Symptom
+
+Source had `<author><first-name>Сонячна</first-name><last-name/><nickname>VV</nickname></author>`.
+Our writer dropped the empty `<last-name/>` on round-trip, leaving
+`<author><first-name>Сонячна</first-name><nickname>VV</nickname></author>`
+— invalid per XSD `authorType` sequence A, which requires
+`last-name` (required, not `minOccurs="0"`).
+
+(Aside: libxml2 reported the resulting error at the line of the
+*first* author's `<nickname>`, not the third author. That's a
+known quirk of XSD choice diagnostics in libxml2 — when the
+choice fails partway through, the position cursor doesn't always
+land on the offending child. Not our bug; flagged so future
+debugging doesn't chase ghosts.)
+
+### Root cause
+
+`doc.Author` declared every name field as
+`string \`xml:"...,omitempty"\``. Go's `encoding/xml` treats an
+empty string + `omitempty` as "omit the element entirely",
+indistinguishable from "field was never set". For an XSD-required
+child like `<last-name>`, that silently turns valid input into
+invalid output.
+
+The bug is older than the rev that surfaced it — Rev 80's corpus
+check passed only because it ran against 8 files, none of which
+exercised the empty-required-element path. RC1 shipped with this
+regression.
+
+### Fix — custom `Author.MarshalXML` (variant B from the planning chat)
+
+`authorType` is an XSD `<xs:choice>` of two sequences:
+
+- A) `first-name`, `middle-name?`, `last-name`, `nickname?`,
+  `home-page*`, `email*`, `id?`
+- B) `nickname`, `home-page*`, `email*`, `id?`
+
+The new `MarshalXML` picks a sequence by inspecting populated
+fields:
+
+- If any of `FirstName`, `MiddleName`, `LastName` is set
+  → sequence A → emit `first-name` and `last-name`
+  *unconditionally* (the schema makes them required), plus
+  `middle-name`/`nickname` only when non-empty.
+- Otherwise → sequence B → emit `nickname` (the required head
+  of the sequence).
+
+`home-page`, `email`, `id` keep their `omitempty` semantics in
+both branches (they're optional everywhere).
+
+This is the minimal-blast-radius option. Alternatives considered:
+
+- Drop `omitempty` from every name field — would inject empty
+  `<first-name></first-name><last-name></last-name>` into
+  legitimate nickname-only authors, invalidating sequence B.
+- Switch to `*string` (nil = absent, `&""` = present-but-empty)
+  for full fidelity — broader refactor across all 4 fields × all
+  call sites in Go and the Svelte frontend; not justified by this
+  bug alone.
+
+### Schema audit
+
+Walked every `string` field in `internal/fb2/doc/doc.go` for the
+same `omitempty`-but-required-by-XSD pattern. All other required
+fields (`TitleInfo.BookTitle`, `TitleInfo.Lang`,
+`DocumentInfo.ID`/`Version`, `Image.Href`, `Sequence.Name`,
+`CustomInfo.InfoType`, `Binary.ID`/`ContentType`, `Stylesheet.Type`)
+are already declared without `omitempty`. `Author` was the only
+case.
+
+### Corpus impact (`FBE_CORPUS_DIR=~/Documents/books`)
+
+|                       | before fix | after fix |
+|-----------------------|-----------:|----------:|
+| `fidelityBroken`      |         26 |       0   |
+| `outValid` / 165      |        105 |     132   |
+| `srcValid` / 165      |        110 |     110   |
+
+Cardinal invariant from CLAUDE.md ("fidelityBroken must stay at 0")
+restored. Twenty-seven previously-broken files now produce
+XSD-valid output without source modification.
+
+One pre-existing parse failure remains: `The Long Watch.fb2`
+(UTF-16 LE with BOM) — `parser.Parse` fails with "expected
+element name after <" even though `detectBOM` correctly strips
+the BOM. Confirmed via `git stash` to predate this fix; tracked
+separately (no rev — post-1.0 follow-up).
+
+### Tests
+
+New `internal/fb2/writer/author_test.go` with two cases:
+
+- `TestAuthorEmptyLastNamePreserved` — minimal repro of the
+  Nevelichka drama pattern; asserts `<last-name></last-name>`
+  survives round-trip.
+- `TestAuthorNicknameOnlyDoesNotInjectEmptyNames` — guard against
+  the fix overshooting and emitting empty name fields for
+  sequence-B authors.
+
+`go test ./...` and `go test -tags xsd ./...` both green.
+
+### Modified
+
+- `internal/fb2/doc/doc.go` — `Author.MarshalXML` added; type
+  comment expanded to spell out the choice + why custom marshalling
+  is needed.
+- `internal/fb2/writer/author_test.go` — new.
+- `version.go` — 1.0.0-rc1 → 1.0.0-rc2.
+- `wails.json` — productVersion bump.
+- `frontend/package.json` — version bump.
+- `frontend/package-lock.json` — auto-synced via npm.
+- `CHANGELOG.md` — [1.0.0-rc2] entry added.
+
+### Release process
+
+Same RC pipeline as Rev 81: tag `v1.0.0-rc2` on `dev`, release
+workflow produces signed/notarized macOS DMG + Linux AppImage as
+prerelease, soak again before any `v1.0.0` cut.
+
+---
+
 ## Rev 81 — 2026-04-24 — v1.0.0-rc1 cut [dev]
 
 Third and final pre-1.0 rev. Bumps the version triple to

@@ -6,6 +6,22 @@ log (every code change, every rev, every fix) see
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use
 [SemVer](https://semver.org/).
 
+## [1.0.0-rc2] — 2026-04-25
+
+Second release candidate. Replaces `1.0.0-rc1`.
+
+### Fixed
+
+- Round-trip fidelity for `<author>` elements with an empty
+  `<last-name/>` child. Previously these survived through the
+  parser correctly but were dropped on save, turning XSD-valid
+  source documents into XSD-invalid output. Affects authors that
+  use the FB2 sequence-A form (first-name + last-name + nickname)
+  with the last-name intentionally left blank — a real-world
+  pattern in some legacy collections. 26 corpus files moved from
+  "fidelity broken" back to fully round-trip-clean. See Rev 82
+  in `PROGRESS.md` for the schema-choice analysis.
+
 ## [1.0.0-rc1] — 2026-04-24
 
 First release candidate for 1.0. Feature set below (see `1.0.0` entry)
@@ -13,6 +29,9 @@ plus the full signed + notarized DMG pipeline live for the first time
 (see Revs 78/79 in `PROGRESS.md`). Soaking for 2–3 days of manual QA
 before the final 1.0 tag; please file issues against any regression or
 packaging glitch you find against this tag.
+
+Superseded by `1.0.0-rc2` after a fidelity regression was found
+during soak — see entry above.
 
 ## [1.0.0] — unreleased
 

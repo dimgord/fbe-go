@@ -67,6 +67,16 @@ type Genre struct {
 }
 
 // Author describes a person (author / translator / doc-info author).
+//
+// authorType in FictionBook.xsd is a choice between two sequences:
+//   A) first-name, middle-name?, last-name, nickname?, home-page*, email*, id?
+//   B) nickname, home-page*, email*, id?
+//
+// `,omitempty` on the name fields would silently drop required-but-empty
+// children — e.g. a real-world `<last-name/>` in sequence A — and turn an
+// XSD-valid source into an XSD-invalid round-trip. Custom MarshalXML below
+// picks the sequence by inspecting populated fields and emits the
+// schema-required children unconditionally for that sequence.
 type Author struct {
 	FirstName  string   `xml:"first-name,omitempty"`
 	MiddleName string   `xml:"middle-name,omitempty"`
@@ -75,6 +85,83 @@ type Author struct {
 	HomePage   []string `xml:"home-page,omitempty"`
 	Email      []string `xml:"email,omitempty"`
 	ID         string   `xml:"id,omitempty"`
+}
+
+// MarshalXML emits authorType per the XSD choice. See the type comment.
+//
+// Sequence A is selected when FirstName, MiddleName, or LastName is
+// populated — i.e. there's any "named" content. In that branch first-name
+// and last-name are always emitted (even when empty) because the schema
+// makes them required.
+//
+// Sequence B is selected when only the nickname / home-page / email / id
+// fields carry content. In that branch nickname is emitted unconditionally
+// (it's the required head of the sequence). Empty <first-name>/<last-name>
+// are *not* injected — that would invalidate sequence B.
+//
+// If every field is empty, fall back to sequence B with an empty
+// <nickname/> so the writer still produces a parseable element rather than
+// a self-closing <author/>.
+func (a Author) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Attr = nil
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+
+	emit := func(local, value string) error {
+		s := xml.StartElement{Name: xml.Name{Local: local}}
+		if err := e.EncodeToken(s); err != nil {
+			return err
+		}
+		if value != "" {
+			if err := e.EncodeToken(xml.CharData(value)); err != nil {
+				return err
+			}
+		}
+		return e.EncodeToken(s.End())
+	}
+
+	sequenceA := a.FirstName != "" || a.MiddleName != "" || a.LastName != ""
+	if sequenceA {
+		if err := emit("first-name", a.FirstName); err != nil {
+			return err
+		}
+		if a.MiddleName != "" {
+			if err := emit("middle-name", a.MiddleName); err != nil {
+				return err
+			}
+		}
+		if err := emit("last-name", a.LastName); err != nil {
+			return err
+		}
+		if a.Nickname != "" {
+			if err := emit("nickname", a.Nickname); err != nil {
+				return err
+			}
+		}
+	} else {
+		if err := emit("nickname", a.Nickname); err != nil {
+			return err
+		}
+	}
+
+	for _, hp := range a.HomePage {
+		if err := emit("home-page", hp); err != nil {
+			return err
+		}
+	}
+	for _, em := range a.Email {
+		if err := emit("email", em); err != nil {
+			return err
+		}
+	}
+	if a.ID != "" {
+		if err := emit("id", a.ID); err != nil {
+			return err
+		}
+	}
+
+	return e.EncodeToken(start.End())
 }
 
 // Date has a human-readable body and machine ISO value.
