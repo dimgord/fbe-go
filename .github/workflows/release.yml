@@ -313,6 +313,19 @@ jobs:
           #   AppImage output plugin honors it). Without it the name is
           #   derived from the desktop `Name=` field, which gives a
           #   whitespace-y ugly string like FictionBook_Editor_(Go)-*.AppImage.
+          # - --exclude-library: do NOT bundle libwebkit2gtk-4.1 /
+          #   libjavascriptcoregtk-4.1. WebKit forks helper processes
+          #   (WebKitNetworkProcess, WebKitWebProcess) from a path baked
+          #   into the .so via LIBEXECDIR at compile time — Ubuntu's
+          #   `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/`, which doesn't
+          #   exist on Fedora (`/usr/libexec/...`), Arch (`/usr/lib/...`),
+          #   etc. No env var overrides this in the 4.1 ABI. So bundling
+          #   our Ubuntu-built libwebkit makes the AppImage explode on
+          #   every non-Debian distro at startup. Standard fix used by
+          #   Tauri / GNOME Web AppImages: ship without libwebkit, rely
+          #   on the system's copy (which always knows its own paths).
+          #   Linux runtime dep on webkit2gtk-4.1 is now documented in
+          #   README; every distro that runs GTK apps already has it.
           OUTPUT="fbe-go-${TAG}-linux-x86_64.AppImage"
           export OUTPUT
           ./linuxdeploy --appimage-extract-and-run \
@@ -321,6 +334,8 @@ jobs:
             --desktop-file packaging/fbe-go.desktop \
             --icon-file build/appicon-linux.png \
             --icon-filename fbe-go \
+            --exclude-library 'libwebkit2gtk-4.1.so*' \
+            --exclude-library 'libjavascriptcoregtk-4.1.so*' \
             --output appimage
           mv "$OUTPUT" dist/
 

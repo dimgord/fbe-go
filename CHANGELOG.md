@@ -6,6 +6,33 @@ log (every code change, every rev, every fix) see
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use
 [SemVer](https://semver.org/).
 
+## [1.0.0-rc4] — 2026-04-25
+
+Fourth release candidate. Replaces `1.0.0-rc3`. Linux-only fix.
+
+### Fixed
+
+- **Linux AppImage now launches on every distro**, not just
+  Debian / Ubuntu. The previous AppImage bundled `libwebkit2gtk-4.1`
+  built on Ubuntu, which has the path to its WebKit helper
+  processes hard-coded into the `.so` at compile time. On Fedora,
+  Arch, openSUSE — anywhere that path doesn't exist — the app
+  crashed at startup with `Failed to spawn child process
+  ".../WebKitNetworkProcess"`. The release workflow now excludes
+  libwebkit from the AppImage so it uses the system's copy
+  (which always knows its own helper path). Same approach as
+  Tauri AppImages.
+
+### Linux runtime requirements (new)
+
+The AppImage now expects `webkit2gtk-4.1` to be installed
+system-wide. See README → "Linux runtime requirements" for the
+per-distro package name. Every distro that runs GTK desktop apps
+ships it as a transitive GNOME dependency.
+
+NixOS users: enable `programs.nix-ld` or wrap the launch with
+`appimage-run` / `steam-run`.
+
 ## [1.0.0-rc3] — 2026-04-25
 
 Third release candidate. Replaces `1.0.0-rc2`.
