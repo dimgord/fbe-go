@@ -6,6 +6,99 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 85 — 2026-04-26 — Linux AppImage: adopt full community excludelist → v1.0.0-rc5 [dev]
+
+Version: **1.0.0-rc5**.
+
+### Symptom
+
+rc4 AppImage launches past the WebKit fix from Rev 84 — gets a
+window — then on first credential-store touch (or sometimes
+immediately on Fedora 43, depending on which lib gets resolved
+first) crashes with:
+
+```
+./fbe-go-v1.0.0-rc5-linux-x86_64.AppImage: symbol lookup error:
+  /lib64/libsecret-1.so.0: undefined symbol: g_variant_builder_init_static
+```
+
+### Root cause
+
+Same family of bug as Rev 84, different lib. `g_variant_builder_init_static`
+was added to GLib **2.84** (2025). Fedora 43 ships GLib 2.84+ and its
+`/lib64/libsecret-1.so.0` was compiled against that. The AppImage
+bundles GLib from Ubuntu 24.04 (the GHA `ubuntu-latest` runner),
+which is GLib 2.80 — no such symbol. At AppImage startup, the dynamic
+linker resolves `libglib-2.0.so.0` to the bundled (older) copy because
+it appears first in the search path. When the host's libsecret is then
+loaded and tries to resolve its GLib symbols against that older bundled
+GLib, `g_variant_builder_init_static` is missing → process aborts before
+`main()` even returns to Go.
+
+The AppImageCommunity excludelist documents this exact failure mode in
+its `--- Bundling GLib and its consequences ---` comment block but
+explicitly defers the GLib-exclusion decision to app maintainers
+(it has cascading effects: every bundled lib that uses GLib will then
+use the host's GLib instead, which is fine in our case because GLib
+is forward-compatible — Ubuntu-built libs work against Fedora's newer
+GLib, but not the other way around).
+
+### Fix
+
+Adopt the full AppImageCommunity excludelist + add our own GLib /
+libsecret / libwebkit entries on top:
+
+- New `packaging/linux/excludelist.community`: vendored copy of the
+  upstream excludelist, pinned to commit
+  `19e30b276ffedf4d3b4b56bc6320f463625a74f8` (2025-07-21). 246 lines,
+  ~150 active entries covering ld-linux, libc, libstdc++, libdrm,
+  Mesa drivers, fontconfig, freetype, harfbuzz, libGL/libEGL,
+  pulseaudio client, dbus client, and a long tail of host-coupled
+  libs that should never be bundled. Each upstream entry has its
+  own justification comment.
+- New `packaging/linux/excludelist.local`: our additions
+  (libwebkit2gtk-4.1, libjavascriptcoregtk-4.1, libglib-2.0,
+  libgio-2.0, libgobject-2.0, libgmodule-2.0, libsecret-1) with
+  justifications referencing this rev and Rev 84.
+- `release.yml` now reads both files, strips comments / blanks, and
+  builds an `EXCLUDES=()` array fed to linuxdeploy. Replaces the
+  inline `--exclude-library` flags Rev 84 added.
+
+This is the "adopt the well-known list" approach the user picked
+over the minimal "just exclude GLib" patch in our debug session,
+on the theory that ABI-mismatch bugs would keep landing one lib at
+a time otherwise. The community list also catches things like
+libGL (driver coupling — bundling the Ubuntu-built libGL and trying
+to load Fedora-built Mesa drivers is asking for a different kind of
+crash) that we'd never have thought to add ourselves.
+
+### Refresh procedure
+
+When the upstream excludelist updates (rare — last edit was July
+2025), re-fetch and replace `excludelist.community` wholesale:
+
+```sh
+SHA=<latest-commit-sha-from-upstream>
+curl -fsSL \
+  "https://raw.githubusercontent.com/AppImageCommunity/pkg2appimage/${SHA}/excludelist" \
+  -o packaging/linux/excludelist.community
+# then update the SHA in the file's header comment
+```
+
+Keep `excludelist.local` separate so re-vendoring stays mechanical.
+
+### Files
+
+- New: `packaging/linux/excludelist.community` (246 lines).
+- New: `packaging/linux/excludelist.local` (38 lines, our additions).
+- Modified: `.github/workflows/release.yml` — replaced two inline
+  `--exclude-library` flags with a loop reading both files.
+- Modified: `wails.json`, `frontend/package.json` — version bump
+  to 1.0.0-rc5.
+- Modified: `CHANGELOG.md` — rc5 entry.
+
+---
+
 ## Rev 84 — 2026-04-25 — Linux AppImage portability: stop bundling libwebkit → v1.0.0-rc4 [dev]
 
 Version: **1.0.0-rc4**.

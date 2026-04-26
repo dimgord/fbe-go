@@ -313,19 +313,30 @@ jobs:
           #   AppImage output plugin honors it). Without it the name is
           #   derived from the desktop `Name=` field, which gives a
           #   whitespace-y ugly string like FictionBook_Editor_(Go)-*.AppImage.
-          # - --exclude-library: do NOT bundle libwebkit2gtk-4.1 /
-          #   libjavascriptcoregtk-4.1. WebKit forks helper processes
-          #   (WebKitNetworkProcess, WebKitWebProcess) from a path baked
-          #   into the .so via LIBEXECDIR at compile time — Ubuntu's
-          #   `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/`, which doesn't
-          #   exist on Fedora (`/usr/libexec/...`), Arch (`/usr/lib/...`),
-          #   etc. No env var overrides this in the 4.1 ABI. So bundling
-          #   our Ubuntu-built libwebkit makes the AppImage explode on
-          #   every non-Debian distro at startup. Standard fix used by
-          #   Tauri / GNOME Web AppImages: ship without libwebkit, rely
-          #   on the system's copy (which always knows its own paths).
-          #   Linux runtime dep on webkit2gtk-4.1 is now documented in
-          #   README; every distro that runs GTK apps already has it.
+          # - --exclude-library flags come from two files (Rev 85):
+          #     packaging/linux/excludelist.community  vendored AppImage
+          #                                             community list
+          #     packaging/linux/excludelist.local      our additions
+          #                                             (libwebkit, GLib
+          #                                             family, libsecret)
+          #   Bundled-vs-system ABI mismatch is the Linux AppImage curse:
+          #   Ubuntu-built libs in the bundle clash with newer system
+          #   libs that depend on them. Excluding the right set forces
+          #   the host's own copies to load, which always agree with
+          #   each other. The community list documents ~150 such libs
+          #   and their justifications; our additions handle GLib +
+          #   libsecret + libwebkit which the upstream list explicitly
+          #   defers to app maintainers. README → "Linux runtime
+          #   requirements" lists the per-distro packages users need.
+          EXCLUDES=()
+          while IFS= read -r line; do
+            lib="${line%%#*}"            # strip comment
+            lib="$(echo -n "$lib" | xargs)"  # trim whitespace
+            [ -z "$lib" ] && continue
+            EXCLUDES+=(--exclude-library "$lib")
+          done < <(cat packaging/linux/excludelist.community packaging/linux/excludelist.local)
+          echo "Excluding ${#EXCLUDES[@]} libraries from bundle (half of those are flags)."
+
           OUTPUT="fbe-go-${TAG}-linux-x86_64.AppImage"
           export OUTPUT
           ./linuxdeploy --appimage-extract-and-run \
@@ -334,8 +345,7 @@ jobs:
             --desktop-file packaging/fbe-go.desktop \
             --icon-file build/appicon-linux.png \
             --icon-filename fbe-go \
-            --exclude-library 'libwebkit2gtk-4.1.so*' \
-            --exclude-library 'libjavascriptcoregtk-4.1.so*' \
+            "${EXCLUDES[@]}" \
             --output appimage
           mv "$OUTPUT" dist/
 

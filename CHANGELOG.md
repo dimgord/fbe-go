@@ -6,6 +6,33 @@ log (every code change, every rev, every fix) see
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use
 [SemVer](https://semver.org/).
 
+## [1.0.0-rc5] — 2026-04-26
+
+Fifth release candidate. Replaces `1.0.0-rc4`. Linux-only fix
+(continuation of rc4's AppImage portability work).
+
+### Fixed
+
+- **Linux AppImage no longer crashes with `symbol lookup error`
+  on distros with newer GLib than Ubuntu** (Fedora 43, Arch,
+  rolling distros). rc4 stopped bundling libwebkit but still
+  shipped Ubuntu-built GLib alongside, which caused the host's
+  libsecret to fail symbol resolution at startup
+  (`g_variant_builder_init_static` was added in GLib 2.84,
+  bundled GLib was 2.80). The release workflow now applies the
+  full [AppImageCommunity excludelist](https://github.com/AppImageCommunity/pkg2appimage/blob/master/excludelist)
+  (~150 host-coupled libs that should never be bundled) plus
+  app-specific additions for libwebkit, GLib, and libsecret.
+
+### Linux runtime requirements (clarified)
+
+In addition to `webkit2gtk-4.1` (already documented in rc4),
+the AppImage now uses the system's GLib, libsecret, GTK, and
+related GNOME-stack libs. Every distro that runs GTK desktop
+apps already provides these as transitive dependencies. NixOS
+users still need `programs.nix-ld` or `appimage-run` /
+`steam-run` (see README).
+
 ## [1.0.0-rc4] — 2026-04-25
 
 Fourth release candidate. Replaces `1.0.0-rc3`. Linux-only fix.
