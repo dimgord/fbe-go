@@ -60,6 +60,26 @@ for the user-facing release history, `docs/PHASES.md` for the roadmap,
 and `docs/OPERATIONS.md` for the full list of FB2 operations and their
 ProseMirror equivalents.
 
+## Linux runtime requirements (AppImage users)
+
+The Linux AppImage does **not** bundle WebKit — it uses the system
+copy. Install your distro's `webkit2gtk-4.1` package before launching:
+
+| Distro                     | Package                                                      |
+| -------------------------- | ------------------------------------------------------------ |
+| Fedora / RHEL              | `webkit2gtk4.1`                                              |
+| Debian / Ubuntu            | `libwebkit2gtk-4.1-0`                                        |
+| Arch / Manjaro             | `webkit2gtk-4.1`                                             |
+| openSUSE                   | `libwebkit2gtk-4_1-0`                                        |
+| NixOS                      | enable `programs.nix-ld` or run via `appimage-run` / `steam-run` |
+
+Why: WebKit forks helper processes (`WebKitNetworkProcess`,
+`WebKitWebProcess`) from a path baked into `libwebkit2gtk` at compile
+time, with no runtime override. A bundled libwebkit built on Ubuntu
+crashes on every other distro. The system libwebkit always knows where
+its own helpers live, so this is the only portable approach. Same
+trade-off Tauri and most GTK-WebKit AppImages make.
+
 ## Prerequisites
 
 - Go 1.25+

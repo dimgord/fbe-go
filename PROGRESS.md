@@ -6,6 +6,114 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 84 — 2026-04-25 — Linux AppImage portability: stop bundling libwebkit → v1.0.0-rc4 [dev]
+
+Version: **1.0.0-rc4**.
+
+### Symptom
+
+`fbe-go-v1.0.0-rc3-linux-x86_64.AppImage` crashes at startup
+on Fedora 43 (and by extension every non-Debian distro):
+
+```
+ERROR: Unable to spawn a new child process: Failed to spawn
+       child process "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/
+       WebKitNetworkProcess" (No such file or directory)
+SIGTRAP: trace trap
+signal arrived during cgo execution
+```
+
+Crash before the window even opens. Caught locally during
+post-rc3 manual smoke; clean run on the GHA Ubuntu builder
+masked it because Ubuntu *has* that path.
+
+### Root cause
+
+WebKit forks two helper executables at startup
+(`WebKitNetworkProcess`, `WebKitWebProcess`) from a path that
+is **hard-coded into `libwebkit2gtk-4.1.so` at compile time**
+via the `LIBEXECDIR` macro. The Ubuntu build used by the GHA
+runner sets that to `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/`.
+Other distros put the helpers elsewhere — Fedora at
+`/usr/libexec/webkit2gtk-4.1/`, Arch at `/usr/lib/webkit2gtk-4.1/`,
+openSUSE at `/usr/lib64/webkit2gtk-4.1/`. No environment variable
+overrides this in the 4.1 ABI (verified against the bundled
+`libwebkit2gtk-4.1.so.0`: only `WEBKIT_INJECTED_BUNDLE_PATH`
+and the sandbox-disable knobs are honored; the legacy
+`WEBKIT_EXEC_PATH` was removed).
+
+linuxdeploy bundled our Ubuntu-built libwebkit into the AppImage
+via standard `ldd` tracing. On Fedora, the dynamic linker happily
+loaded that bundled `.so`, but at first WebKit IPC the bundled
+lib looked for its helpers at the Ubuntu path — which doesn't
+exist on Fedora — and aborted from inside cgo (uncatchable from
+Go).
+
+`linuxdeploy-plugin-gtk` does NOT solve this — checked the source.
+It bundles GTK and PixBufs but has no WebKit handling.
+
+### Fix
+
+`.github/workflows/release.yml`: add `--exclude-library` flags
+to the linuxdeploy invocation so libwebkit2gtk-4.1 and
+libjavascriptcoregtk-4.1 are *not* bundled. The AppImage now
+relies on the system's libwebkit, which on every distro is
+compiled with that distro's correct local helper paths.
+
+This is the standard fix used by Tauri's tauri-action and most
+GNOME apps that ship via AppImage. Trade-off: users need
+`webkit2gtk-4.1` installed system-wide before launching.
+Documented in README under a new "Linux runtime requirements"
+section with the per-distro package names. Every distro that can
+run any GTK desktop app already has it as a transitive GNOME dep,
+so this is a non-issue in practice.
+
+Also drops AppImage size by ~50 MB (webkit binaries are huge).
+
+### Nix angle (no flake change needed)
+
+Two cases, both already handled:
+
+- `nix develop` + `wails dev` on NixOS: unaffected. The flake
+  pulls `webkitgtk_4_1` from nix-store; libwebkit there is
+  compiled with `LIBEXECDIR` pointing into the same store path
+  as the helpers, so they travel together. No /usr lookup
+  involved.
+- NixOS users running the released AppImage: there is no
+  `/usr/lib/libwebkit2gtk-4.1.so` on a vanilla NixOS, so the
+  exclude-library trick alone isn't enough — they need either
+  `programs.nix-ld` enabled or to wrap the launch with
+  `appimage-run` / `steam-run`, which conjures an FHS `/usr`
+  from a Nix package set. That's a NixOS-side configuration
+  decision (and standard for any AppImage on NixOS), not
+  something the AppImage can carry. Documented in the README
+  distro table as the NixOS row.
+
+So `flake.nix` stays untouched: it's strictly for development,
+not for distributing artifacts to NixOS end-users.
+
+### Verification
+
+Pre-fix AppImage on Fedora 43: instant SIGTRAP at startup.
+With `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/` symlinks
+manually created to `/usr/libexec/webkit2gtk-4.1/`, the same
+binary launches and runs cleanly — confirming the ONLY blocker
+is the helper-path lookup. The new build will skip the symlink
+step by always using the system's libwebkit (which already knows
+its helper path).
+
+### Files
+
+- Modified: `.github/workflows/release.yml` — `--exclude-library`
+  flags + comment explaining why.
+- Modified: `README.md` — new "Linux runtime requirements"
+  section above Prerequisites, with per-distro package table
+  including a NixOS row.
+- Modified: `wails.json`, `frontend/package.json` — version bump
+  to 1.0.0-rc4.
+
+---
+
 ## Rev 83 — 2026-04-25 — UTF-16 parse + note-link navigation → v1.0.0-rc3 [dev]
 
 Two more soak-QA findings on `v1.0.0-rc2`. Both pre-existing
