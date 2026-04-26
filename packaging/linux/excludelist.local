@@ -1,0 +1,41 @@
+# Local additions to the AppImageCommunity excludelist.
+#
+# Each entry has a justification. Format matches excludelist.community:
+# one filename (or glob) per line, # for comments, blank lines OK.
+# release.yml combines this file with excludelist.community and feeds
+# every active line to linuxdeploy as `--exclude-library`.
+
+# --- WebKit + JS engine ---
+# libwebkit2gtk-4.1 has its helper-process path baked in via
+# LIBEXECDIR at compile time (Ubuntu builds bake in
+# /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/, which doesn't exist on
+# Fedora/Arch/openSUSE/etc.). No env var override exists in the 4.1
+# ABI. The bundled lib silently loads, then SIGTRAPs at first IPC
+# when WebKit forks WebKitNetworkProcess. Standard fix used by
+# Tauri AppImages: use the host's libwebkit which knows its own
+# helper path. README documents the per-distro runtime package.
+# See PROGRESS.md Rev 84.
+libwebkit2gtk-4.1.so*
+libjavascriptcoregtk-4.1.so*
+
+# --- GLib family ---
+# Bundling Ubuntu-built GLib breaks system-supplied libsecret (and
+# other GNOME-stack libs) on distros with newer GLib. Fedora 43's
+# libsecret-1.so.0 needs g_variant_builder_init_static (added in
+# GLib 2.84), which the bundled Ubuntu 24.04 GLib (2.80) lacks, so
+# libsecret crashes with `symbol lookup error: ... undefined symbol:
+# g_variant_builder_init_static` at AppImage startup. The community
+# excludelist documents this exact failure in its "--- Bundling GLib
+# and its consequences ---" comment block but defers the exclusion
+# decision to app maintainers. Forward-compat: Ubuntu-built libs in
+# the bundle still work against newer system GLib. See Rev 85.
+libglib-2.0.so*
+libgio-2.0.so*
+libgobject-2.0.so*
+libgmodule-2.0.so*
+
+# --- libsecret ---
+# System-provided always (each distro builds against its own GLib).
+# Same Rev 85 reason — bundling our Ubuntu copy when the host has a
+# newer one is what triggers the GLib symbol lookup error above.
+libsecret-1.so*
