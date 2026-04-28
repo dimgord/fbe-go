@@ -22,6 +22,11 @@
   // Ensure optional arrays exist so two-way binding has a stable target.
   $: if (!info.Translators) info.Translators = [];
   $: if (!info.Sequences)   info.Sequences   = [];
+  // Same for Annotation: passing a fresh `{ Children: [] }` literal as a
+  // fallback in the template would create a new object identity on every
+  // render, defeating AnnotationEditor's self-dispatch detection and
+  // destroying the user's in-flight typing on any other control's click.
+  $: if (!info.Annotation)  info.Annotation  = { Children: [] };
 
   function addAuthor() { info.Authors = [...info.Authors, {} as Author]; }
   function removeAuthor(i: number) { info.Authors = info.Authors.filter((_, idx) => idx !== i); }
@@ -88,7 +93,7 @@
   </div>
 
   <h3>Annotation</h3>
-  <AnnotationEditor annotation={info.Annotation ?? { Children: [] }} on:change={onAnnotationChange} />
+  <AnnotationEditor annotation={info.Annotation} on:change={onAnnotationChange} />
 
   <h3>Coverpage</h3>
   <CoverpageField bind:cover={info.Coverpage} availableIDs={availableBinaryIDs} />

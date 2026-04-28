@@ -6,6 +6,25 @@ log (every code change, every rev, every fix) see
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use
 [SemVer](https://semver.org/).
 
+## [1.0.1] — 2026-04-28
+
+First patch release. Fixes a critical data-loss bug in the
+description form found shortly after v1.0.0 went public.
+
+### Fixed
+
+- **Annotation text no longer disappears when clicking any other
+  control in the description form.** AnnotationEditor's reactive
+  prop-watcher fired on every parent re-render — including the
+  re-render caused by AnnotationEditor's *own* dispatched change
+  bouncing back through `info.Annotation = e.detail`. Each bounce
+  destroyed and rebuilt the ProseMirror view, losing in-flight
+  edits. The fix tracks the exact object the editor just
+  dispatched and skips the rebuild when the prop is that same
+  reference; genuine external replacements (opening a different
+  document) still trigger a rebuild correctly. See Rev 87 in
+  `PROGRESS.md`.
+
 ## [1.0.0-rc5] — 2026-04-26
 
 Fifth release candidate. Replaces `1.0.0-rc4`. Linux-only fix
