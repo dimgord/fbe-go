@@ -8,7 +8,77 @@ Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project r
 
 ## Project status
 
-**v0.1.0-beta — Phase 3 MVP + Phase 4 polish shipped.** End-to-end flow works: open → edit → save → validate → export. All structural commands (clone / merge / insert cite / poem / table / …), inline marks, save cycle, description form with rich annotation editor, HTML export, paste cleanup, native-webview spellcheck, read-only XML-source panel with clickable XSD errors, and lossless round-trip for unknown FB2 elements are wired. See `PROGRESS.md` for the per-revision log, `docs/PHASES.md` for the roadmap, and `docs/OPERATIONS.md` for the full list of FB2 operations.
+**Feature-complete for 1.0.** Phases 0–5 of the roadmap are closed:
+
+- **Editing:** every FB2 structural operation (clone / merge / insert
+  cite / poem / table / section / epigraph / annotation / empty-line …),
+  inline marks, paragraph styles, and save/validate cycle — worked
+  through `docs/OPERATIONS.md` row-by-row.
+- **Round-trip fidelity:** unknown FB2 elements survive the parse →
+  PM → serialize loop unchanged (see the "Lossless fallback invariant"
+  section of `CLAUDE.md`). Corpus-tested on real-world files with
+  `fidelityBroken == 0` as the gating invariant.
+- **Description form:** full metadata editor — title-info, src-title-info,
+  publish-info, document-info, plus a ProseMirror-in-a-dialog rich
+  annotation editor with the same marks as the body editor.
+- **Binary manager:** upload / rename / delete / cover-badge, with
+  inline `<image>` rendering in the editor body.
+- **Search / Replace:** `Cmd-F` / `Cmd-H` inline bar with regex,
+  case-sensitivity, whole-word (Unicode-aware), and follow-active-match
+  scrolling.
+- **Configurable hotkeys:** Settings → Shortcuts tab, per-action
+  keystroke capture, conflict detection, reset-to-defaults. Bindings
+  are stored in the standard OS config file and migrate forward
+  automatically when new actions are added.
+- **Platform polish:** code-signed + notarized macOS universal DMG
+  (arm64 + x86_64); Linux x86_64 AppImage with `.desktop`, GNOME
+  thumbnailer, and shared-MIME registration; native-webview spellcheck
+  per document `<lang>`.
+- **Auto-update notify:** in-app banner surfaces newer GitHub
+  Releases; one-click opens the Release page in the OS browser.
+- **HTML export:** Go text/template renderer (`internal/fb2/export/html`).
+- **XSD validation:** read-only XML-source panel with clickable
+  line-highlighted errors; libxml2 via `-tags xsd`.
+
+Not shipping in 1.0 — each documented with rationale in
+`docs/PHASES.md`:
+
+- **Windows** — explicitly out of scope. The C++ FBE remains the
+  Windows story.
+- **Scripts compatibility** (FBE's `.js` macro surface) — deferred
+  post-1.0. Hundreds of user-authored macros make this a
+  separate-project-scale effort; revisit on concrete user demand.
+- **Hunspell CGo speller** — native webview spellcheck handles
+  dictionaries on both platforms; CGo path is stubbed behind
+  `-tags speller_hunspell` for a future opt-in build.
+- **QuickLook `.appex` preview extension** — deferred pending
+  hardware refresh.
+- **Linux arm64** — deferred; GitHub's hosted runners are x86_64-only.
+
+See `PROGRESS.md` for the per-revision development log, `CHANGELOG.md`
+for the user-facing release history, `docs/PHASES.md` for the roadmap,
+and `docs/OPERATIONS.md` for the full list of FB2 operations and their
+ProseMirror equivalents.
+
+## Linux runtime requirements (AppImage users)
+
+The Linux AppImage does **not** bundle WebKit — it uses the system
+copy. Install your distro's `webkit2gtk-4.1` package before launching:
+
+| Distro                     | Package                                                      |
+| -------------------------- | ------------------------------------------------------------ |
+| Fedora / RHEL              | `webkit2gtk4.1`                                              |
+| Debian / Ubuntu            | `libwebkit2gtk-4.1-0`                                        |
+| Arch / Manjaro             | `webkit2gtk-4.1`                                             |
+| openSUSE                   | `libwebkit2gtk-4_1-0`                                        |
+| NixOS                      | enable `programs.nix-ld` or run via `appimage-run` / `steam-run` |
+
+Why: WebKit forks helper processes (`WebKitNetworkProcess`,
+`WebKitWebProcess`) from a path baked into `libwebkit2gtk` at compile
+time, with no runtime override. A bundled libwebkit built on Ubuntu
+crashes on every other distro. The system libwebkit always knows where
+its own helpers live, so this is the only portable approach. Same
+trade-off Tauri and most GTK-WebKit AppImages make.
 
 ## Prerequisites
 

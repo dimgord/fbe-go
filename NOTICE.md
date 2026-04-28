@@ -55,6 +55,13 @@ unless noted.
 - **[lestrrat-go/libxml2](https://github.com/lestrrat-go/libxml2)** — MIT ·
   © Daisuke Maki. Go CGo bindings to libxml2; used by `-tags xsd` for
   real schema validation.
+- **[adrg/sysfont](https://github.com/adrg/sysfont)** — MIT · © Adrian
+  Găină. Cross-platform system font enumeration; powers the
+  Settings dialog's font-family picker on macOS and (as a fallback
+  alongside `fc-list`) on Linux.
+- **[adrg/xdg](https://github.com/adrg/xdg)** — MIT · © Adrian Găină.
+  XDG Base Directory spec helper; used to locate font directories on
+  Linux and to derive config paths.
 - **[golang.org/x/text](https://pkg.go.dev/golang.org/x/text)**,
   **[golang.org/x/net](https://pkg.go.dev/golang.org/x/net)**,
   **[golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto)**,

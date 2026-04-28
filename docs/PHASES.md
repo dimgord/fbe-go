@@ -65,16 +65,22 @@ Order of implementation (lowest → highest risk):
 
 ## Phase 4 — Feature parity (4 weeks)
 
-- [ ] Speller (Hunspell via CGo, PM decoration plugin)
-- [ ] Search / Replace (in-editor + CLI)
-- [ ] Hotkeys (configurable, from settings.json)
-- [ ] Paste handling (Word, HTML, plain text, images from clipboard)
-- [ ] Description form (full metadata editor — 7 sections)
-- [ ] Binary manager (upload, rename, preview, delete)
-- [ ] HTML export (Go templates)
-- [ ] Scripts compatibility (optional — decide per user demand)
+- [x] Speller (native webview, Rev 30; Hunspell CGo deferred behind
+      `-tags speller_hunspell` stub)
+- [x] Search / Replace (in-editor — Revs 71, 73)
+- [x] Hotkeys (configurable, from settings.json — Rev 76)
+- [x] Paste handling (Word, HTML, plain text, images from clipboard)
+- [x] Description form (full metadata editor — 7 sections)
+- [x] Binary manager (upload, rename, preview, delete — Revs 74, 75)
+- [x] HTML export (Go templates)
+- [~] Scripts compatibility — **deferred to post-1.0**. FBE ships hundreds
+      of `.js` macros, and reimplementing the `apiRunCmd` / `apiProcessCmd`
+      surface plus a migration path is a separate-project-scale effort
+      (est. 4–6 weeks of undefined scope). Revisit when there is concrete
+      user demand with named scripts to port. See OPERATIONS.md §10.
 
-**Exit criterion:** a returning FBE user finds everything they used.
+**Exit criterion:** a returning FBE user finds everything they used *except
+scripts* — that is explicitly punted.
 
 ## Phase 5 — Platform polish (1.5 weeks)
 
@@ -91,7 +97,12 @@ may be written in Rust or C where Go is awkward.
       (x86_64) (Revs 63–65). Linux arm64 deferred — GitHub's hosted
       runners are x86_64-only; would need self-hosted or
       `docker/setup-qemu-action` cross-build.
-- [ ] Auto-update (optional — Wails has no built-in; consider Sparkle for macOS)
+- [x] Auto-update — "notify, don't auto-install" GitHub Releases poll
+      (Rev 77). In-app banner surfaces a newer release; user opens the
+      Release page in the OS browser and downloads the DMG / AppImage
+      manually. Sparkle (macOS) / AppImageUpdate (Linux) integration is
+      parked as a separate rev for when signed binaries + an appcast
+      stream are available.
 
 **Exit criterion:** downloadable `.dmg` / `.AppImage`, drag-and-drop in Finder
 and Linux file managers shows cover thumbnails.

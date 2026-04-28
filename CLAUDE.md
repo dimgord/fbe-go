@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`fbe-go` is a Go + Wails v2 port of the classic Windows-only FictionBook Editor (FBE), targeting **macOS + Linux only** (Windows is explicitly out of scope). It edits FB2 (FictionBook 2.x) XML documents. Status: **v0.1.0-beta shipped** — Phase 3 editor MVP and Phase 4 polish landed (all structural commands + save cycle + description form + HTML export + paste handling + native spellcheck + read-only XML source panel with clickable XSD errors + lossless round-trip for unknown elements + Nix flake + Help dialog). See `docs/PHASES.md` for the full roadmap and `PROGRESS.md` for the per-revision log.
+`fbe-go` is a Go + Wails v2 port of the classic Windows-only FictionBook Editor (FBE), targeting **macOS + Linux only** (Windows is explicitly out of scope). It edits FB2 (FictionBook 2.x) XML documents. Status: **1.0 release-candidate cycle** — Phases 3, 4, and 5 closed (editor MVP + structural commands + description form + HTML export + paste handling + native spellcheck + clickable XSD errors + lossless round-trip + configurable hotkeys + auto-update check + macOS codesign/notarize + Linux desktop integration). See `docs/PHASES.md` for the full roadmap and `PROGRESS.md` for the per-revision log — **always check the top of `PROGRESS.md` for the current Rev / version**, not this file.
 
 See `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, and `docs/PHASES.md` for deeper context before touching unfamiliar subsystems.
 
@@ -103,6 +103,12 @@ speller/  Hunspell (CGo, future)
 
 Single `main.go` with subcommands: `validate`, `thumb`, `pack`, `unpack`, `info`, `export html`. Replaces the old FBV.exe validator and covers scripting / library-management use cases. Imports the same `internal/fb2/*` packages as the desktop app.
 
+### Release & packaging
+
+- `.github/workflows/ci.yml` runs Go tests + frontend checks on every push.
+- `.github/workflows/release.yml` builds macOS (`.app` + `.dmg`, codesigned + notarized via App Store Connect API key — see Rev 78/79 and `packaging/macos/SIGNING.md`) and Linux (`AppImage`) artifacts on tag push (`v*`). When editing it, see Rev 67–70 in `PROGRESS.md` for the trail of release-machinery hotfixes — many fixes are subtle (binary path, icon size, `OUTPUT` env for linuxdeploy) and easy to regress.
+- `packaging/` — Linux desktop integration files (`fbe-go.desktop`, MIME registration for `application/x-fictionbook+xml`, GNOME thumbnailer). Bundled into the AppImage by the release workflow.
+
 ## Revision discipline
 
 Every behavior- or shape-changing commit must:
@@ -129,12 +135,15 @@ The corpus test (`-tags 'corpus xsd'`) reports two key metrics:
 - **NixOS / Nix:** `flake.nix` at the repo root provides a `devShells.default` for all four systems (`{x86_64,aarch64}-{linux,darwin}`). `nix develop` drops you into a shell with `go_1_25`, `nodejs_22`, and — on Linux only — `pkg-config`, `gtk3`, `webkitgtk_4_1`, `libxml2_13` (see libxml2 pin note above), `gsettings-desktop-schemas`. The Linux `shellHook` also exports `XDG_DATA_DIRS` pointing at the Nix-store GSettings schema directories — without this, GTK's file-chooser native dialog crashes at runtime with *"Settings schema 'org.gtk.Settings.FileChooser' is not installed"* (the binary builds fine, SIGTRAP only fires on Open/Save click). Wails CLI auto-installs into `$GOPATH/bin` on first entry. Pinned against `nixpkgs-unstable` via `flake.lock`. When bumping the Wails library version, consider whether to also `nix flake update` to refresh pinned nixpkgs.
 - **Go version:** `go.mod` pins 1.25.0 — do not downgrade.
 
-## Debugging a hung/crashing .app
+## Debugging a hung/crashing app
 
 Launch from the terminal so stderr is visible (Go panics print there; frontend logs go to the webview devtools, which Wails enables in dev builds):
 
 ```sh
-/Users/dmitry.gordiyevsky/fbe-go/build/bin/fbe-go.app/Contents/MacOS/fbe
+# macOS
+./build/bin/fbe-go.app/Contents/MacOS/fbe
+# Linux
+./build/bin/fbe-go
 ```
 
 Before blaming the Go side, check: `[fbe] opening …` / `[fbe] parsed: …` / `[fbe] openFile failed: …` logs appear in the webview devtools (Rev 20 added them). A crash that never prints a Go panic usually means the bug is in native Wails code or in `fb2ToPMDoc` (schema violation) — the latter is caught by `Editor.svelte`'s try/catch and renders a placeholder instead of killing the app.

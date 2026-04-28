@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import { EditorState, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
   import { history, redo, undo } from "prosemirror-history";
@@ -10,6 +10,8 @@
   import { fb2ToPMDoc } from "./parse";
   import { pmDocToFB2 } from "./serialize";
   import { cleanPastedHTML, cleanPastedText } from "./paste";
+  import { searchPlugin, findNext as searchFindNext, findPrev as searchFindPrev } from "./search/plugin";
+  import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
   import {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
     toggleSub, toggleSup, toggleCode, toggleLink,
@@ -20,10 +22,19 @@
     insertCite, insertPoem, insertTableCmd,
     mergeContainers,
   } from "./commands";
+  import { HOTKEY_ACTIONS, toPMKey } from "../settings/hotkeys";
+  import type { Command } from "prosemirror-state";
   import TableDialog from "./TableDialog.svelte";
-  import type { FictionBook } from "../fb2/types";
+  import type { FictionBook, Binary } from "../fb2/types";
+  import type { NodeView } from "prosemirror-view";
 
   export let fb: FictionBook | null = null;
+
+  /** User-configurable hotkey map, loaded from settings.Hotkeys. Passing a
+      new object identity triggers a reconfigure — history / document survive,
+      but the keymap plugin is swapped. Empty / missing actions are simply
+      not bound. */
+  export let hotkeys: Record<string, string> = {};
 
   /** Export the EditorView so the toolbar in App.svelte can dispatch commands. */
   export let view: EditorView | undefined = undefined;
@@ -116,6 +127,140 @@
 
   let container: HTMLDivElement;
 
+  // Image rendering: schema.ts' toDOM generates `fb2://binary${href}` which
+  // relies on a custom asset-server handler we never wired up — images would
+  // otherwise render as broken icons. We resolve href → `data:` URL on the
+  // fly via NodeViews, closed over a shared binariesRef that we refresh
+  // whenever fb.Binaries identity changes (file open, upload, rename,
+  // delete). `refreshImageViews()` iterates every active NodeView and
+  // re-resolves its src — cheap, since each view only reassigns img.src.
+  //
+  // Serialization is unaffected: pmDocToFB2 only reads node.attrs.href.
+  let binariesRef: { current: Binary[] } = { current: [] };
+  $: binariesRef.current = fb?.Binaries ?? [];
+  const imageViews = new Set<ImageNodeView>();
+
+  interface ImageNodeView extends NodeView {
+    refresh(): void;
+  }
+
+  function resolveBinary(href: string | undefined): string {
+    if (!href) return "";
+    const id = href.replace(/^#/, "");
+    const bin = binariesRef.current.find(b => b.ID === id);
+    return bin ? `data:${bin.ContentType};base64,${bin.Data}` : "";
+  }
+
+  function refreshImageViews(): void {
+    for (const v of imageViews) v.refresh();
+  }
+
+  // Re-resolve every image whenever the binaries array changes identity —
+  // new upload / delete / rename cascades here and images pick up fresh
+  // data: URLs without needing a PM remount (which would blow undo history).
+  $: void fb?.Binaries, refreshImageViews();
+
+  function createImageView(node: PMNode): ImageNodeView {
+    const blockLevel = node.type.name === "image_block";
+    const wrap = document.createElement(blockLevel ? "div" : "span");
+    wrap.className = "image";
+    if (node.attrs.href) wrap.setAttribute("data-href", node.attrs.href);
+    if (node.attrs.title) wrap.title = node.attrs.title;
+
+    const img = document.createElement("img");
+    img.alt = node.attrs.alt || "";
+    const resolved = resolveBinary(node.attrs.href);
+    if (resolved) {
+      img.src = resolved;
+    } else {
+      img.classList.add("missing");
+    }
+    wrap.appendChild(img);
+
+    // Keep a mutable reference to the current node so refresh() uses the
+    // latest href (after setNodeMarkup) without needing another update()
+    // round-trip.
+    let current = node;
+    const nv: ImageNodeView = {
+      dom: wrap,
+      update(next) {
+        if (next.type !== current.type) return false;
+        current = next;
+        wrap.setAttribute("data-href", next.attrs.href || "");
+        wrap.title = next.attrs.title || "";
+        img.alt = next.attrs.alt || "";
+        const src = resolveBinary(next.attrs.href);
+        img.src = src;
+        img.classList.toggle("missing", !src);
+        return true;
+      },
+      refresh() {
+        const src = resolveBinary(current.attrs.href);
+        img.src = src;
+        img.classList.toggle("missing", !src);
+      },
+      destroy() {
+        imageViews.delete(nv);
+      },
+    };
+    imageViews.add(nv);
+    return nv;
+  }
+
+  /** Map of action id → PM Command. Non-PM actions (Save, Find, dialogs) are
+      handled at the App level and not listed here. Keep in sync with the
+      `editor: true` rows of HOTKEY_ACTIONS. */
+  const EDITOR_COMMANDS: Record<string, Command> = {
+    ToggleStrong: toggleStrong,
+    ToggleEmphasis: toggleEmphasis,
+    ToggleStrikethrough: toggleStrikethrough,
+    ToggleSub: toggleSub,
+    ToggleSup: toggleSup,
+    ToggleCode: toggleCode,
+    StyleNormal: styleNormal,
+    StyleSubtitle: styleSubtitle,
+    StyleTextAuthor: styleTextAuthor,
+    InsertEmptyLine: insertEmptyLine,
+    CloneContainer: cloneContainer,
+    RemoveOuterContainer: removeOuterContainer,
+    AddTitle: addTitle,
+    AddEpigraph: addEpigraph,
+    AddAnnotation: addAnnotation,
+    AddTextAuthor: addTextAuthor,
+    InsertCite: insertCite,
+    InsertPoem: insertPoem,
+    MergeContainers: mergeContainers,
+    FindNext: (_s, _d, v) => (v ? searchFindNext(v) : false),
+    FindPrev: (_s, _d, v) => (v ? searchFindPrev(v) : false),
+  };
+
+  /** Build a PM keymap record from the current hotkeys map. Always includes
+      the undo/redo stack — those are hardcoded because rebinding them
+      invariably breaks in ways users don't expect. Also keeps F3 / Shift-F3
+      aliases for FindNext / FindPrev (legacy Windows affordance; independent
+      of the user's Ctrl-G remap). */
+  function buildKeymap(hk: Record<string, string>): Record<string, Command> {
+    const bindings: Record<string, Command> = {
+      "Mod-z": undo,
+      "Mod-y": redo,
+      "Mod-Shift-z": redo,
+    };
+    for (const action of HOTKEY_ACTIONS) {
+      if (!action.editor) continue;
+      const raw = hk[action.id];
+      if (!raw) continue;
+      const pmKey = toPMKey(raw);
+      const cmd = EDITOR_COMMANDS[action.id];
+      if (!pmKey || !cmd) continue;
+      bindings[pmKey] = cmd;
+    }
+    // F3 / Shift-F3 stay hardcoded as Windows-convention aliases — users can
+    // still rebind FindNext to something else without losing these.
+    bindings["F3"] = (_s, _d, v) => (v ? searchFindNext(v) : false);
+    bindings["Shift-F3"] = (_s, _d, v) => (v ? searchFindPrev(v) : false);
+    return bindings;
+  }
+
   function mount(doc: PMNode) {
     view?.destroy();
     const state = EditorState.create({
@@ -123,18 +268,11 @@
       doc,
       plugins: [
         history(),
-        keymap({
-          "Mod-z": undo,
-          "Mod-y": redo,
-          "Mod-Shift-z": redo,
-          "Mod-b": toggleStrong,
-          "Mod-i": toggleEmphasis,
-          "Mod-Shift-s": toggleStrikethrough,
-          "Mod-,": toggleSub,
-          "Mod-.": toggleSup,
-          "Mod-Shift-c": toggleCode,
-        }),
+        keymap(buildKeymap(hotkeys)),
+        keymap({ "Mod-[": noteLinksBack }),
         keymap(baseKeymap),
+        searchPlugin(),
+        noteLinksPlugin(),
       ],
     });
     view = new EditorView(container, {
@@ -142,7 +280,31 @@
       attributes: { spellcheck: "true", lang },
       transformPastedHTML: cleanPastedHTML,
       transformPastedText: cleanPastedText,
+      nodeViews: {
+        image_block: (node) => createImageView(node),
+        image_inline: (node) => createImageView(node),
+      },
     });
+    lastHotkeys = hotkeys;
+  }
+
+  /** Rebuild just the user-facing keymap without re-mounting — preserves
+      document state, selection, and undo history via PluginKey continuity
+      in prosemirror-history (historyKey) and our searchPlugin (searchPluginKey).
+      Called when the parent writes a new `hotkeys` object (Settings → Apply). */
+  let lastHotkeys: Record<string, string> | null = null;
+  $: if (view && hotkeys !== lastHotkeys) {
+    lastHotkeys = hotkeys;
+    view.updateState(view.state.reconfigure({
+      plugins: [
+        history(),
+        keymap(buildKeymap(hotkeys)),
+        keymap({ "Mod-[": noteLinksBack }),
+        keymap(baseKeymap),
+        searchPlugin(),
+        noteLinksPlugin(),
+      ],
+    }));
   }
 
   /**
@@ -179,13 +341,27 @@
     });
   }
 
-  onMount(() => mount(toPMDoc(fb)));
+  // Dedupe mount on fb identity, not just "fb is truthy" — otherwise onMount
+  // + the reactive block both fire on initial load, creating two EditorView
+  // instances and leaking the first. The leaked view's docView stays linked
+  // to the DOM, and later Svelte scheduler flushes can call methods on it
+  // (e.g. via a sibling's dispatch through bind:view), triggering
+  // `TypeError: null is not an object (evaluating 'this.docView.matchesNode')`.
+  let lastMountedFB: FictionBook | null = null;
 
-  onDestroy(() => view?.destroy());
-
-  $: if (view && fb) {
+  $: if (container && fb && lastMountedFB !== fb) {
+    lastMountedFB = fb;
     mount(toPMDoc(fb));
   }
+
+  onDestroy(() => {
+    view?.destroy();
+    // Null out so `bind:view` propagates "no live view" to the parent and
+    // siblings (SearchBar, BinaryManagerDialog) don't dispatch against a
+    // destroyed EditorView after a view-switch.
+    view = undefined;
+    lastMountedFB = null;
+  });
 
   export function exec(cmd: (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean): void {
     if (!view) return;
@@ -329,9 +505,41 @@
     max-width: 100%;
     height: auto;
   }
+  /* Dangling image ref — binary id not found in current fb.Binaries.
+     Show a visible placeholder so users can spot broken references
+     instead of getting a blank gap. */
+  :global(.ProseMirror img.missing) {
+    display: inline-block;
+    min-width: 80px;
+    min-height: 40px;
+    background: var(--warn-bg-a);
+    border: 1px dashed var(--warn);
+    color: var(--warn-fg);
+  }
+  :global(.ProseMirror img.missing::after) {
+    content: attr(alt) " (missing)";
+    display: block;
+    padding: 0.5em;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.8em;
+    color: var(--warn-fg);
+  }
   :global(.ProseMirror .outline-flash) {
     transition: background-color 0.3s ease;
     background: var(--highlight);
+  }
+
+  /* Search/replace highlighting — inactive matches get a pale wash, the
+     currently-focused hit stands out with a stronger accent so the user can
+     track ◀/▶ navigation at a glance. Palette vars are defined in App.svelte
+     for both light and dark themes. */
+  :global(.ProseMirror .search-match) {
+    background: var(--search-match-bg);
+    border-radius: 2px;
+  }
+  :global(.ProseMirror .search-match-active) {
+    background: var(--search-match-active-bg);
+    outline: 1px solid var(--search-match-active-border);
   }
 
   /* Lossless fallback placeholders for unknown FB2 elements (see schema.ts

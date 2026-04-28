@@ -1,6 +1,14 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import type { settings as SettingsNS } from "../../wailsjs/go/models";
+  import {
+    HOTKEY_ACTIONS,
+    displayAccel,
+    accelFromEvent,
+    formatAccel,
+    findConflicts,
+    type HotkeyCategory,
+  } from "./hotkeys";
 
   export let open = false;
 
@@ -8,6 +16,19 @@
     close: void;
     apply: { theme: "system" | "light" | "dark"; settings: SettingsNS.Settings };
   }>();
+
+  /** When truthy, the next keydown on window captures a new accel for this
+      action id. Cleared by Escape, Enter, or successful capture. */
+  let capturingId: string | null = null;
+  /** Live preview of what the user just pressed while capturing. */
+  let captureLive = "";
+
+  // Grouped action list — stable order per category.
+  const CATEGORIES: HotkeyCategory[] = ["File", "Edit", "Format", "Paragraph", "Blocks", "Dialogs"];
+  const ACTIONS_BY_CATEGORY = CATEGORIES.reduce((acc, c) => {
+    acc[c] = HOTKEY_ACTIONS.filter((a) => a.category === c);
+    return acc;
+  }, {} as Record<HotkeyCategory, typeof HOTKEY_ACTIONS>);
 
   // Draft state. Loaded on open (watched via $:) and mutated by inputs;
   // committed to disk only on Apply. Cancel discards without saving.
@@ -175,6 +196,39 @@
 
   function onKey(e: KeyboardEvent) {
     if (!open) return;
+    // Capture mode: next real key becomes the accelerator. Escape cancels
+    // capture without clearing the previous binding; Backspace clears.
+    if (capturingId) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        capturingId = null;
+        captureLive = "";
+        return;
+      }
+      if (e.key === "Backspace" || e.key === "Delete") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (draft) {
+          draft.hotkeys = { ...draft.hotkeys, [capturingId]: "" };
+        }
+        capturingId = null;
+        captureLive = "";
+        return;
+      }
+      const a = accelFromEvent(e);
+      if (!a) return; // pure modifier press
+      e.preventDefault();
+      e.stopPropagation();
+      const canon = formatAccel(a);
+      captureLive = canon;
+      if (draft) {
+        draft.hotkeys = { ...draft.hotkeys, [capturingId]: canon };
+      }
+      capturingId = null;
+      captureLive = "";
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       cancel();
@@ -183,6 +237,48 @@
       void apply();
     }
   }
+
+  function startCapture(id: string) {
+    capturingId = id;
+    captureLive = "";
+  }
+
+  function clearHotkey(id: string) {
+    if (!draft) return;
+    draft.hotkeys = { ...draft.hotkeys, [id]: "" };
+  }
+
+  async function resetAllHotkeys() {
+    const App = await wailsApp();
+    if (!App || !draft) return;
+    try {
+      // Trip defaults-merge on the Go side: save an empty map, then reload —
+      // settings.Load will backfill every action from DefaultHotkeys().
+      await App.SaveSettings({ ...draft, hotkeys: {} } as SettingsNS.Settings);
+      const s = await App.LoadSettings();
+      if (s && draft) {
+        draft.hotkeys = { ...s.hotkeys };
+      }
+    } catch (e) {
+      console.warn("[fbe] reset hotkeys failed:", e);
+    }
+  }
+
+  // Conflict map — canonical-accel → list of colliding action ids.
+  $: hotkeyConflicts = draft ? findConflicts(draft.hotkeys ?? {}) : {};
+  $: conflictsByAction = (() => {
+    const out: Record<string, string> = {};
+    for (const [accel, ids] of Object.entries(hotkeyConflicts)) {
+      for (const id of ids) out[id] = accel;
+    }
+    return out;
+  })();
+
+  // Platform hint for the display form.
+  const platform: "mac" | "other" =
+    typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || "")
+      ? "mac"
+      : "other";
 
   onMount(() => {
     window.addEventListener("keydown", onKey);
@@ -298,6 +394,60 @@
             <span class="label">Pane sizes</span>
             <button type="button" class="secondary" on:click={resetPanes}>Reset to defaults</button>
             <span class="help">Outline / validation-panel widths, errors-pane height. Applies after app restart.</span>
+          </div>
+        </section>
+
+        <section>
+          <h4>Keyboard shortcuts</h4>
+          <p class="hotkey-help">
+            Click a shortcut cell then press the keys to record.
+            <strong>Esc</strong> cancels, <strong>Backspace</strong> clears.
+            Duplicate bindings are highlighted but allowed — the topmost match
+            wins at dispatch time.
+          </p>
+          {#each CATEGORIES as cat}
+            {#if ACTIONS_BY_CATEGORY[cat].length > 0}
+              <div class="hotkey-group">
+                <h5>{cat}</h5>
+                <table class="hotkey-table">
+                  <tbody>
+                    {#each ACTIONS_BY_CATEGORY[cat] as action}
+                      {@const raw = draft.hotkeys?.[action.id] ?? ""}
+                      {@const conflict = conflictsByAction[action.id]}
+                      <tr>
+                        <td class="hk-label">{action.label}</td>
+                        <td class="hk-accel">
+                          <button
+                            type="button"
+                            class="hk-btn"
+                            class:capturing={capturingId === action.id}
+                            class:conflict={!!conflict}
+                            class:empty={!raw && capturingId !== action.id}
+                            on:click={() => startCapture(action.id)}
+                            title={conflict ? `Also used by: ${hotkeyConflicts[conflict].filter((i) => i !== action.id).join(", ")}` : ""}
+                          >
+                            {#if capturingId === action.id}
+                              {captureLive || "Press any key…"}
+                            {:else if raw}
+                              {displayAccel(raw, platform)}
+                            {:else}
+                              Unbound
+                            {/if}
+                          </button>
+                          {#if raw && capturingId !== action.id}
+                            <button type="button" class="hk-clear" title="Clear binding" aria-label="Clear binding" on:click={() => clearHotkey(action.id)}>×</button>
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {/if}
+          {/each}
+          <div class="row">
+            <span class="label">All shortcuts</span>
+            <button type="button" class="secondary" on:click={resetAllHotkeys}>Reset to defaults</button>
           </div>
         </section>
 
@@ -508,5 +658,89 @@
   button.secondary {
     padding: 0.25rem 0.7rem;
     font-size: 0.85rem;
+  }
+
+  /* Keyboard-shortcuts section. Per-category group with a tight two-column
+     table: [action label | clickable key-capture button]. The button is
+     the entire interactive surface — clicking it enters capture mode,
+     pressing a key writes the binding. ✕ clears the binding separately. */
+  .hotkey-help {
+    margin: 0.2rem 0 0.6rem;
+    color: var(--fg-muted);
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+  .hotkey-group {
+    margin: 0.2rem 0 0.8rem;
+  }
+  .hotkey-group h5 {
+    margin: 0.6rem 0 0.3rem;
+    font-size: 0.72rem;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+  table.hotkey-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  table.hotkey-table tr { border-bottom: 1px solid var(--border); }
+  table.hotkey-table tr:last-child { border-bottom: none; }
+  td.hk-label {
+    padding: 0.35rem 0.5rem 0.35rem 0;
+    color: var(--fg);
+    width: 55%;
+  }
+  td.hk-accel {
+    padding: 0.25rem 0;
+    text-align: right;
+    white-space: nowrap;
+  }
+  button.hk-btn {
+    min-width: 9rem;
+    padding: 0.22rem 0.55rem;
+    border: 1px solid var(--border-input);
+    background: var(--bg-surface);
+    color: var(--fg);
+    border-radius: 3px;
+    cursor: pointer;
+    font: inherit;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    text-align: center;
+  }
+  button.hk-btn:hover { background: var(--bg-hover); }
+  button.hk-btn.empty {
+    color: var(--fg-muted);
+    font-style: italic;
+    font-family: inherit;
+  }
+  button.hk-btn.capturing {
+    background: var(--bg-active);
+    border-color: var(--warn);
+    color: var(--fg-strong);
+    font-style: italic;
+  }
+  button.hk-btn.conflict {
+    border-color: var(--warn);
+    background: var(--warn-bg-a);
+    color: var(--warn-fg);
+  }
+  button.hk-clear {
+    margin-left: 0.25rem;
+    padding: 0 0.4rem;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-muted);
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    height: 1.4rem;
+  }
+  button.hk-clear:hover {
+    background: var(--bg-hover);
+    color: var(--fg-strong);
   }
 </style>
