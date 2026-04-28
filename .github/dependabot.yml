@@ -1,15 +1,60 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
+# Dependabot config — version updates only (security alerts are independent
+# and always run regardless of this file).
+#
+# Policy:
+#   - Group all minor + patch bumps per ecosystem into a single weekly PR so
+#     the queue stays manageable.
+#   - Ignore major bumps entirely. They land via deliberate migration revs,
+#     not automated PRs — Svelte 4 → 5 alone would be a multi-day project
+#     (runes API, $: → $derived/$effect, export let → $props, store rewrites)
+#     and bundling it with vite 5→8 + vitest 2→4 like Dependabot did out of
+#     the box (PR #5, closed) makes the diff impossible to review.
+#   - To pull in a major version manually, comment `@dependabot recreate`
+#     on a stale PR or use the Dependabot dashboard "rebase" / "ignore until
+#     next major" controls.
+#
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
 version: 2
 updates:
-  - package-ecosystem: "npm" # See documentation for possible values
-    directory: "/frontend" # Location of package manifests
+  - package-ecosystem: "npm"
+    directory: "/frontend"
     schedule:
       interval: "weekly"
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      gomod-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      gha-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
