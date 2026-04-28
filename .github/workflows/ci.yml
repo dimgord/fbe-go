@@ -16,6 +16,13 @@ env:
   # (@v4 / @v5) land their Node 24 bump. Opt-in keyed per GitHub's changelog.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
+# Minimal GITHUB_TOKEN scope. Both jobs only checkout + run tests; nothing
+# writes back to the repo, comments on PRs, or pushes packages. Explicitly
+# enumerating this closes the CodeQL "Workflow does not contain permissions"
+# warning (js/actions/missing-workflow-permissions).
+permissions:
+  contents: read
+
 jobs:
   # Frontend: typecheck + theme-hygiene + unit tests.
   #
