@@ -85,6 +85,9 @@ func ConfigPath() (string, error) {
 }
 
 // Load reads settings from disk; returns defaults if the file does not exist.
+// Any missing hotkey-action keys are backfilled from DefaultHotkeys so users
+// picking up a new release don't have to reset their config to see the new
+// bindings.
 func Load() (*Settings, error) {
 	p, err := ConfigPath()
 	if err != nil {
@@ -101,7 +104,22 @@ func Load() (*Settings, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, err
 	}
+	MergeDefaultHotkeys(&s)
 	return &s, nil
+}
+
+// MergeDefaultHotkeys ensures every action in DefaultHotkeys has an entry in
+// s.Hotkeys, keeping user-set overrides untouched. Called on Load so upgrades
+// don't drop the user into a broken state with new commands unbound.
+func MergeDefaultHotkeys(s *Settings) {
+	if s.Hotkeys == nil {
+		s.Hotkeys = map[string]string{}
+	}
+	for k, v := range DefaultHotkeys() {
+		if _, ok := s.Hotkeys[k]; !ok {
+			s.Hotkeys[k] = v
+		}
+	}
 }
 
 // Save writes settings to disk, creating the config directory as needed.
@@ -129,22 +147,59 @@ func Default() *Settings {
 		Font:              FontSettings{Family: "Trebuchet MS", Size: 12},
 		Colors:            ColorSettings{FG: "#000000", BG: "#FFFFFF"},
 		Theme:             "system",
-		Hotkeys:           defaultHotkeys(),
+		Hotkeys:           DefaultHotkeys(),
 	}
 }
 
-// defaultHotkeys mirrors FBE/Hotkeys.xml defaults (see FBE/Settings.cpp).
-func defaultHotkeys() map[string]string {
+// DefaultHotkeys returns the full canonical map of action id → accelerator.
+// Keys must stay in sync with frontend/src/settings/hotkeys.ts::HOTKEY_ACTIONS.
+// Accelerator strings use the human-readable "Ctrl+Shift+X" form; the
+// frontend converts to platform-specific modifiers (macOS maps Ctrl → ⌘
+// via ProseMirror's `Mod-` prefix at keymap-build time).
+//
+// Actions listed with an empty accelerator are intentionally unbound by
+// default — users can assign a key via the Settings → Shortcuts tab.
+func DefaultHotkeys() map[string]string {
 	return map[string]string{
-		"InsertPoem":       "Ctrl+Shift+P",
-		"InsertCite":       "Ctrl+Shift+Q",
-		"InsertTable":      "Ctrl+Shift+T",
-		"AddSectionImage":  "Ctrl+I",
-		"AddEpigraph":      "Ctrl+Shift+E",
-		"AddAnnotation":    "Ctrl+Shift+A",
-		"AddTextAuthor":    "Ctrl+Shift+U",
-		"StyleSubtitle":    "Ctrl+Shift+S",
-		"StyleTextAuthor":  "Ctrl+Shift+X",
-		"StyleCode":        "Ctrl+Shift+K",
+		// File
+		"Save":   "Ctrl+S",
+		"SaveAs": "Ctrl+Shift+S",
+
+		// Edit — search
+		"Find":     "Ctrl+F",
+		"Replace":  "Ctrl+H",
+		"FindNext": "Ctrl+G",
+		"FindPrev": "Ctrl+Shift+G",
+
+		// Format — inline marks
+		"ToggleStrong":        "Ctrl+B",
+		"ToggleEmphasis":      "Ctrl+I",
+		"ToggleStrikethrough": "Ctrl+Shift+D",
+		"ToggleSub":           "Ctrl+,",
+		"ToggleSup":           "Ctrl+.",
+		"ToggleCode":          "Ctrl+Shift+C",
+
+		// Paragraph style
+		"StyleNormal":     "",
+		"StyleSubtitle":   "Ctrl+Shift+U",
+		"StyleTextAuthor": "",
+
+		// Blocks
+		"InsertEmptyLine":      "Ctrl+Shift+L",
+		"CloneContainer":       "",
+		"RemoveOuterContainer": "",
+		"AddTitle":             "",
+		"AddEpigraph":          "Ctrl+Shift+E",
+		"AddAnnotation":        "Ctrl+Shift+A",
+		"AddTextAuthor":        "",
+		"InsertCite":           "Ctrl+Shift+Q",
+		"InsertPoem":           "Ctrl+Shift+P",
+		"InsertTable":          "Ctrl+Shift+T",
+		"MergeContainers":      "Ctrl+Shift+M",
+
+		// Dialogs
+		"OpenBinaries": "",
+		"OpenSettings": "",
+		"OpenHelp":     "",
 	}
 }

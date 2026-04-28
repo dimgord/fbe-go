@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Hardened-runtime entitlements for fbe-go.app.
+
+      The hardened runtime is required by Apple's notarization service —
+      binaries without it are rejected with "The executable does not have the
+      hardened runtime enabled." Enabling it also locks down several runtime
+      behaviors by default; any of those that we rely on must be re-allowed
+      via a named entitlement below.
+
+      What fbe-go.app actually does at runtime:
+        1. Embeds a WebKit webview (Wails v2 on macOS uses WKWebView).
+           WebKit JITs JavaScript — without allow-jit it would bail with
+           a "JavaScript JIT is disabled" console message and every PM
+           doc would crawl.
+        2. Loads the Wails runtime JS into the webview; that module uses
+           `eval`-style code paths (prosemirror commands, svelte HMR in
+           dev). Under hardened runtime the WKWebView already handles
+           this via the JIT entitlement — no need for
+           cs.disable-executable-page-protection.
+        3. Reads arbitrary user-chosen FB2 files via OpenFileDialog. In
+           a hardened app without the Files entitlement set, the system
+           policy-gates file access — we DO want that for sandboxing when
+           we eventually add App Store distribution, but for Developer-ID
+           distribution it's non-blocking because hardened runtime by
+           default permits access to paths the user picks via a standard
+           open panel.
+        4. Executes NO external binaries (no `fc-list` fallback etc. on
+           macOS — only Linux uses that path). No library-validation
+           opt-out needed.
+
+      What we DO NOT grant:
+        - com.apple.security.cs.disable-library-validation: we only load
+          libraries we signed or Apple-trusted system libraries.
+        - com.apple.security.cs.allow-unsigned-executable-memory: the
+          JIT entitlement is more specific and sufficient for WebKit.
+        - network.client: Developer-ID apps don't need to declare this
+          (only App Sandbox does). CheckForUpdate uses HTTPS to GitHub;
+          this works without any entitlement on hardened-runtime.
+        - files.* entitlements: same — only needed under App Sandbox.
+
+      Sources:
+        - https://developer.apple.com/documentation/security/hardened_runtime
+        - https://wails.io/docs/guides/mac-app-store — notes allow-jit
+          for WKWebView JS performance.
+    -->
+
+    <!-- Allow the WebKit JavaScriptCore JIT. Without this, the PM editor
+         bogs down on medium/large FB2 docs because JS interpretation falls
+         back to the baseline tier. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+</dict>
+</plist>

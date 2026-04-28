@@ -7,10 +7,15 @@
   import ValidationPanel from "./validation/ValidationPanel.svelte";
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
+  import SearchBar from "./editor/search/SearchBar.svelte";
+  import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
+  import UpdateBanner from "./updates/UpdateBanner.svelte";
+  import type { updates as UpdatesNS } from "../wailsjs/go/models";
   import { installExternalLinkHandler } from "./runtime/externalLink";
   import { configurePaste } from "./editor/paste";
   import { SAMPLE_BOOK } from "./fb2/sample";
   import type { FictionBook } from "./fb2/types";
+  import { HOTKEY_ACTIONS, matchesEvent } from "./settings/hotkeys";
 
   type View = "body" | "description";
   let view: View = "body";
@@ -21,6 +26,9 @@
   let status = "";
   let error = "";
   let editor: Editor | undefined = undefined;
+  /** Bound to Editor.view so SearchBar (and any other sibling) gets a
+      reactive reference to the live PM EditorView. */
+  let editorView: import("prosemirror-view").EditorView | undefined = undefined;
 
   // Validation / XML-source panel state.
   let showPanel = false;
@@ -46,14 +54,46 @@
 
   let showHelp = false;
   let showSettings = false;
+  let showBinaries = false;
+
+  /** User-configurable keyboard shortcuts, loaded from settings.Hotkeys on
+      mount and refreshed after Settings → Apply. Passed into Editor as a
+      prop so its PM keymap rebuilds on change, and consulted here for the
+      window-level actions (Save, Find, dialogs). */
+  let hotkeys: Record<string, string> = {};
+
+  /** Update banner state. Populated asynchronously shortly after mount by
+      a non-blocking GitHub Releases poll. Null = no banner (either no
+      update, check failed, or user dismissed this session). */
+  let updateInfo: UpdatesNS.Info | null = null;
+
+  // Search/Replace inline bar state. Bar is non-modal and only shown in the
+  // body view because description is edited in a separate PM instance.
+  let searchOpen = false;
+  let searchMode: "find" | "replace" = "find";
+  function openSearch(mode: "find" | "replace") {
+    searchMode = mode;
+    searchOpen = true;
+  }
 
   function onSettingsApplied(
-    e: CustomEvent<{ theme: Theme; settings: { font: { family: string; size: number }; nbspChar: string } }>
+    e: CustomEvent<{
+      theme: Theme;
+      settings: {
+        font: { family: string; size: number };
+        nbspChar: string;
+        hotkeys?: Record<string, string>;
+      };
+    }>
   ) {
     // Sync live runtime state with what the dialog just wrote to disk.
     theme = e.detail.theme;
     applyEditorFont(e.detail.settings.font);
     configurePaste({ nbspChar: e.detail.settings.nbspChar });
+    // Fresh object identity so Editor's reactive reconfigure fires.
+    if (e.detail.settings.hotkeys) {
+      hotkeys = { ...e.detail.settings.hotkeys };
+    }
     // Refresh recent-files list in case the dialog cleared it.
     void refreshRecent();
   }
@@ -397,11 +437,39 @@
     }
   }
 
-  // Keyboard shortcut: Cmd-S / Ctrl-S saves.
+  // Table of app-level actions that need a window-level keyboard listener:
+  // either they sit outside the editor DOM (SearchBar, dialogs) or they
+  // must run in both views (Save). Editor-internal commands (Bold, etc.)
+  // are handled by ProseMirror's keymap inside Editor.svelte, built from
+  // the same hotkeys map — see Editor.svelte::buildKeymap.
+  const APP_ACTIONS: Record<string, () => void> = {
+    Save:         () => save(false),
+    SaveAs:       () => save(true),
+    Find:         () => { if (view === "body") openSearch("find"); },
+    Replace:      () => { if (view === "body") openSearch("replace"); },
+    InsertTable:  () => { if (view === "body") editor?.openTableDialog(); },
+    OpenBinaries: () => { if (view === "body") showBinaries = true; },
+    OpenSettings: () => { showSettings = true; },
+    OpenHelp:     () => { showHelp = true; },
+  };
+
   function onKeyDown(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-      e.preventDefault();
-      save(e.shiftKey); // Shift-Cmd-S → Save As
+    // Walk the catalog rather than the APP_ACTIONS keys so actions without
+    // a binding are cheap no-ops. Stop at the first match — once an action
+    // fires, we preventDefault and return so the event doesn't also reach
+    // the editor's PM keymap and double-dispatch.
+    for (const action of HOTKEY_ACTIONS) {
+      if (action.editor) continue; // PM handles editor-level bindings
+      const accel = hotkeys[action.id];
+      if (!accel) continue;
+      if (matchesEvent(e, accel)) {
+        const handler = APP_ACTIONS[action.id];
+        if (handler) {
+          e.preventDefault();
+          handler();
+        }
+        return;
+      }
     }
   }
 
@@ -451,8 +519,30 @@
         if (s?.nbspChar) {
           configurePaste({ nbspChar: s.nbspChar });
         }
+        if (s?.hotkeys) {
+          // Fresh object so Editor's reactive reconfigure runs once on first
+          // load even if the Wails binding happens to return the same ref.
+          hotkeys = { ...s.hotkeys };
+        }
       } catch { /* leave defaults */ }
     })();
+
+    // Non-blocking update check. Fired after a small delay so it doesn't
+    // compete with the settings-load / document-load round-trips for the
+    // first paint. A network flake just means "no banner this launch",
+    // which is the right trade-off — the banner's job is to be polite.
+    const updateTimer = window.setTimeout(async () => {
+      const App = await wailsApp();
+      if (!App) return;
+      try {
+        const info = await App.CheckForUpdate();
+        if (info && info.available) {
+          updateInfo = info;
+        }
+      } catch (e) {
+        console.info("[fbe] update check failed:", e);
+      }
+    }, 800);
     // Pick up whatever Go already has open (so opening :34115 in a browser
     // tab while a file is loaded in the native window shows that file
     // instead of the sample). Path is intentionally NOT synced — Save in
@@ -477,11 +567,13 @@
       window.removeEventListener("keydown", onKeyDown);
       mq.removeEventListener("change", onSystemChange);
       detachExternalLinks();
+      window.clearTimeout(updateTimer);
     };
   });
 </script>
 
 <div class="layout">
+  <UpdateBanner info={updateInfo} on:dismiss={() => (updateInfo = null)} />
   <header>
     <div class="open-group">
       <button on:click={() => openFile()}>Open…</button>
@@ -542,7 +634,14 @@
   </header>
 
   {#if view === "body"}
-    <Toolbar {editor} />
+    <Toolbar {editor} on:openBinaries={() => (showBinaries = true)} />
+    {#if searchOpen}
+      <SearchBar
+        view={editorView}
+        bind:mode={searchMode}
+        on:close={() => (searchOpen = false)}
+      />
+    {/if}
     <main
       bind:this={mainEl}
       class:with-panel={showPanel}
@@ -566,7 +665,7 @@
         on:pointercancel={endDragOutline}
         on:keydown={onOutlineResizerKey}
       ></div>
-      <section><Editor bind:this={editor} {fb} /></section>
+      <section><Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} /></section>
       {#if showPanel}
         <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
@@ -631,6 +730,7 @@
 
 <HelpDialog bind:open={showHelp} />
 <SettingsDialog bind:open={showSettings} on:apply={onSettingsApplied} />
+<BinaryManagerDialog bind:open={showBinaries} bind:fb view={editorView} />
 
 <style>
   /* Theme palette. Applied via [data-theme="light|dark"] on <html>; the
@@ -677,6 +777,12 @@
     --highlight:       #fce6a0;
     --shadow:          rgba(0, 0, 0, 0.25);
     --backdrop:        rgba(0, 0, 0, 0.35);   /* modal dim */
+
+    /* Search/replace match highlighting — light wash on inactive hits,
+       saturated orange on the currently-focused one (matches VS Code). */
+    --search-match-bg:            #ffe89a;
+    --search-match-active-bg:     #ffb347;
+    --search-match-active-border: #d07b0a;
   }
 
   :global([data-theme="dark"]) {
@@ -718,6 +824,10 @@
     --highlight:       #5a4a10;
     --shadow:          rgba(0, 0, 0, 0.6);
     --backdrop:        rgba(0, 0, 0, 0.55);   /* modal dim — stronger in dark mode */
+
+    --search-match-bg:            #6b5814;
+    --search-match-active-bg:     #c88420;
+    --search-match-active-border: #e8a850;
   }
 
   :global(body), :global(html) {

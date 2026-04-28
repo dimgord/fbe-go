@@ -6,6 +6,1568 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 86 — 2026-04-28 — v1.0.0 cut [dev → main]
+
+Final 1.0 cut. RC5 has soaked since 2026-04-26 with no
+regressions reported on macOS or Linux. Five RC cycles
+behind us (RC1 → version-only; RC2 → author-fidelity; RC3 →
+UTF-16 + note-link nav; RC4 → Linux AppImage portability;
+RC5 → adopt full community excludelist). The cardinal
+`fidelityBroken=0` invariant has held across every cycle,
+re-verified on the 166-file corpus before tagging.
+
+### Version triple sync
+
+`version.go` was missed during the RC4 and RC5 bumps — it
+stayed at `1.0.0-rc3` while `wails.json` and
+`frontend/package.json` advanced. Result: published RC4 and
+RC5 .app bundles report `1.0.0-rc3` in the About dialog and
+trip the auto-update banner ("v1.0.0-rc5 available") on
+freshly-installed RC5.
+
+This rev fixes the desync organically by bumping all three to
+`1.0.0` in lockstep:
+
+- `version.go` → `const Version = "1.0.0"` (compiled into
+  the binary; source of truth for `App.AppVersion()` and
+  the auto-update comparator).
+- `wails.json` → `info.productVersion: "1.0.0"` (Info.plist).
+- `frontend/package.json` → `"version": "1.0.0"` (HelpDialog
+  fallback when the Wails bridge isn't attached).
+- `frontend/package-lock.json` — auto-resynced via
+  `npm install --package-lock-only`.
+
+A memory entry (`feedback_version_triple.md`) was added to
+make the version.go skip less likely on future bumps.
+
+### CHANGELOG
+
+`[1.0.0] — unreleased` → `[1.0.0] — 2026-04-28`. The body
+of the section (feature inventory) is unchanged from when
+it was written for the RC1 cut — every feature it lists has
+held through soak.
+
+### Release process from here
+
+1. Commit this rev to `dev`, push.
+2. **Merge dev → main** with explicit confirmation
+   (CLAUDE.md global rule — never push to main without
+   explicit user "go").
+3. `git tag v1.0.0 && git push origin v1.0.0`.
+4. The `v*` tag triggers `.github/workflows/release.yml`.
+   Both jobs (macOS sign+notarize, Linux AppImage) build
+   in parallel; expected wall-clock ~5–10 min. Critically,
+   the workflow's `prerelease:` expression detects no
+   `-beta`/`-rc`/`-alpha` substring in `v1.0.0` and
+   publishes the GitHub Release as **Latest**, not
+   prerelease.
+5. Verify Release page lists all three signed artifacts
+   (`fbe-go-v1.0.0-macos-universal.dmg`,
+   `fbe-go-v1.0.0-linux-x86_64.AppImage`,
+   `fbe-go-v1.0.0-linux-freedesktop.tar.gz`) and shows the
+   "Latest" badge.
+6. **Flip repo to public** in GitHub Settings → General →
+   Visibility (separate from this rev — see audit run on
+   2026-04-28: clean — no secrets, LICENSE + NOTICE
+   present, .gitignore reasonable).
+7. Set up branch protection on main (only available on
+   public free-tier repos).
+8. Announce on FB2 forums + original FBE community per
+   PHASES.md M4.
+
+### Modified
+
+- `version.go` — 1.0.0-rc3 → 1.0.0.
+- `wails.json` — productVersion 1.0.0-rc5 → 1.0.0.
+- `frontend/package.json` — version 1.0.0-rc5 → 1.0.0.
+- `frontend/package-lock.json` — auto-synced.
+- `CHANGELOG.md` — `[1.0.0] — unreleased` → `[1.0.0] — 2026-04-28`.
+
+---
+
+## Rev 85 — 2026-04-26 — Linux AppImage: adopt full community excludelist → v1.0.0-rc5 [dev]
+
+Version: **1.0.0-rc5**.
+
+### Symptom
+
+rc4 AppImage launches past the WebKit fix from Rev 84 — gets a
+window — then on first credential-store touch (or sometimes
+immediately on Fedora 43, depending on which lib gets resolved
+first) crashes with:
+
+```
+./fbe-go-v1.0.0-rc5-linux-x86_64.AppImage: symbol lookup error:
+  /lib64/libsecret-1.so.0: undefined symbol: g_variant_builder_init_static
+```
+
+### Root cause
+
+Same family of bug as Rev 84, different lib. `g_variant_builder_init_static`
+was added to GLib **2.84** (2025). Fedora 43 ships GLib 2.84+ and its
+`/lib64/libsecret-1.so.0` was compiled against that. The AppImage
+bundles GLib from Ubuntu 24.04 (the GHA `ubuntu-latest` runner),
+which is GLib 2.80 — no such symbol. At AppImage startup, the dynamic
+linker resolves `libglib-2.0.so.0` to the bundled (older) copy because
+it appears first in the search path. When the host's libsecret is then
+loaded and tries to resolve its GLib symbols against that older bundled
+GLib, `g_variant_builder_init_static` is missing → process aborts before
+`main()` even returns to Go.
+
+The AppImageCommunity excludelist documents this exact failure mode in
+its `--- Bundling GLib and its consequences ---` comment block but
+explicitly defers the GLib-exclusion decision to app maintainers
+(it has cascading effects: every bundled lib that uses GLib will then
+use the host's GLib instead, which is fine in our case because GLib
+is forward-compatible — Ubuntu-built libs work against Fedora's newer
+GLib, but not the other way around).
+
+### Fix
+
+Adopt the full AppImageCommunity excludelist + add our own GLib /
+libsecret / libwebkit entries on top:
+
+- New `packaging/linux/excludelist.community`: vendored copy of the
+  upstream excludelist, pinned to commit
+  `19e30b276ffedf4d3b4b56bc6320f463625a74f8` (2025-07-21). 246 lines,
+  ~150 active entries covering ld-linux, libc, libstdc++, libdrm,
+  Mesa drivers, fontconfig, freetype, harfbuzz, libGL/libEGL,
+  pulseaudio client, dbus client, and a long tail of host-coupled
+  libs that should never be bundled. Each upstream entry has its
+  own justification comment.
+- New `packaging/linux/excludelist.local`: our additions
+  (libwebkit2gtk-4.1, libjavascriptcoregtk-4.1, libglib-2.0,
+  libgio-2.0, libgobject-2.0, libgmodule-2.0, libsecret-1) with
+  justifications referencing this rev and Rev 84.
+- `release.yml` now reads both files, strips comments / blanks, and
+  builds an `EXCLUDES=()` array fed to linuxdeploy. Replaces the
+  inline `--exclude-library` flags Rev 84 added.
+
+This is the "adopt the well-known list" approach the user picked
+over the minimal "just exclude GLib" patch in our debug session,
+on the theory that ABI-mismatch bugs would keep landing one lib at
+a time otherwise. The community list also catches things like
+libGL (driver coupling — bundling the Ubuntu-built libGL and trying
+to load Fedora-built Mesa drivers is asking for a different kind of
+crash) that we'd never have thought to add ourselves.
+
+### Refresh procedure
+
+When the upstream excludelist updates (rare — last edit was July
+2025), re-fetch and replace `excludelist.community` wholesale:
+
+```sh
+SHA=<latest-commit-sha-from-upstream>
+curl -fsSL \
+  "https://raw.githubusercontent.com/AppImageCommunity/pkg2appimage/${SHA}/excludelist" \
+  -o packaging/linux/excludelist.community
+# then update the SHA in the file's header comment
+```
+
+Keep `excludelist.local` separate so re-vendoring stays mechanical.
+
+### Files
+
+- New: `packaging/linux/excludelist.community` (246 lines).
+- New: `packaging/linux/excludelist.local` (38 lines, our additions).
+- Modified: `.github/workflows/release.yml` — replaced two inline
+  `--exclude-library` flags with a loop reading both files.
+- Modified: `wails.json`, `frontend/package.json` — version bump
+  to 1.0.0-rc5.
+- Modified: `CHANGELOG.md` — rc5 entry.
+
+---
+
+## Rev 84 — 2026-04-25 — Linux AppImage portability: stop bundling libwebkit → v1.0.0-rc4 [dev]
+
+Version: **1.0.0-rc4**.
+
+### Symptom
+
+`fbe-go-v1.0.0-rc3-linux-x86_64.AppImage` crashes at startup
+on Fedora 43 (and by extension every non-Debian distro):
+
+```
+ERROR: Unable to spawn a new child process: Failed to spawn
+       child process "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/
+       WebKitNetworkProcess" (No such file or directory)
+SIGTRAP: trace trap
+signal arrived during cgo execution
+```
+
+Crash before the window even opens. Caught locally during
+post-rc3 manual smoke; clean run on the GHA Ubuntu builder
+masked it because Ubuntu *has* that path.
+
+### Root cause
+
+WebKit forks two helper executables at startup
+(`WebKitNetworkProcess`, `WebKitWebProcess`) from a path that
+is **hard-coded into `libwebkit2gtk-4.1.so` at compile time**
+via the `LIBEXECDIR` macro. The Ubuntu build used by the GHA
+runner sets that to `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/`.
+Other distros put the helpers elsewhere — Fedora at
+`/usr/libexec/webkit2gtk-4.1/`, Arch at `/usr/lib/webkit2gtk-4.1/`,
+openSUSE at `/usr/lib64/webkit2gtk-4.1/`. No environment variable
+overrides this in the 4.1 ABI (verified against the bundled
+`libwebkit2gtk-4.1.so.0`: only `WEBKIT_INJECTED_BUNDLE_PATH`
+and the sandbox-disable knobs are honored; the legacy
+`WEBKIT_EXEC_PATH` was removed).
+
+linuxdeploy bundled our Ubuntu-built libwebkit into the AppImage
+via standard `ldd` tracing. On Fedora, the dynamic linker happily
+loaded that bundled `.so`, but at first WebKit IPC the bundled
+lib looked for its helpers at the Ubuntu path — which doesn't
+exist on Fedora — and aborted from inside cgo (uncatchable from
+Go).
+
+`linuxdeploy-plugin-gtk` does NOT solve this — checked the source.
+It bundles GTK and PixBufs but has no WebKit handling.
+
+### Fix
+
+`.github/workflows/release.yml`: add `--exclude-library` flags
+to the linuxdeploy invocation so libwebkit2gtk-4.1 and
+libjavascriptcoregtk-4.1 are *not* bundled. The AppImage now
+relies on the system's libwebkit, which on every distro is
+compiled with that distro's correct local helper paths.
+
+This is the standard fix used by Tauri's tauri-action and most
+GNOME apps that ship via AppImage. Trade-off: users need
+`webkit2gtk-4.1` installed system-wide before launching.
+Documented in README under a new "Linux runtime requirements"
+section with the per-distro package names. Every distro that can
+run any GTK desktop app already has it as a transitive GNOME dep,
+so this is a non-issue in practice.
+
+Also drops AppImage size by ~50 MB (webkit binaries are huge).
+
+### Nix angle (no flake change needed)
+
+Two cases, both already handled:
+
+- `nix develop` + `wails dev` on NixOS: unaffected. The flake
+  pulls `webkitgtk_4_1` from nix-store; libwebkit there is
+  compiled with `LIBEXECDIR` pointing into the same store path
+  as the helpers, so they travel together. No /usr lookup
+  involved.
+- NixOS users running the released AppImage: there is no
+  `/usr/lib/libwebkit2gtk-4.1.so` on a vanilla NixOS, so the
+  exclude-library trick alone isn't enough — they need either
+  `programs.nix-ld` enabled or to wrap the launch with
+  `appimage-run` / `steam-run`, which conjures an FHS `/usr`
+  from a Nix package set. That's a NixOS-side configuration
+  decision (and standard for any AppImage on NixOS), not
+  something the AppImage can carry. Documented in the README
+  distro table as the NixOS row.
+
+So `flake.nix` stays untouched: it's strictly for development,
+not for distributing artifacts to NixOS end-users.
+
+### Verification
+
+Pre-fix AppImage on Fedora 43: instant SIGTRAP at startup.
+With `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/` symlinks
+manually created to `/usr/libexec/webkit2gtk-4.1/`, the same
+binary launches and runs cleanly — confirming the ONLY blocker
+is the helper-path lookup. The new build will skip the symlink
+step by always using the system's libwebkit (which already knows
+its helper path).
+
+### Files
+
+- Modified: `.github/workflows/release.yml` — `--exclude-library`
+  flags + comment explaining why.
+- Modified: `README.md` — new "Linux runtime requirements"
+  section above Prerequisites, with per-distro package table
+  including a NixOS row.
+- Modified: `wails.json`, `frontend/package.json` — version bump
+  to 1.0.0-rc4.
+
+---
+
+## Rev 83 — 2026-04-25 — UTF-16 parse + note-link navigation → v1.0.0-rc3 [dev]
+
+Two more soak-QA findings on `v1.0.0-rc2`. Both pre-existing
+gaps surfaced as the test corpus grew (UTF-16) and as Dmitry
+manually exercised footnote-heavy books in the editor
+(note-link click). Bundled into one rev to keep the RC cycle
+tight: shared release, shared soak window.
+
+### Fix 1 — UTF-16 LE/BE BOM parse failure
+
+#### Symptom
+
+`parser.Parse` failed on `~/Documents/books/The Long Watch.fb2`
+(UTF-16 LE with BOM) with
+`XML syntax error on line 1: expected element name after <`.
+Surfaced as the only ❌ in the Rev 82 corpus run after the
+author fix shrank the failure list.
+
+#### Root cause
+
+`detectBOM` correctly identifies the BOM and discards the two
+header bytes, then `xml.NewDecoder` is constructed over the
+remaining UTF-16 bytes. Go's encoding/xml reads the
+`<?xml encoding="…"?>` declaration **assuming UTF-8** before
+consulting `CharsetReader` — so it sees `<\x00?\x00x\x00m\x00l…`
+(null bytes between every UTF-16 LE character) and fails
+immediately. CharsetReader never gets called, even though we
+configured it.
+
+#### Fix
+
+When `detectBOM` returns a forced non-UTF-8 encoding, wrap the
+post-BOM `bufio.Reader` in `forced.NewDecoder().Reader(br)`
+*before* handing it to `xml.NewDecoder`. The decoder now sees
+real UTF-8 bytes and parses the XML declaration normally.
+`CharsetReader` becomes a passthrough — the underlying stream is
+already decoded, so honouring the in-document `encoding="utf-16"`
+attribute would mean double-decoding.
+
+### Fix 2 — Cmd/Ctrl+click navigates internal links
+
+#### Symptom
+
+In an open `.fb2` document, clicking a footnote reference in the
+ProseMirror editor put the cursor inside the link text but did
+**not** navigate to the note. Same `<a l:href="#…">` survived
+fine through `export html` and was clickable in the exported
+HTML — feature gap, not a fidelity bug.
+
+#### Fix
+
+New module `frontend/src/editor/noteLinks.ts` with two pieces:
+
+- `noteLinksPlugin()` — PM Plugin whose `handleClick` prop fires
+  on `Cmd/Ctrl+click`. Walks the doc to find the node carrying
+  `attrs.id === href.slice(1)`, dispatches a `setSelection` to
+  that text position, and pushes the originating cursor position
+  onto a per-view back-stack held in plugin state.
+- `noteLinksBack` — a PM `Command` that pops the stack and
+  navigates back. Bound to `Mod-[` in `Editor.svelte`'s keymap
+  (matches IDE convention; survives WKWebView since it's caught
+  by PM before the webview's gesture handler).
+
+#### Scroll-to-top, not minimal scroll
+
+`tr.scrollIntoView()` alone uses PM's minimal-scroll heuristic:
+when the target is far below the viewport, it lands on the
+*last visible line*, hiding the body of the note. Workaround:
+after dispatch, schedule a microtask that calls
+`element.scrollIntoView({ block: "start" })` on the target's
+DOM. Try `view.nodeDOM(targetPos)` first (works for block
+boundaries like `<section>`), fall back to `view.domAtPos(sel.from)`
+which works for text positions inside paragraphs (the back-jump
+case — original cursor was in mid-paragraph, not at a node
+boundary).
+
+#### Discovery — false-positive "back doesn't work"
+
+During wiring, the back command appeared broken: cursor moved
+in plugin state but the user couldn't see it happen.
+Root cause: `view.nodeDOM` returns `null` for text positions,
+so the `scrollIntoView` no-op'd silently for back jumps. Fix
+above (nodeDOM → domAtPos fallback) handles both block and text
+target positions. Diagnostic logs that surfaced the issue
+(`[fbe] noteLinks push from … → …` and `[fbe] noteLinksBack
+invoked, stack: …`) are removed before commit.
+
+#### HelpDialog
+
+Two new entries appended to the Keyboard shortcuts table:
+
+- `⌘-Click` — Follow internal link / footnote
+- `⌘-[` — Back from followed link
+
+### Schema audit
+
+No schema or struct changes in this rev. UTF-16 fix touches
+`internal/fb2/parser/parser.go` only. Note-link click is
+frontend-only.
+
+### Tests
+
+- `internal/fb2/parser/parser_test.go` — `TestParseUTF16LEWithBOM`,
+  `TestParseUTF16BEWithBOM`. Both red before fix, green after.
+- Existing UTF-8 / UTF-8-BOM / Windows-1251 / KOI8-R tests still
+  pass — the new pre-decode path only triggers when `detectBOM`
+  returns a non-UTF-8 forced encoding.
+- Frontend `npm run check` (svelte-check) and `npm test` (vitest,
+  80 cases) both green; `npm run build` clean. No new vitest
+  coverage for `noteLinks.ts` — manual verification on the live
+  webview via Cmd-click + Cmd-[ on Nevelichka drama footnotes.
+
+### Corpus impact
+
+Same `~/Documents/books` corpus from Rev 82, now 166 files
+(one more added during soak):
+
+|                       | Rev 82 (after) | Rev 83 (after) |
+|-----------------------|---------------:|---------------:|
+| `parse OK`            |        165/166 |        166/166 |
+| `fidelityBroken`      |              0 |              0 |
+| `outValid` / 166      |        132/166 |        133/166 |
+| `srcValid` / 166      |        110/166 |        111/166 |
+
+`The Long Watch.fb2` flips from ❌ to ✅. `fidelityBroken=0`
+held across both fixes.
+
+### Modified
+
+- `internal/fb2/parser/parser.go` — pre-decode UTF-16 → UTF-8
+  before `xml.NewDecoder`; CharsetReader becomes pass-through
+  on forced-encoding path.
+- `internal/fb2/parser/parser_test.go` — UTF-16 LE + BE tests.
+- `frontend/src/editor/noteLinks.ts` — new module (plugin +
+  back command + scroll helper).
+- `frontend/src/editor/Editor.svelte` — wire `noteLinksPlugin`
+  + `Mod-[` keymap into both initial mount and reconfigure
+  blocks.
+- `frontend/src/help/HelpDialog.svelte` — two new shortcut rows.
+- `version.go` — 1.0.0-rc2 → 1.0.0-rc3.
+- `wails.json` — productVersion bump.
+- `frontend/package.json` — version bump.
+- `frontend/package-lock.json` — auto-synced via npm.
+- `CHANGELOG.md` — [1.0.0-rc3] entry added.
+
+### Release process
+
+Tag `v1.0.0-rc3` on `dev`, release workflow produces signed +
+notarized artifacts. Same soak window expectation as RC2: 2-3
+days of manual QA before the `v1.0.0` cut. If clean, Rev 84
+merges dev → main + tags `v1.0.0`.
+
+---
+
+## Rev 82 — 2026-04-25 — author round-trip fidelity fix → v1.0.0-rc2 [dev]
+
+Soak QA on `v1.0.0-rc1` surfaced a fidelity regression on
+`Nevelichka drama.fb2` (one of the books in the
+`rozstrilyane_pokolinnya/` subdirectory added to the local corpus
+after Rev 80's "fidelityBroken=0 holds" check — Rev 80 ran against
+8 files; the corpus is now 165). The validation panel reported
+the round-tripped XML as XSD-invalid even though the source was
+valid.
+
+### Symptom
+
+Source had `<author><first-name>Сонячна</first-name><last-name/><nickname>VV</nickname></author>`.
+Our writer dropped the empty `<last-name/>` on round-trip, leaving
+`<author><first-name>Сонячна</first-name><nickname>VV</nickname></author>`
+— invalid per XSD `authorType` sequence A, which requires
+`last-name` (required, not `minOccurs="0"`).
+
+(Aside: libxml2 reported the resulting error at the line of the
+*first* author's `<nickname>`, not the third author. That's a
+known quirk of XSD choice diagnostics in libxml2 — when the
+choice fails partway through, the position cursor doesn't always
+land on the offending child. Not our bug; flagged so future
+debugging doesn't chase ghosts.)
+
+### Root cause
+
+`doc.Author` declared every name field as
+`string \`xml:"...,omitempty"\``. Go's `encoding/xml` treats an
+empty string + `omitempty` as "omit the element entirely",
+indistinguishable from "field was never set". For an XSD-required
+child like `<last-name>`, that silently turns valid input into
+invalid output.
+
+The bug is older than the rev that surfaced it — Rev 80's corpus
+check passed only because it ran against 8 files, none of which
+exercised the empty-required-element path. RC1 shipped with this
+regression.
+
+### Fix — custom `Author.MarshalXML` (variant B from the planning chat)
+
+`authorType` is an XSD `<xs:choice>` of two sequences:
+
+- A) `first-name`, `middle-name?`, `last-name`, `nickname?`,
+  `home-page*`, `email*`, `id?`
+- B) `nickname`, `home-page*`, `email*`, `id?`
+
+The new `MarshalXML` picks a sequence by inspecting populated
+fields:
+
+- If any of `FirstName`, `MiddleName`, `LastName` is set
+  → sequence A → emit `first-name` and `last-name`
+  *unconditionally* (the schema makes them required), plus
+  `middle-name`/`nickname` only when non-empty.
+- Otherwise → sequence B → emit `nickname` (the required head
+  of the sequence).
+
+`home-page`, `email`, `id` keep their `omitempty` semantics in
+both branches (they're optional everywhere).
+
+This is the minimal-blast-radius option. Alternatives considered:
+
+- Drop `omitempty` from every name field — would inject empty
+  `<first-name></first-name><last-name></last-name>` into
+  legitimate nickname-only authors, invalidating sequence B.
+- Switch to `*string` (nil = absent, `&""` = present-but-empty)
+  for full fidelity — broader refactor across all 4 fields × all
+  call sites in Go and the Svelte frontend; not justified by this
+  bug alone.
+
+### Schema audit
+
+Walked every `string` field in `internal/fb2/doc/doc.go` for the
+same `omitempty`-but-required-by-XSD pattern. All other required
+fields (`TitleInfo.BookTitle`, `TitleInfo.Lang`,
+`DocumentInfo.ID`/`Version`, `Image.Href`, `Sequence.Name`,
+`CustomInfo.InfoType`, `Binary.ID`/`ContentType`, `Stylesheet.Type`)
+are already declared without `omitempty`. `Author` was the only
+case.
+
+### Corpus impact (`FBE_CORPUS_DIR=~/Documents/books`)
+
+|                       | before fix | after fix |
+|-----------------------|-----------:|----------:|
+| `fidelityBroken`      |         26 |       0   |
+| `outValid` / 165      |        105 |     132   |
+| `srcValid` / 165      |        110 |     110   |
+
+Cardinal invariant from CLAUDE.md ("fidelityBroken must stay at 0")
+restored. Twenty-seven previously-broken files now produce
+XSD-valid output without source modification.
+
+One pre-existing parse failure remains: `The Long Watch.fb2`
+(UTF-16 LE with BOM) — `parser.Parse` fails with "expected
+element name after <" even though `detectBOM` correctly strips
+the BOM. Confirmed via `git stash` to predate this fix; tracked
+separately (no rev — post-1.0 follow-up).
+
+### Tests
+
+New `internal/fb2/writer/author_test.go` with two cases:
+
+- `TestAuthorEmptyLastNamePreserved` — minimal repro of the
+  Nevelichka drama pattern; asserts `<last-name></last-name>`
+  survives round-trip.
+- `TestAuthorNicknameOnlyDoesNotInjectEmptyNames` — guard against
+  the fix overshooting and emitting empty name fields for
+  sequence-B authors.
+
+`go test ./...` and `go test -tags xsd ./...` both green.
+
+### Modified
+
+- `internal/fb2/doc/doc.go` — `Author.MarshalXML` added; type
+  comment expanded to spell out the choice + why custom marshalling
+  is needed.
+- `internal/fb2/writer/author_test.go` — new.
+- `version.go` — 1.0.0-rc1 → 1.0.0-rc2.
+- `wails.json` — productVersion bump.
+- `frontend/package.json` — version bump.
+- `frontend/package-lock.json` — auto-synced via npm.
+- `CHANGELOG.md` — [1.0.0-rc2] entry added.
+
+### Release process
+
+Same RC pipeline as Rev 81: tag `v1.0.0-rc2` on `dev`, release
+workflow produces signed/notarized macOS DMG + Linux AppImage as
+prerelease, soak again before any `v1.0.0` cut.
+
+---
+
+## Rev 81 — 2026-04-24 — v1.0.0-rc1 cut [dev]
+
+Third and final pre-1.0 rev. Bumps the version triple to
+`1.0.0-rc1` so the `v1.0.0-rc1` tag produces a first-ever
+signed + notarized release candidate through the Rev 78/79
+pipeline, verified live as `v0.2.0-signtest` earlier today
+(`spctl --assess` → `accepted / source=Notarized Developer ID`).
+
+### Scope — tag strategy
+
+Per CLAUDE.md's "NEVER push to main/master without explicit
+confirmation" rule, **RC stays on `dev`**:
+
+- `v1.0.0-rc1` tag points at dev's current HEAD.
+- `main` doesn't move until the RC soaks successfully (2–3 days
+  of manual QA on the signed DMG + AppImage) and the final
+  `v1.0.0` tag is cut — that merge will be its own rev with
+  explicit confirmation.
+- Canonical GitFlow would merge to main now; we explicitly don't
+  because a regression found during RC soak would then force a
+  `git reset --hard` / force-push on main. Keeping main frozen
+  at the previous stable (currently nothing — first 1.0 cut)
+  trades off visible "we're almost there" for safer rollback.
+
+### Version triple sync
+
+- `version.go` → `const Version = "1.0.0-rc1"` (compiled into
+  the binary; source of truth for `App.AppVersion` and
+  `App.CheckForUpdate`'s current-version compare).
+- `wails.json` → `info.productVersion: "1.0.0-rc1"` (used by
+  Wails for the .app bundle's Info.plist version fields).
+- `frontend/package.json` → `version: "1.0.0-rc1"` (fallback
+  for HelpDialog when Wails bridge isn't attached, e.g. in
+  vite-dev browser tab).
+- `frontend/package-lock.json` — resync via
+  `npm install --package-lock-only`.
+
+Test fixtures in `internal/fb2/updates/updates_test.go` and
+example strings in `release.yml` / `updates.go` docstrings
+intentionally left at `v0.2.0-beta` — they're example inputs
+to the semver comparator, not ties to the actual product
+version.
+
+### CHANGELOG
+
+Prepended a `[1.0.0-rc1] — 2026-04-24` entry pointing readers
+to the `[1.0.0]` section for the actual feature list. Sets
+expectation: this is an RC; file regressions against it.
+
+### Release process from here
+
+1. Commit this rev, push to `origin/dev`.
+2. `git tag v1.0.0-rc1 && git push origin v1.0.0-rc1`.
+3. The `v*` tag triggers `.github/workflows/release.yml`.
+   macOS + Linux jobs build in parallel; macOS goes through
+   the signing + notarize path (secrets confirmed working).
+   Expected duration ~5–10 min total (Apple notary usually
+   ~1–3 min per submission during weekdays).
+4. A GitHub Release is published automatically as a
+   **prerelease** (the workflow's `prerelease:` expression
+   detects `-rc` in the tag name).
+5. Manual QA on the signed artifacts over the next 2–3 days —
+   fresh macOS Mac + Linux box if possible, verifying:
+   `spctl --assess` Notarized verdict; drag-to-Applications
+   works without Gatekeeper warning; AppImage launches with
+   thumbnailer integration; open / edit / save cycle on a
+   real .fb2; hotkeys tab in Settings; Binary Manager; search;
+   HTML export.
+6. If clean: Rev 82 merges dev → main and tags `v1.0.0`.
+7. If regression: Rev 82 patches on dev, RC2 tag, repeat.
+
+### Modified
+
+- `version.go` — 0.2.0-beta → 1.0.0-rc1.
+- `wails.json` — productVersion bump.
+- `frontend/package.json` — version bump.
+- `frontend/package-lock.json` — auto-synced via npm.
+- `CHANGELOG.md` — [1.0.0-rc1] entry added.
+
+---
+
+## Rev 80 — 2026-04-24 — Docs polish for 1.0: README + CHANGELOG + About + NOTICE [dev]
+
+Second of three pre-1.0 revs. Pure docs + HelpDialog wire-up; no
+behavior change beyond the About dialog now pulling its version
+string from `App.AppVersion()` instead of `package.json` (which had
+a hardcoded `-beta` suffix that would break at `1.0.0` tag).
+
+Also runs the corpus fidelity re-verification: `fidelityBroken=0`
+holds on the local `~/Documents/books` corpus (8 files, 7.3 MB,
+3/8 XSD-valid at source, our output preserves all 3 plus reduces
+one pre-existing error via legitimate element-position
+normalization). Gating invariant green for the 1.0 cut.
+
+### README
+
+`Project status` section rewritten from
+"v0.1.0-beta — Phase 3 MVP + Phase 4 polish shipped" to a real
+feature-complete-for-1.0 bullet list covering each Phase-0–5 area:
+editing, round-trip fidelity, description form, binary manager,
+search/replace, configurable hotkeys, platform polish (signed DMG +
+AppImage), auto-update notify, HTML export, XSD validation. Plus an
+explicit "Not shipping in 1.0" block (Windows, scripts, Hunspell
+CGo, QuickLook, Linux arm64, Sparkle auto-install) with a one-line
+rationale each, so someone clicking through the repo understands
+the scope contract.
+
+Cross-links to `CHANGELOG.md` + `PROGRESS.md` + `docs/PHASES.md` +
+`docs/OPERATIONS.md` so each reader audience lands on the right doc.
+
+### CHANGELOG.md — new
+
+User-facing release history, Keep-a-Changelog compatible, versions
+follow SemVer. Target audience: someone who just downloaded the
+DMG and wants to know what they're getting. `1.0.0` entry covers
+every user-visible feature from Phases 0–5, plus "Not shipping"
+so nobody files issues against deferred items. `0.2.0-beta`
+(Rev 67) and `0.1.0-beta` (approx Rev 39) earlier entries
+summarize what each pre-1.0 milestone shipped. Explicit pointer to
+`PROGRESS.md` for the per-revision deep-dive.
+
+### HelpDialog — About refresh
+
+- Version string now loads from `App.AppVersion()` (compiled-in
+  `version.go::Version`, kept in the triple-sync with
+  `wails.json` + `package.json`), with a `pkg.version` fallback
+  for the vite-dev browser tab where the Wails bridge isn't
+  attached. Dropped the `-beta` suffix hardcode that would
+  display "1.0.0-beta" at the 1.0 tag.
+- Shortcuts table rewritten from 9 hardcoded rows to 18 rows
+  matching `DefaultHotkeys()` in `settings/settings.go` verbatim
+  (marks, paragraph styles, block inserts, search, save). Undo/
+  Redo kept as a single row because they stay hardcoded in the
+  keymap.
+- Added a hint line under the table: "Defaults shown. Rebind any
+  action under Settings → Keyboard shortcuts" — so customized
+  users don't find stale keys.
+- Added CHANGELOG link alongside LICENSE / NOTICE in the
+  header row.
+
+### NOTICE.md
+
+Added `adrg/sysfont` (MIT) and `adrg/xdg` (MIT) — direct
+dependencies introduced in Revs 57–61 for font discovery that
+weren't in the third-party notices. Both ship in the binary at
+runtime.
+
+### Modified / new
+
+- `README.md` — Project status section rewritten.
+- `CHANGELOG.md` — new, user-facing release history.
+- `NOTICE.md` — +2 Go dep attributions.
+- `frontend/src/help/HelpDialog.svelte` — AppVersion wire-up,
+  18-row shortcuts table, reset-hint, CHANGELOG link.
+
+### Tests
+
+`go test ./...` — green (no code changes).
+`FBE_CORPUS_DIR=~/Documents/books go test -tags 'corpus xsd' -v
+./internal/fb2/ -run TestCorpus` — **fidelityBroken=0** on 8 files.
+`npm run check` — 0 errors.
+`npm run check:theme` — clean.
+`npm run test` — 80/80 pass.
+
+### Next
+
+Rev 81: bump triple (version.go + wails.json + package.json) to
+`1.0.0-rc1`, merge dev → main, tag `v1.0.0-rc1`. The signing
+pipeline (Rev 78/79) should kick in on that tag, producing the
+first signed+notarized DMG for public RC soak.
+
+---
+
+## Rev 79 — 2026-04-24 — Switch notarization to App Store Connect API key [dev]
+
+Follow-up to Rev 78 (signing pipeline was still pre-test). Swaps the
+notarize auth path from the legacy `--apple-id / --team-id /
+--password` flow to App Store Connect API key (`--key / --key-id /
+--issuer`). Apple's notarytool docs now promote the API-key path
+first; it's the right long-term choice for CI and makes the secret
+footprint cleaner.
+
+### Why
+
+Dmitry couldn't locate the "App-Specific Passwords" UI at
+`appleid.apple.com/account/manage` — Apple reorganized that
+dashboard and the pane is now buried under
+`account.apple.com → Sign-In and Security`, and only appears when
+2FA is active. Rather than chase the UI, we move to the API-key
+path that Apple explicitly recommends for automation:
+
+- Not tied to an individual Apple ID email (no breakage if the
+  holder's email changes).
+- Revocable per-key without touching your ability to sign in.
+- Scope-minimal (`Developer` role on the key = notary submit
+  only; no App Store Connect write access).
+- `xcrun notarytool submit --key <.p8> --key-id <10-char>
+  --issuer <UUID>` is the form notarytool's own help documents
+  first.
+
+### Workflow change
+
+`.github/workflows/release.yml`:
+- Job `env:` block drops `APPLE_ID` and `APPLE_APP_SPECIFIC_PASSWORD`,
+  adds `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`,
+  `APPLE_API_KEY_P8_BASE64`. `APPLE_TEAM_ID` is no longer needed —
+  the full signing-identity CN is derived from
+  `security find-identity` and notarytool infers the team from the
+  API key.
+- Guard expression flips from `env.APPLE_TEAM_ID != ''` to
+  `env.APPLE_API_KEY_ID != ''`.
+- `Notarize .app` step decodes the .p8 to `$RUNNER_TEMP/asc_api_key.p8`
+  (chmod 600), exports `$API_KEY=<path>` via `$GITHUB_ENV` so the
+  downstream DMG step reuses the same file, and calls notarytool
+  with `--key / --key-id / --issuer`.
+- `Codesign + notarize DMG` step likewise uses `$API_KEY`.
+- Cleanup step renamed → `Remove ephemeral keychain + API key`,
+  shreds the .p8 with `rm -f` alongside `security delete-keychain`.
+  `if: always()` ensures a failed notary run still cleans up.
+
+Net secret count stays at 5, with a cleaner separation: 2 cert
+secrets for codesigning + 3 API-key secrets for notarization.
+
+### Secrets checklist rewrite
+
+`packaging/macos/SIGNING.md` reshaped:
+
+- Step 1 (cert export) unchanged — still need the Developer ID
+  Application .p12 for codesigning.
+- Step 2 replaced: "App Store Connect API key" flow —
+  appstoreconnect.apple.com → Users and Access → Integrations →
+  App Store Connect API → Generate API Key → role: Developer.
+  One-shot .p8 download; Issuer ID + Key ID noted separately.
+- Step 3 rewritten for two base64 blobs (.p12 + .p8).
+- Step 4 — new secret table with 5 names.
+- Step 5 — unchanged verification procedure
+  (`v0.2.0-signtest` tag → `spctl --assess`).
+- Step 6 — rotation schedule for the API key alongside the cert.
+- New closing section explaining why API-key beats
+  app-specific-password for CI (useful context if someone forks
+  later and asks).
+
+### Modified
+
+- `.github/workflows/release.yml` — env + 4 signing steps + cleanup.
+- `packaging/macos/SIGNING.md` — rewritten around API-key flow.
+
+### Next
+
+- Dmitry: run through `packaging/macos/SIGNING.md` steps 1–4,
+  push `v0.2.0-signtest` tag, verify `spctl --assess` on the
+  resulting DMG.
+- Rev 80: corpus fidelity re-verification + README v1.0
+  messaging + user-facing `CHANGELOG.md` + HelpDialog "About"
+  section.
+- Rev 81: bump triple to `1.0.0-rc1`, merge dev → main, tag.
+
+---
+
+## Rev 78 — 2026-04-23 — macOS codesign + notarize in release.yml (1.0 blocker) [dev]
+
+First of three revs to clear the v1.0.0 runway. Wires Developer-ID
+codesigning + notarization into the release workflow so downloaded
+DMGs clear Gatekeeper without the "cannot verify developer" dialog.
+
+### Not yet active
+
+The workflow changes are conditional on five GitHub repository
+secrets. Until they're configured (see
+`packaging/macos/SIGNING.md`), the macOS job falls back to
+producing an unsigned DMG — older tag rebuilds continue to work
+without backporting the cert setup. Once Dmitry adds the secrets
+and pushes a `v0.2.0-signtest` throwaway tag to verify the
+pipeline, the next real tag (`v1.0.0-rc1`) ships signed.
+
+### Workflow changes (`.github/workflows/release.yml`)
+
+1. **Job-level `env:` block** surfaces the five secrets on every
+   step. Signing steps guard with `if: env.APPLE_TEAM_ID != ''`.
+2. **Import Developer ID cert** — creates an ephemeral keychain
+   in `$RUNNER_TEMP`, decodes the base64-encoded `.p12`,
+   `security import`s with `-T /usr/bin/codesign`, then calls
+   `security set-key-partition-list` so codesign can use the
+   private key without an interactive prompt. Prepends the new
+   keychain to the user keychain list so
+   `find-identity / codesign --sign "Developer ID Application: …"`
+   picks our identity before any runner-default. Extracts the
+   full CN from `security find-identity` and exports as
+   `$SIGN_IDENTITY` so downstream quoting is safe.
+3. **Codesign .app** — `--force --deep --timestamp --options
+   runtime --entitlements packaging/macos/entitlements.plist
+   --sign "$SIGN_IDENTITY"` on `build/bin/fbe-go.app`. Followed
+   by `codesign --verify --strict` and an informational
+   `spctl --assess`.
+4. **Notarize .app** — `ditto -c -k --keepParent` to zip the
+   bundle (notary rejects raw .app directories), `xcrun
+   notarytool submit --wait --timeout 30m`, then `xcrun stapler
+   staple` + `stapler validate`.
+5. **Package DMG** (unchanged — existing create-dmg step).
+6. **Codesign + notarize DMG** — sign the DMG itself, submit,
+   staple. Final `spctl --assess --context
+   context:primary-signature` should print `source=Notarized
+   Developer ID`.
+7. **Cleanup** — `security delete-keychain` with `if: always()`
+   so a failed notary run doesn't leak the ephemeral keychain
+   (matters mostly for hypothetical self-hosted runners;
+   `macos-latest` resets between jobs anyway).
+
+### Entitlements (`packaging/macos/entitlements.plist`)
+
+Only one named entitlement: `com.apple.security.cs.allow-jit`.
+Required for the embedded WKWebView's JavaScriptCore JIT —
+without it PM document rendering falls back to baseline tier
+and noticeably crawls on medium/large FB2s. We do **not** grant
+`cs.disable-library-validation` (we only load Apple-system libs
+and ones we sign), `cs.allow-unsigned-executable-memory` (JIT
+is the more specific entitlement), `network.client`, or
+`files.*` — those apply only under App Sandbox, not Developer
+ID distribution.
+
+### Secrets checklist (`packaging/macos/SIGNING.md`)
+
+One-time setup doc, checked in so it survives secret wipes and
+fork-and-sign:
+
+- Finding the Team ID
+- Exporting the Developer ID Application cert from Keychain
+  Access (covers the "did you export with the private key?"
+  pitfall — `openssl pkcs12 -info` to verify)
+- Generating an app-specific password at appleid.apple.com
+- Base64-encoding the p12 for GitHub Secrets
+- Names of the five secrets (`APPLE_TEAM_ID`, `APPLE_ID`,
+  `APPLE_APP_SPECIFIC_PASSWORD`,
+  `APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64`,
+  `APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD`)
+- Test procedure (disposable `v0.2.0-signtest` tag) with
+  `spctl --assess` verification on a fresh Mac
+- Rotation cadence + troubleshooting ladder for the three
+  common failure modes (wrong p12 pwd, missing private key,
+  wrong cert type)
+
+### Modified / new
+
+- `.github/workflows/release.yml` — job-level env + 4 new
+  conditional steps around the existing build + DMG flow.
+- `packaging/macos/entitlements.plist` — new, hardened-runtime
+  + allow-jit.
+- `packaging/macos/SIGNING.md` — new, one-time setup doc.
+
+### Next
+
+- Dmitry: run through `packaging/macos/SIGNING.md` steps 1–5,
+  push `v0.2.0-signtest` tag, verify the resulting DMG passes
+  `spctl --assess`.
+- Rev 79: corpus fidelity re-verification + README v1.0
+  messaging + new user-facing CHANGELOG.md + HelpDialog "About"
+  section with `App.AppVersion`.
+- Rev 80: bump triple to `1.0.0-rc1`, merge dev → main, tag.
+
+---
+
+## Rev 77 — 2026-04-23 — Auto-update check (GitHub Releases poll + banner) — Phase 5 close [dev]
+
+Closes the last open Phase 5 checkbox with the lightweight
+"notify, don't auto-install" approach: an in-app banner surfaces
+newer releases; the user opens the Release page in their browser
+and downloads manually. Sparkle / AppImageUpdate integration is
+deliberately deferred until we have a signed build pipeline +
+appcast stream — that's a separate rev's worth of work with a
+different blast radius (code-signing keys, CGo bindings).
+
+### Go — `internal/fb2/updates/`
+
+New package with:
+
+- `Check(ctx, repo, currentVersion, client)` — GETs
+  `https://api.github.com/repos/{owner}/{name}/releases?per_page=1`,
+  returns an `Info` struct describing the newest release plus a
+  boolean `Available` flag. Uses `/releases` rather than
+  `/releases/latest` because the latter excludes prereleases, and
+  fbe-go is entirely prerelease during the beta cycle.
+- `IsNewer(latest, current)` — semver-ish compare: parses
+  `[v]MAJOR.MINOR.PATCH[-PRE]`, numeric-triple-first, then
+  pre-release tail (empty pre beats any tagged pre at the same
+  triple; otherwise lexicographic — matches fbe-go's
+  `beta < rc < rc.1` intent).
+- `HTTPClient` interface for test injection. Default client has
+  a 5-second timeout; never wants to keep the app hanging on a
+  slow connection.
+- User-Agent + `X-GitHub-Api-Version` headers pinned so a future
+  GitHub default change doesn't surprise us.
+- Skips draft releases (only visible to authenticated repo
+  collaborators, but gracefully ignored if they leak through).
+
+Tests cover: 13 version-compare cases (patch/minor/major bumps,
+equal tags, prerelease-vs-stable at the same triple, unparseable
+inputs), plus 5 HTTP cases via httptest (newer available, equal
+= not available, drafts skipped, 404 propagates, empty list).
+
+### Version source of truth
+
+New `version.go` at repo root with `const Version`. Must stay in
+sync with `wails.json::info.productVersion` and
+`frontend/package.json::version` — CLAUDE.md triple-sync
+checklist now has three files, not two.
+
+### Wails bindings — `app.go`
+
+- `AppVersion()` — returns the compiled-in `Version` so the
+  frontend can render "you're on X" without embedding it twice.
+- `CheckForUpdate()` — 6-second context, calls `updates.Check`
+  against `updates.DefaultRepo = "dimgord/fbe-go"`.
+
+Errors propagate. The frontend silently hides the banner on
+failure — an update banner that never dismisses after a flaky
+check is worse than no banner.
+
+### Frontend — `UpdateBanner.svelte`
+
+New top-of-app bar that renders only when `info.available`:
+
+- "Update" pill + "fbe-go vX.Y.Z is available (you're on vA.B.C)"
+  + [Download…] + [×].
+- Download opens the release URL via the existing
+  `openExternalUrl` helper, which routes through Wails'
+  `BrowserOpenURL` (OS default browser). Existing pattern — no
+  new runtime plumbing.
+- × dismisses for the session only; the banner will reappear on
+  next launch if the user hasn't yet updated.
+- Palette vars (`--warn`, `--warn-bg-a`, `--warn-fg`,
+  `--bg-card`) so dark mode and theme-hygiene lint stay clean.
+
+### App.svelte integration
+
+Kick-off is an 800 ms `setTimeout` inside `onMount` — lets the
+settings / document / font-list round-trips finish before the
+async network I/O so the banner doesn't compete for the first
+paint. Cleanup clears the timer on unmount. Banner renders at
+the very top of `.layout`, above the header.
+
+### Not doing
+
+- **Sparkle / AppImageUpdate** — deferred. Both require signed
+  binaries and an appcast endpoint; Dmitry has a Developer ID
+  but we haven't wired code-signing into `release.yml` yet. When
+  that lands, the banner graduates to a full updater as a
+  separate rev (probably Rev 80+).
+- **Settings toggle** ("check automatically" / "skip this
+  version") — YAGNI for beta. Adding later is a two-line change
+  to `Settings` struct + a row in SettingsDialog's Privacy
+  section.
+- **Nightly / canary channel** — not a goal; we ship one tag per
+  rev that bumps the version file triple.
+
+### Modified / new
+
+- `internal/fb2/updates/updates.go` — new.
+- `internal/fb2/updates/updates_test.go` — new (18 tests, all
+  pass).
+- `version.go` — new.
+- `app.go` — imports updates + time; `AppVersion()` +
+  `CheckForUpdate()` bindings.
+- `frontend/src/updates/UpdateBanner.svelte` — new.
+- `frontend/src/App.svelte` — import banner + type, poll on
+  mount, render at top.
+- `frontend/wailsjs/go/*` — regenerated by `wails generate
+  module`.
+- `docs/PHASES.md` — auto-update ticked; Phase 4 rows marked
+  [x] retroactively now that all feature-parity items actually
+  shipped.
+
+### Tests
+
+`go test ./internal/fb2/updates/` — 18/18 pass.
+`go test ./...` — all green, no regressions.
+`go build -tags xsd ./...` — clean.
+`npm run check` — 0 errors.
+`npm run check:theme` — clean.
+`npm run test` — 80/80 (banner has no unit tests — pure render +
+one handler; exercised manually in dev).
+
+---
+
+## Rev 76 — 2026-04-23 — Configurable hotkeys + scripts deferred — Phase 4 close [dev]
+
+Wraps the Phase 4 tail. Scripts compatibility is formally deferred
+post-1.0 in `docs/PHASES.md` and `docs/OPERATIONS.md` (was "optional —
+decide per user demand"; now "DEFERRED post-1.0" with rationale —
+hundreds of FBE macros = separate-project scale, not parity table
+fodder). The remaining open checkbox, **configurable hotkeys**, is
+now fully wired end-to-end.
+
+### Problem
+
+`internal/fb2/settings/settings.Hotkeys` had been a `map[string]string`
+since day one with a hand-picked default map, but nothing read it.
+Every shortcut was hardcoded — in `Editor.svelte`'s PM keymap, in
+`App.svelte`'s window-level `onKeyDown` (Cmd-S / Cmd-F / Cmd-H),
+and in the Toolbar tooltips. A returning FBE user had no way to
+rebind Insert Poem from `Ctrl+Shift+P` (or notice that
+`InsertTable = Ctrl+Shift+T` was stored but inert).
+
+### Catalog
+
+New `frontend/src/settings/hotkeys.ts` owns the canonical catalog:
+
+- `HOTKEY_ACTIONS[]` — 31 actions across 6 categories
+  (File / Edit / Format / Paragraph / Blocks / Dialogs).
+  `editor: true` actions are dispatched by ProseMirror, `editor: false`
+  by the window-level handler in `App.svelte`.
+- `parseAccel` / `formatAccel` — canonicalize to the on-disk form
+  `Ctrl+Shift+P`. Treats `Ctrl` / `Cmd` / `Mod` as synonyms so one
+  binding carries across macOS and Linux.
+- `toPMKey` — translate to `Mod-Shift-p` for `prosemirror-keymap`
+  (PM resolves `Mod` → ⌘ on mac, Ctrl elsewhere at runtime).
+- `matchesEvent` — test a `KeyboardEvent` against a canonical accel
+  (same Mod unification).
+- `accelFromEvent` — used by the UI to record the user's keystroke.
+- `findConflicts` — returns duplicate-binding groups for the UI
+  warning layer.
+- `displayAccel` — renders `⌘⇧P` on mac, `Ctrl+Shift+P` on Linux.
+
+Paired Go update: `DefaultHotkeys()` in `internal/fb2/settings/` is
+now the full canonical list (31 entries), and `settings.Load` calls
+`MergeDefaultHotkeys` to backfill any action id missing from the
+user's `config.json` — upgrades don't drop the user into a broken
+state when we add new actions. Empty-string entries are preserved
+(user explicitly unbound); unknown entries from future versions are
+preserved too.
+
+### Editor.svelte
+
+Replaced the hardcoded keymap with `buildKeymap(hotkeys)` driven
+from the catalog. `EDITOR_COMMANDS` maps action id → PM Command.
+Non-configurable stays hardcoded:
+
+- `Mod-z` / `Mod-y` / `Mod-Shift-z` (undo/redo) — rebinding these
+  invariably breaks in ways users don't expect.
+- `F3` / `Shift-F3` as FindNext/FindPrev aliases — legacy Windows
+  affordance, independent of the user's `Ctrl+G` remap.
+
+Prop `hotkeys: Record<string, string>`. On change (fresh object
+identity from App after Settings → Apply), runs
+`view.updateState(state.reconfigure({...}))` instead of
+re-mounting. Document state, selection, undo history, and active
+search all survive — `prosemirror-history` uses a stable
+`historyKey: PluginKey`, and our `searchPlugin` exports
+`searchPluginKey`; PM matches plugins by key across reconfigures.
+
+### App.svelte
+
+Rewrote the window-level `onKeyDown` to walk `HOTKEY_ACTIONS` and
+dispatch through `APP_ACTIONS` (Save, SaveAs, Find, Replace,
+InsertTable, OpenBinaries, OpenSettings, OpenHelp). First match
+wins — `preventDefault` stops the event reaching the editor's PM
+keymap and double-firing.
+
+On mount, loads `settings.hotkeys` into `hotkeys = {...s.hotkeys}`
+(fresh-identity spread so the reactive reconfigure in Editor runs).
+`onSettingsApplied` mirrors that for Settings → Apply.
+
+### Settings dialog
+
+New "Keyboard shortcuts" section. Per-category tables render
+action label + clickable accel button:
+
+- Click a cell → `capturingId` flips; next real keydown (via the
+  same `onKey` listener that handles Escape/Enter) calls
+  `accelFromEvent`, canonicalizes, writes into `draft.hotkeys`.
+- `Esc` during capture cancels, `Backspace` / `Delete` clear the
+  binding.
+- Conflicts highlighted with the `--warn` palette; `title` attr
+  names the other action(s) sharing the accel — user-visible but
+  not blocking, since the first-match-wins dispatch order is
+  deterministic.
+- "Reset to defaults" writes an empty `hotkeys: {}` then reloads,
+  tripping `MergeDefaultHotkeys` on the Go side to rehydrate the
+  canonical map.
+
+### Strikethrough conflict
+
+Old `Ctrl+Shift+S` binding was shadowed in practice because
+`App.svelte::onKeyDown` intercepts `Ctrl+Shift+S` for SaveAs.
+Moved default to `Ctrl+Shift+D` so the out-of-box experience
+works; users who prefer the original can rebind and drop SaveAs.
+
+### Modified
+
+- `internal/fb2/settings/settings.go` — full canonical
+  `DefaultHotkeys()`, `MergeDefaultHotkeys`, `Load` backfills.
+- `internal/fb2/settings/settings_test.go` — new; covers merge
+  semantics (user overrides preserved, empty-string preserved,
+  unknown actions preserved, missing backfilled, nil-map init)
+  plus JSON round-trip.
+- `frontend/src/settings/hotkeys.ts` — new catalog + parser +
+  matcher + conflict finder + display helpers.
+- `frontend/src/settings/hotkeys.test.ts` — new; 19 tests covering
+  parse/format/toPMKey/matchesEvent/findConflicts/displayAccel.
+- `frontend/src/editor/Editor.svelte` — data-driven keymap;
+  reconfigure on hotkeys change.
+- `frontend/src/App.svelte` — catalog-driven `onKeyDown`; load and
+  re-seed `hotkeys` on mount + Apply.
+- `frontend/src/settings/SettingsDialog.svelte` — new Shortcuts
+  section (table UI, capture, conflict highlight, reset).
+- `docs/PHASES.md` — scripts row flipped from `[ ]` (optional) to
+  `[~]` (deferred post-1.0) with rationale.
+- `docs/OPERATIONS.md` — §10 Scripts retitled "DEFERRED post-1.0";
+  design sketch preserved.
+
+### Tests
+
+`go test ./internal/fb2/settings/` — 2/2 pass.
+`npm run check` — 0 errors.
+`npm run check:theme` — clean.
+`npm run test` — 80/80 pass (19 new).
+
+### Not doing
+
+- Not exposing `Mod-z` / `Mod-y` / `F3` / `Shift-F3` as user-bindable.
+- No "import/export hotkey preset" — YAGNI, users can copy
+  `config.json` by hand.
+- No per-context bindings (body vs description view) — actions
+  that don't apply in a view are no-ops, which is the simplest
+  correct behavior.
+
+---
+
+## Rev 75 — 2026-04-23 — Binary Manager UI + inline image rendering — Phase 4 [dev]
+
+Second half of the Phase 4 "Binary manager" pickup. Ships the
+user-facing dialog plus a long-latent fix: embedded images were
+never actually rendering in the editor body (the schema's `toDOM`
+emitted a `fb2://binary${href}` URL but no asset handler was ever
+registered, so every `<img>` was a broken icon).
+
+### Binary Manager dialog
+
+`frontend/src/binary/BinaryManagerDialog.svelte` — modal with:
+
+- Thumbnail preview for each `<binary>` in the doc.
+- Inline id rename (click ✎ → input appears → Enter / Save).
+- Delete with dangling-ref warning.
+- Upload via system picker → preview → name-this-binary sub-overlay.
+- COVER badge on the binary currently referenced as
+  `Description.{Src,}TitleInfo.Coverpage.Images[0]`.
+
+**Not using `window.alert/confirm/prompt`.** Wails v2's WKWebView
+doesn't pipe those through, they just return without showing a
+dialog. Replaced with three in-component sub-overlays:
+`uploadStaged` (name new binary), `deleting` (delete confirm),
+`errorMessage` (validation errors). Stack Esc-dismisses inner
+overlay first, then the main dialog.
+
+`frontend/src/binary/refs.ts` — cross-reference walker:
+
+- `renameBinary(fb, view, oldId, newId)` — updates the binary's
+  `ID`, cascades to `Description.{Src,}TitleInfo.Coverpage.Images[].Href`,
+  dispatches a single PM transaction that rewrites every image
+  node's `href` attr whose stripped form matches `oldId`. One
+  transaction = one undo step for the whole rename.
+- `countBinaryRefs` — used by delete confirm to show "N dangling
+  refs".
+- `isCoverBinary` — drives the COVER badge.
+
+`Toolbar.svelte` gets a `📎 Binaries…` button at the end of the row
+that dispatches `openBinaries`; App.svelte listens and flips
+`showBinaries = true`.
+
+### Inline image rendering (pre-existing bug fix)
+
+The schema has `image_block` and `image_inline` nodes whose
+`toDOM` returned `["img", { src: \`fb2://binary${href}\`, ... }]`.
+No custom protocol handler was ever registered in `main.go`'s
+`assetserver.Options` — so those URLs loaded as
+`unsupported URL` and every embedded image rendered blank. Cover
+still worked on the description screen because CoverpageField
+uses its own <img> hookup.
+
+Fix: register PM `nodeViews` for both image types in Editor.svelte.
+The NodeView closes over a mutable `binariesRef.current` which is
+refreshed whenever `fb.Binaries` identity changes; a small
+`imageViews: Set<ImageNodeView>` lets us iterate and re-set every
+`img.src` on binary-array changes (upload / rename / delete via
+the dialog) without remounting the editor (which would nuke undo
+history).
+
+Missing references get `class="missing"` + a hatched-yellow CSS
+placeholder that shows the alt text — so dangling `<image
+l:href="#gone"/>` is visible instead of silently blank.
+
+### Collateral: Editor double-mount fix
+
+While wiring the above I traced a `TypeError: null is not an
+object (evaluating 'this.docView.matchesNode')` that surfaced on
+description ↔ body view-switch + HMR updates. Root cause:
+`onMount(() => mount(...))` + the reactive
+`$: if (view && fb) { mount(...) }` **both** fired on initial
+load, creating two `EditorView` instances. The first leaked — its
+destroyed-but-still-subscribed `docView` got touched by Svelte's
+flush later, erroring out.
+
+Fix: drop `onMount`, dedupe mount via `lastMountedFB` identity
+check so the reactive block runs exactly once per actual
+fb-identity change. On destroy we now null `view` so
+`bind:view={editorView}` propagates "no live view" to siblings
+(SearchBar, BinaryManagerDialog) — they in turn added an
+`isAlive(view)` guard (via `view.docView !== null`) on every
+dispatch so late Svelte flushes against stale views are no-ops
+instead of crashes.
+
+### Files
+
+- New: `frontend/src/binary/BinaryManagerDialog.svelte`.
+- New: `frontend/src/binary/refs.ts`.
+- Modified: `frontend/src/editor/Editor.svelte` — NodeView
+  factories for image_block/image_inline, `binariesRef` closure,
+  missing-ref CSS placeholder, mount dedup via `lastMountedFB`,
+  `view = undefined` in onDestroy.
+- Modified: `frontend/src/editor/search/plugin.ts` — `isAlive`
+  guard on all imperative entry points.
+- Modified: `frontend/src/editor/Toolbar.svelte` — new
+  `📎 Binaries…` button + `openBinaries` event dispatcher.
+- Modified: `frontend/src/App.svelte` — mount
+  `BinaryManagerDialog`, `showBinaries` state,
+  `editorView` bound from Editor.
+
+### Tests
+
+Frontend unit tests (61/61) still pass — no tests added for the
+new surfaces yet. Manual QA covered: open 9-binary fb2 → all body
+images render; rename cover in Binary Manager → body image + title
+panel cover preview both update via the NodeView cascade; delete
+inline-referenced binary → body image shows the "(missing)"
+placeholder, coverpage dropdown keeps the dangling href until
+user picks a replacement.
+
+---
+
+## Rev 74 — 2026-04-23 — Binary Manager foundation — Go helpers [dev]
+
+First half of Phase 4 "Binary manager" pickup. This rev lands only
+the Go side: two new App methods the frontend dialog will consume
+in Rev 75.
+
+### New App methods
+
+**`PickImageToUpload() (string, error)`** — native open-file dialog
+filtered to common image extensions (`*.jpg;*.jpeg;*.png;*.gif;*.webp`
+in a single pattern). Uses semicolon-separated single-dot extensions so
+each token resolves through macOS's `UTType typeWithFilenameExtension:`
+lookup — none of them trip the `*.fb2.zip` multi-dot crash path
+documented on `PickFB2ToOpen`.
+
+**`ReadImageBinary(path string) (*doc.Binary, error)`** — reads a file
+from disk, base64-encodes the bytes, and returns a fresh `doc.Binary`
+with `ID` intentionally blank (the caller assigns it after collision
+check). Content-type inference:
+
+1. Primary: `net/http.DetectContentType` sniff of the first 512
+   bytes — solid for JPEG / PNG / GIF magic.
+2. Fallback: extension-based lookup via new `mimeFromExt` helper
+   for cases where sniff returns `application/octet-stream` (some
+   WebP variants) or `text/*` (SVG gets mis-sniffed as text).
+3. Strip any trailing `; charset=…` parameter that `DetectContentType`
+   tacks onto text payloads — strict FB2 validators reject
+   parametrized content types.
+
+`mimeFromExt` covers the formats real-world FB2 readers render:
+jpg/jpeg → image/jpeg, png, gif, webp, svg+xml, bmp.
+
+### Design decision: frontend-owned cross-reference updates
+
+Considered wiring rename (with href cascade) + delete into Go,
+using a visitor over the doc tree. Rejected because the PM editor
+state is the live source of truth during an edit session —
+mutating the Go-side `FictionBook` wouldn't propagate to in-flight
+`image_block` / `image_inline` PM nodes, and syncing via
+`UpdateDocument` on every rename would lose undo/redo granularity.
+
+Rev 75 will do the walk entirely in TypeScript: rewrite
+`fb.Binaries[].ID`, walk `fb.Description.*.Coverpage.Images[].Href`,
+dispatch a PM transaction that rewrites every image node's `href`
+attribute whose stripped form matches the old ID. This gives us
+single-transaction undo/redo for the whole rename.
+
+### Files
+
+- Modified: `app.go` — added `net/http` import, new
+  `PickImageToUpload`, `ReadImageBinary`, `mimeFromExt`.
+
+The existing `AddBinaryFromDisk` and `GetBinaryDataURL` methods
+stay as-is — they're not used by the new manager (which reads
+bytes via `ReadImageBinary` and previews via local data: URL
+construction from `Binary.Data`), but they're still exported so
+removing would be a minor API break. Mark for cleanup in a
+follow-up once we're sure nothing external depends on them.
+
+---
+
+## Rev 73 — 2026-04-23 — Search UX: follow active match + Unicode whole-word [dev]
+
+Two Search/Replace UX fixes caught during first hands-on with Rev 71.
+
+### 1. `◀` / `▶` did not scroll to keep the active match on-screen
+
+Symptom: after a few ▶ clicks the orange highlight drifted below the
+viewport and the user had to scroll manually to find it.
+
+Root cause: `tr.scrollIntoView()` scrolls whatever PM considers its
+scroll container, which in our layout is `view.dom` — but the real
+scrollbar lives on the outer `<section>` that wraps the editor. PM's
+built-in scroll only affects the wrong element.
+
+Fix: replicate the scroll-ancestor walk from `Editor.scrollToPath` —
+from `view.dom` up until we find an element whose `scrollHeight >
+clientHeight`, then nudge its `scrollTop` based on
+`view.coordsAtPos(match.from)` vs. the container's rect. Only scrolls
+when the hit is within `MARGIN=80px` of an edge, so comfortably-
+visible matches don't trigger jumps.
+
+### 2. `\b` (whole-word) matched nothing in Cyrillic text
+
+Symptom: toggle `\b` on, search for "слово" in a Cyrillic FB2 file → 0
+matches. Works fine for English.
+
+Root cause: JavaScript's `\b` is ASCII-only — it's defined as "between
+`[A-Za-z0-9_]` and not". Cyrillic letters are not in that set, so `\b`
+fails to mark boundaries around them. `\bслово\b` anchors on two
+positions that can't both match in Cyrillic text.
+
+Fix: substitute `\b` with Unicode-aware lookarounds using
+`\p{L}`/`\p{N}` property escapes and the `u` flag:
+
+```ts
+source = `(?<![\\p{L}\\p{N}_])(?:${source})(?![\\p{L}\\p{N}_])`;
+jsFlags += "u";
+```
+
+The `u` flag is only added when `wholeWord` is on, so user-supplied
+regex (via `.*` toggle) keeps its default non-Unicode semantics to
+avoid breaking patterns that rely on `\w` matching `[A-Za-z0-9_]`
+only.
+
+### Files
+
+- Modified: `frontend/src/editor/search/plugin.ts` — rewrote
+  `scrollActiveIntoView` + swapped `\b` for Unicode lookarounds in
+  `buildRegex`.
+
+---
+
+## Rev 72 — 2026-04-23 — Release workflow: purge existing releases before publish [dev]
+
+Preventive fix for the softprops/action-gh-release race that bit us
+during the `v0.2.0-beta` cut. Post-mortem: after the third failed
+release attempt, two releases existed for the same tag — one
+published-but-empty, one draft-with-all-artifacts — and the
+action's `finalize` call failed with
+`{"code":"already_exists","field":"tag_name"}`. Had to resolve by
+hand via `gh api ... -X DELETE` + `draft=false` PATCH.
+
+Added a new step "Purge any pre-existing release for this tag"
+between artifact download and the softprops action. Iterates every
+release tied to the current tag (draft or published) and deletes
+them via the REST API before softprops runs — so the action always
+starts from a clean slate.
+
+### Why this is safe
+
+- The step runs *after* both build jobs produced artifacts (they're
+  in `dist/` now). If publish somehow fails again, we still have
+  the artifacts as `actions/upload-artifact@v4` outputs; a
+  `workflow_dispatch` re-run can pick them up.
+- Deleting releases **does not delete the git tag** — the tag ref
+  is what drove the workflow in the first place and stays intact.
+- Idempotent — if there's no prior release, the loop is empty and
+  the step just logs "No existing releases for $TAG".
+
+### Files
+
+- Modified: `.github/workflows/release.yml` — new "Purge" step in
+  the `release` job.
+
+---
+
+## Rev 71 — 2026-04-23 — Search / Replace UI (Cmd-F, Cmd-H) — Phase 4 [dev]
+
+Version: **0.2.0-beta** (unchanged — UI feature on top of the beta).
+
+First Phase 4 pick-up after the v0.2.0-beta cut. In-editor
+Search & Replace modeled on VS Code's inline bar — non-modal,
+Cmd/Ctrl+F to find, Cmd/Ctrl+H to find + replace, Esc to close,
+Enter / Shift+Enter to navigate, Mod+G / F3 for next.
+
+### Architecture
+
+Entirely frontend for now — searching the PM document in TS
+avoids a Go↔JS roundtrip per keystroke and gives us native PM
+positions for decorations. The `internal/fb2/search` Go package
+stays as-is (future `cmd/fbe search` subcommand can still use it
+without colliding).
+
+**`frontend/src/editor/search/plugin.ts`** — a ProseMirror
+plugin holding `{pattern, flags, matches, active, decorations}`.
+Key behaviors:
+
+- **Regex construction** (`buildRegex`): literal patterns
+  auto-escape; `wholeWord` wraps with `\b…\b`; `caseSensitive`
+  toggles the `i` flag. Invalid regex returns null, the state
+  exposes `valid: false`, and the input border goes red.
+- **Match scan** (`scanMatches`): walks text leaves via
+  `doc.descendants`, maps local offsets to absolute PM positions.
+  Per-leaf scanning misses cross-mark matches (e.g. searching
+  "hello world" where "world" is bold splits into two text
+  nodes), which is acceptable — regex users can opt into
+  `.*?` and 95%+ of real-world FB2 has clean text runs.
+- **Doc-edit reflow**: any `tr.docChanged` with a live pattern
+  triggers a rescan + decoration rebuild in the plugin's `apply`,
+  so match count + active index stay correct during typing.
+- **Svelte-store bridge**: the plugin's `view()` hook mirrors its
+  state into a `writable<SearchState>()` on every update. The
+  SearchBar component subscribes to the store for reactive
+  `3 / 17` counter + invalid-regex styling — clean separation
+  between PM state and Svelte reactivity without dispatch
+  listeners.
+- **Imperative commands**: `setSearch`, `clearSearch`, `findNext`,
+  `findPrev`, `replaceActive`, `replaceAll` all take an
+  `EditorView` and dispatch `setMeta(searchPluginKey, …)`
+  transactions. Scroll-into-view handled via `TextSelection` +
+  `tr.scrollIntoView()` on each navigation.
+- **Replace-all ordering**: builds a descending-position batch
+  in one transaction so earlier positions stay valid. Empty
+  replacements use `tr.insertText("", …)` which schema-safely
+  deletes (plain `replaceWith(schema.text(""))` fails — text
+  nodes can't be empty).
+
+**`frontend/src/editor/search/SearchBar.svelte`** — non-modal
+inline bar rendered between Toolbar and Editor when `searchOpen`
+is true. Two-row grid (row 2 only when `mode === "replace"`):
+
+- Find input with case / whole-word / regex toggles (`Aa` /
+  `\b` / `.*`).
+- Counter showing `N / M` or `No matches` / `Invalid regex`.
+- ◀ / ▶ navigation buttons (also Enter / Shift+Enter from input).
+- Replace input + Replace / Replace All buttons. Enter in
+  replace field = one, Shift+Enter = all (matches VS Code).
+- Esc closes the bar and clears highlights.
+
+**`Editor.svelte`** registers `searchPlugin()` and adds four
+keymap entries: `Mod-g`, `Mod-Shift-g`, `F3`, `Shift-F3`.
+`Mod-f` / `Mod-h` open the bar itself — handled at App level
+via the existing `document.keydown` listener (same pattern as
+`Mod-s` → Save) because the SearchBar sits outside the PM
+editor DOM and PM keybindings can't easily reach Svelte state.
+
+**CSS**: two palette variables in App.svelte — `--search-match-bg`
+(inactive wash) and `--search-match-active-bg` — with values
+for both light and dark themes. Goes through theme-hygiene.
+
+### Design notes / tradeoffs
+
+- Decided on inline bar (not modal) after checking user pref —
+  classic FBE had modal, but modern UX (VS Code, Chrome) doesn't
+  steal focus from the doc. Bar sits above the editor, collapses
+  out of the way when closed.
+- Literal-string search by default; regex behind the `.*` toggle.
+  Matches FBE's original UX and avoids surprising users who don't
+  know `.` is a metachar.
+- Search ignored in description view — description is a separate
+  PM instance; `Cmd+F` while on the description tab is a no-op.
+  Can be extended by mounting a second searchPlugin in
+  `AnnotationEditor`, but not now.
+- No CLI `fbe search` yet — deliberately scoped out so the UI
+  ships clean. `internal/fb2/search/search.go` already has
+  `Compile` and is ready for a follow-up rev.
+
+### Tests
+
+Existing 61 frontend tests still pass. No new search-specific
+unit tests yet — the logic is tightly coupled to PM's state
+shape, so tests would need a real `EditorView`; manual QA covers
+the golden paths. Consider adding a vitest suite that constructs
+a minimal PM doc + plugin and asserts `matches` / `active`
+shape on find/next/prev for the next rev.
+
+### Files
+
+- New: `frontend/src/editor/search/plugin.ts`.
+- New: `frontend/src/editor/search/SearchBar.svelte`.
+- Modified: `frontend/src/editor/Editor.svelte` — register plugin,
+  keymap (`Mod-g`, `F3`, Shift variants), CSS palette refs.
+- Modified: `frontend/src/App.svelte` — `editorView` binding,
+  `searchOpen` / `searchMode` state, Cmd+F / Cmd+H handling,
+  palette vars for match highlighting.
+
+---
+
 ## Rev 70 — 2026-04-23 — Release hotfix: linuxdeploy OUTPUT env + cleaner AppImage name [dev]
 
 Version: **0.2.0-beta** (unchanged — same tag re-pushed).

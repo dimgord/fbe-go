@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"os"
 
 	"log"
@@ -19,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/adrg/sysfont"
 	"github.com/adrg/xdg"
@@ -28,6 +30,7 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
+	"github.com/dimgord/fbe-go/internal/fb2/updates"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -371,6 +374,24 @@ func (a *App) PickHTMLToSave(suggested string) (string, error) {
 	})
 }
 
+// PickImageToUpload shows a native open-file dialog filtered to common image
+// formats — used by the Binary Manager to insert a new <binary> into the
+// current document. The pattern uses semicolon-separated single-extension
+// tokens so each one resolves cleanly through macOS's UTType lookup (the
+// multi-dot crash documented on PickFB2ToOpen only triggers on patterns with
+// more than one dot inside a single token, e.g. `*.fb2.zip`).
+func (a *App) PickImageToUpload() (string, error) {
+	return wailsrt.OpenFileDialog(a.ctx, wailsrt.OpenDialogOptions{
+		Title: "Choose image to embed",
+		Filters: []wailsrt.FileFilter{
+			{
+				DisplayName: "Image (*.jpg *.jpeg *.png *.gif *.webp)",
+				Pattern:     "*.jpg;*.jpeg;*.png;*.gif;*.webp",
+			},
+		},
+	})
+}
+
 // --- File operations exposed to the frontend ---
 
 // OpenFile reads an FB2 (or FB2.zip) file and returns the parsed document as JSON.
@@ -520,6 +541,60 @@ func (a *App) AddBinaryFromDisk(id, contentType, path string) error {
 	return nil
 }
 
+// ReadImageBinary reads an image file from disk and returns a *doc.Binary
+// ready to be inserted into `FictionBook.Binaries` by the caller (typically
+// the frontend's Binary Manager). The ID is left empty — the UI assigns it
+// after checking for collisions against the current document.
+//
+// Content-type is inferred from magic bytes via http.DetectContentType, with
+// a fallback to a MIME derived from the file extension if DetectContentType
+// returns the generic `application/octet-stream`. Real FB2 readers only grok
+// image/jpeg, image/png, image/gif, image/webp; callers should reject
+// anything else at upload time.
+func (a *App) ReadImageBinary(path string) (*doc.Binary, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	ct := http.DetectContentType(data)
+	// DetectContentType sniff is good for PNG/JPEG/GIF but falls back to
+	// application/octet-stream on WebP-in-some-variants and other corner
+	// cases; use the extension as a second source of truth.
+	if ct == "application/octet-stream" || strings.HasPrefix(ct, "text/") {
+		if byExt := mimeFromExt(filepath.Ext(path)); byExt != "" {
+			ct = byExt
+		}
+	}
+	// Strip any trailing "; charset=…" that DetectContentType adds on text
+	// payloads — SVG gets tagged as `image/svg+xml; charset=utf-8` and the
+	// charset parameter breaks strict FB2 validators that expect bare types.
+	if i := strings.Index(ct, ";"); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	return binary.Encode("", ct, data), nil
+}
+
+// mimeFromExt maps a filename extension (with leading dot, any case) to the
+// corresponding MIME type. Covers the image formats FB2 readers actually
+// render; returns empty string for unknown extensions.
+func mimeFromExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".bmp":
+		return "image/bmp"
+	}
+	return ""
+}
+
 // ExtractThumbnail returns coverpage bytes as a data: URL (for recent-files UI).
 func (a *App) ExtractThumbnail(path string) (string, error) {
 	f, err := os.Open(path)
@@ -623,4 +698,26 @@ func (a *App) LoadSettings() (*settings.Settings, error) {
 // SaveSettings writes settings to disk.
 func (a *App) SaveSettings(s *settings.Settings) error {
 	return settings.Save(s)
+}
+
+// --- Updates ---
+
+// AppVersion returns the compiled-in product version so the frontend can
+// display "fbe-go vX.Y.Z" without embedding duplicated version constants.
+func (a *App) AppVersion() string {
+	return Version
+}
+
+// CheckForUpdate polls GitHub's Releases API for a newer build. Returns an
+// `*updates.Info` describing the latest release + whether it's strictly
+// newer than the currently-running binary.
+//
+// Errors (rate-limit, offline, 5xx) propagate so the frontend can log them
+// to the console; the banner itself silently hides when the call fails —
+// an update banner that never disappears after a flaky check is worse than
+// no banner at all.
+func (a *App) CheckForUpdate() (*updates.Info, error) {
+	ctx, cancel := context.WithTimeout(a.ctx, 6*time.Second)
+	defer cancel()
+	return updates.Check(ctx, updates.DefaultRepo, Version, nil)
 }
