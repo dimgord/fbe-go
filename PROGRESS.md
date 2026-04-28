@@ -6,6 +6,85 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 86 — 2026-04-28 — v1.0.0 cut [dev → main]
+
+Final 1.0 cut. RC5 has soaked since 2026-04-26 with no
+regressions reported on macOS or Linux. Five RC cycles
+behind us (RC1 → version-only; RC2 → author-fidelity; RC3 →
+UTF-16 + note-link nav; RC4 → Linux AppImage portability;
+RC5 → adopt full community excludelist). The cardinal
+`fidelityBroken=0` invariant has held across every cycle,
+re-verified on the 166-file corpus before tagging.
+
+### Version triple sync
+
+`version.go` was missed during the RC4 and RC5 bumps — it
+stayed at `1.0.0-rc3` while `wails.json` and
+`frontend/package.json` advanced. Result: published RC4 and
+RC5 .app bundles report `1.0.0-rc3` in the About dialog and
+trip the auto-update banner ("v1.0.0-rc5 available") on
+freshly-installed RC5.
+
+This rev fixes the desync organically by bumping all three to
+`1.0.0` in lockstep:
+
+- `version.go` → `const Version = "1.0.0"` (compiled into
+  the binary; source of truth for `App.AppVersion()` and
+  the auto-update comparator).
+- `wails.json` → `info.productVersion: "1.0.0"` (Info.plist).
+- `frontend/package.json` → `"version": "1.0.0"` (HelpDialog
+  fallback when the Wails bridge isn't attached).
+- `frontend/package-lock.json` — auto-resynced via
+  `npm install --package-lock-only`.
+
+A memory entry (`feedback_version_triple.md`) was added to
+make the version.go skip less likely on future bumps.
+
+### CHANGELOG
+
+`[1.0.0] — unreleased` → `[1.0.0] — 2026-04-28`. The body
+of the section (feature inventory) is unchanged from when
+it was written for the RC1 cut — every feature it lists has
+held through soak.
+
+### Release process from here
+
+1. Commit this rev to `dev`, push.
+2. **Merge dev → main** with explicit confirmation
+   (CLAUDE.md global rule — never push to main without
+   explicit user "go").
+3. `git tag v1.0.0 && git push origin v1.0.0`.
+4. The `v*` tag triggers `.github/workflows/release.yml`.
+   Both jobs (macOS sign+notarize, Linux AppImage) build
+   in parallel; expected wall-clock ~5–10 min. Critically,
+   the workflow's `prerelease:` expression detects no
+   `-beta`/`-rc`/`-alpha` substring in `v1.0.0` and
+   publishes the GitHub Release as **Latest**, not
+   prerelease.
+5. Verify Release page lists all three signed artifacts
+   (`fbe-go-v1.0.0-macos-universal.dmg`,
+   `fbe-go-v1.0.0-linux-x86_64.AppImage`,
+   `fbe-go-v1.0.0-linux-freedesktop.tar.gz`) and shows the
+   "Latest" badge.
+6. **Flip repo to public** in GitHub Settings → General →
+   Visibility (separate from this rev — see audit run on
+   2026-04-28: clean — no secrets, LICENSE + NOTICE
+   present, .gitignore reasonable).
+7. Set up branch protection on main (only available on
+   public free-tier repos).
+8. Announce on FB2 forums + original FBE community per
+   PHASES.md M4.
+
+### Modified
+
+- `version.go` — 1.0.0-rc3 → 1.0.0.
+- `wails.json` — productVersion 1.0.0-rc5 → 1.0.0.
+- `frontend/package.json` — version 1.0.0-rc5 → 1.0.0.
+- `frontend/package-lock.json` — auto-synced.
+- `CHANGELOG.md` — `[1.0.0] — unreleased` → `[1.0.0] — 2026-04-28`.
+
+---
+
 ## Rev 85 — 2026-04-26 — Linux AppImage: adopt full community excludelist → v1.0.0-rc5 [dev]
 
 Version: **1.0.0-rc5**.

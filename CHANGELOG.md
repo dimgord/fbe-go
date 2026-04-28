@@ -110,7 +110,7 @@ packaging glitch you find against this tag.
 Superseded by `1.0.0-rc2` after a fidelity regression was found
 during soak — see entry above.
 
-## [1.0.0] — unreleased
+## [1.0.0] — 2026-04-28
 
 First stable release. Feature-complete port of FictionBook Editor to
 macOS and Linux, using a Go core + Wails v2 webview + ProseMirror
