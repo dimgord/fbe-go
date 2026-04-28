@@ -26,7 +26,14 @@
 
   let container: HTMLDivElement;
   let view: EditorView | undefined;
-  let ignoreNextUpdate = false;
+  // Tracks the exact object we last dispatched up to the parent. Parent
+  // typically writes that same object back into our `annotation` prop
+  // (`info.Annotation = e.detail`), which would otherwise trigger
+  // setupView() and destroy the PM state mid-typing. Skipping the rebuild
+  // when prop === lastDispatched is the only correct way to break the
+  // self-dispatch feedback loop while still handling true external
+  // replacement (e.g. opening a different document).
+  let lastDispatched: Annotation | null = null;
 
   function annotationToDoc(a: Annotation | null | undefined): PMNode {
     const kids: PMNode[] = [];
@@ -143,8 +150,9 @@
           view: () => ({
             update(v, prev) {
               if (v.state.doc === prev.doc) return;
-              if (ignoreNextUpdate) { ignoreNextUpdate = false; return; }
-              dispatch("change", docToAnnotation(v.state.doc));
+              const next = docToAnnotation(v.state.doc);
+              lastDispatched = next;
+              dispatch("change", next);
             },
           }),
         }),
@@ -160,13 +168,21 @@
   onMount(setupView);
   onDestroy(() => view?.destroy());
 
-  // Reactively rebuild when the parent replaces the annotation prop wholesale
-  // (rare — usually they just mutate it through our events).
+  // Reactively rebuild ONLY when the parent replaces the annotation prop
+  // wholesale (e.g., opening a different document). When the new prop is
+  // the exact object we just dispatched, that's our own update bouncing
+  // back through the parent's `info.Annotation = e.detail` — silently
+  // adopt the reference and skip setupView, otherwise every keystroke
+  // would destroy and rebuild the PM view (cursor lost, mid-typing
+  // content lost when an unrelated control fires reactivity later).
   let lastAnnotationRef: Annotation | null | undefined = annotation;
   $: if (view && annotation !== lastAnnotationRef) {
-    lastAnnotationRef = annotation;
-    ignoreNextUpdate = true;
-    setupView();
+    if (annotation === lastDispatched) {
+      lastAnnotationRef = annotation;
+    } else {
+      lastAnnotationRef = annotation;
+      setupView();
+    }
   }
 </script>
 
