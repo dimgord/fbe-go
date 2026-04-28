@@ -30,14 +30,32 @@ export function resetPasteConfigForTesting(): void {
   pasteNbspChar = " ";
 }
 
+/** Run `s.replace(re, "")` repeatedly until the string stops changing.
+ *
+ *  Single-pass replace on a regex like `<style>[\s\S]*?<\/style>` can be
+ *  defeated by interleaved input — `<sty<style></style>le>…</style>`
+ *  collapses on the first pass to `<style>…</style>`, which the original
+ *  pattern would have matched if it had run again. Looping closes the
+ *  CodeQL "Incomplete multi-character sanitization"
+ *  (js/incomplete-multi-character-sanitization) finding for unbalanced
+ *  open/close tag-pair removals. */
+function stripUntilStable(s: string, re: RegExp): string {
+  let prev;
+  do {
+    prev = s;
+    s = s.replace(re, "");
+  } while (s !== prev);
+  return s;
+}
+
 /** Clean a pasted HTML fragment before ProseMirror parses it. */
 export function cleanPastedHTML(html: string): string {
   let s = html;
 
   // Strip Word conditional comments: <!--[if …]> … <![endif]-->
-  s = s.replace(/<!--\s*\[if[^\]]*]>[\s\S]*?<!\[endif]-->/gi, "");
+  s = stripUntilStable(s, /<!--\s*\[if[^\]]*]>[\s\S]*?<!\[endif]-->/gi);
   // Remove <style>…</style> blocks entirely (Word dumps huge ones).
-  s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
+  s = stripUntilStable(s, /<style[\s\S]*?<\/style>/gi);
   // Remove <meta>, <link>, <xml>, <o:p>, <w:*> etc.
   s = s.replace(/<\/?(?:meta|link|xml|o:[^\s>]+|w:[^\s>]+)\b[^>]*>/gi, "");
   // Strip mso-* and font-family/mso-specific inline styles.
