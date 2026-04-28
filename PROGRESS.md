@@ -6,6 +6,113 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 87 — 2026-04-28 — annotation editor data-loss fix → v1.0.1 [dev → main]
+
+First patch on top of v1.0.0. Found minutes after public flip
+(Dmitry tried editing annotation in the description form and
+lost the text on the next click). Critical data-loss for any user
+authoring metadata, ship a fix immediately.
+
+### Symptom
+
+In the description form's Annotation editor, type some text →
+click *any* other control in the form (add genre, clone author,
+switch tab, anything) → annotation field is empty. The user's
+text is "lost forever" — re-opening the document doesn't recover
+it because `info.Annotation` was overwritten in memory before any
+save.
+
+### Root cause — self-dispatch feedback loop
+
+`AnnotationEditor.svelte` mounts its own ProseMirror view and
+emits `change` events on every internal doc transaction. The
+parent `TitleInfoForm.svelte::onAnnotationChange` writes the
+event payload back: `info.Annotation = e.detail`. That mutation
+triggers Svelte reactivity → parent re-renders →
+`<AnnotationEditor annotation={info.Annotation} …>` passes the
+prop again. AnnotationEditor's reactive guard:
+
+```ts
+$: if (view && annotation !== lastAnnotationRef) {
+  lastAnnotationRef = annotation;
+  ignoreNextUpdate = true;
+  setupView();    // ← destroys + rebuilds PM
+}
+```
+
+…fires on every bounce-back because the new prop value is a
+different object identity from the previous (`e.detail` is a
+freshly-built object each time `docToAnnotation` is called).
+`setupView()` destroys the live PM view and rebuilds from the
+prop. The user's in-flight typing lives in PM's internal state,
+which the rebuild discards. The `ignoreNextUpdate` flag was a
+half-mitigation for one direction of the loop but doesn't stop
+the rebuild on the prop side.
+
+A second compounding bug: the parent template had
+
+```html
+<AnnotationEditor annotation={info.Annotation ?? { Children: [] }} … />
+```
+
+…where the `?? { Children: [] }` fallback creates a fresh object
+literal on every render when `info.Annotation` is null/undefined,
+guaranteeing the prop reference is different every time and
+defeating any identity-based guard downstream.
+
+### Fix
+
+Two-part:
+
+1. **AnnotationEditor self-dispatch tracking.** Replaced the
+   half-broken `ignoreNextUpdate` boolean with `lastDispatched`
+   that holds the exact object reference we last emitted. The
+   reactive guard now distinguishes:
+   - `annotation === lastDispatched` → our own update bouncing
+     back through the prop binding → adopt the reference, skip
+     `setupView()`.
+   - `annotation !== lastDispatched` → genuine external
+     replacement (e.g. opening a different document or switching
+     between title-info / src-title-info tabs) → rebuild PM
+     from the new prop, as before.
+2. **TitleInfoForm.** Stop using the inline `?? { Children: [] }`
+   fallback (creates fresh identities). Initialize
+   `info.Annotation = { Children: [] }` once via a `$:` block,
+   matching how `Translators` and `Sequences` are already
+   handled. The template now passes `info.Annotation` directly.
+
+### Modified
+
+- `frontend/src/description/AnnotationEditor.svelte` —
+  `lastDispatched` tracking; rewritten reactive guard; updated
+  the dispatch path to write `lastDispatched` in lockstep.
+- `frontend/src/description/TitleInfoForm.svelte` —
+  `$:` initializer for `info.Annotation`; stripped inline
+  fallback from the template.
+- `version.go` — 1.0.0 → 1.0.1.
+- `wails.json` — productVersion 1.0.0 → 1.0.1.
+- `frontend/package.json` — version 1.0.0 → 1.0.1.
+- `frontend/package-lock.json` — auto-resynced.
+- `CHANGELOG.md` — `[1.0.1]` entry added.
+
+### Tests
+
+No new vitest cases — annotation editor flows aren't easy to
+unit-test without a full Svelte-component test harness. The fix
+was validated manually on macOS by editing annotation, clicking
+add-genre / clone-author / tab-switch and confirming the text
+survives. Existing 80 vitest cases still pass; svelte-check 0
+errors; `npm run build` clean.
+
+### Release process
+
+Same shape as v1.0.0 cut: commit + push to dev, merge dev → main
+with `--no-ff`, tag `v1.0.1` on the merge commit, push tag —
+release workflow detects no `-rc/-beta/-alpha` and publishes as
+**Latest** (v1.0.0 demoted to "previous").
+
+---
+
 ## Rev 86 — 2026-04-28 — v1.0.0 cut [dev → main]
 
 Final 1.0 cut. RC5 has soaked since 2026-04-26 with no
