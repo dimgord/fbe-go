@@ -47,3 +47,64 @@ markup. The validator surfaces problems; the user clicks fix.
 **Estimated work:** half a day for the xs:ID + dedupe paths, including UI
 button and the multi-fix transaction. Bundle with v1.1 alongside other
 linter-style features (genre enum normalization, etc).
+
+## Preserve PM undo history across body ↔ description tab switch
+
+**Found:** Rev 88 v1.0.2 development.
+
+**Symptom:** While editing the body, switching to the Description tab and
+back resets the PM editor's undo stack. The body content itself is
+preserved (Rev 88 added `editor.currentFB()` → `fb` sync on tab leave),
+but typing in the body, switching tabs, switching back, and pressing
+Cmd-Z no longer undoes the earlier edits — the new mount starts from a
+fresh history baseline.
+
+**Root cause:** `App.svelte` mounts Editor inside `{#if view === "body"}`,
+so a tab switch unmounts the component entirely. PM's history plugin
+state lives inside the component instance; there's no way to carry it
+across an unmount/mount cycle short of rehydrating from a serialized
+form (which PM doesn't natively support).
+
+**Why we did not fix it for 1.0.2:** the immediate blocker was silent
+data loss on quit; that's now closed. Undo-across-tab-switch is a
+quality-of-life issue, not a correctness one. Users can still undo
+within a single body session.
+
+**Shape of the eventual fix:** drop the `{#if}` and use `display: none`
+to hide the body editor when the description tab is active. The
+component stays mounted; PM history persists. Need to verify search /
+spellcheck attributes still behave on a hidden but mounted editor, and
+that the description tab's layout doesn't fight an always-rendered
+sibling.
+
+**Estimated work:** ~1 hour, mostly testing the rendering swap doesn't
+break the existing layout.
+
+## Body editor undo edge case: image-deletion + text edits interleave
+
+**Found:** Rev 88 v1.0.2 manual testing on macOS.
+
+**Symptom (not reliably reproducible):** Delete every inline `<image>` in
+a section one by one, then edit some text, then position the cursor at
+the section start, then press Cmd-Z. The text undo works, but the next
+Cmd-Z is supposed to start undoing the image deletions and instead
+either does nothing OR — after one more text edit + undo — runs all the
+image undos in a single pass.
+
+Likely a `prosemirror-history` interaction with our split
+`image_block` / `image_inline` schema nodes (image is intentionally not a
+single PM type because FB2 allows `<image>` both as a block sibling of
+`<section>` and as an inline in `<p>` — see `editor/schema.ts` and
+`CLAUDE.md`'s "Why ProseMirror" note).
+
+**Why we did not fix it for 1.0.2:** can't reliably reproduce without a
+specific corpus and click sequence; not data-loss; PM history remains
+useful for the common case.
+
+**Shape of the eventual fix:** narrow a reproducer (corpus file +
+keystroke log), then trace through `prosemirror-history`'s transaction
+batching to see whether image-block deletion is interacting badly with
+addToHistory or being grouped into the wrong undo bucket. Likely a
+custom history-merging tweak rather than a schema change.
+
+**Estimated work:** unknown until a reliable repro exists.

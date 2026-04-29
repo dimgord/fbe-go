@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { EditorState, type Transaction } from "prosemirror-state";
+  import { onDestroy, createEventDispatcher } from "svelte";
+  import { EditorState, Plugin, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
-  import { history, redo, undo } from "prosemirror-history";
+  import { history, redo, undo, undoDepth } from "prosemirror-history";
   import { keymap } from "prosemirror-keymap";
   import { baseKeymap } from "prosemirror-commands";
   import { Node as PMNode } from "prosemirror-model";
@@ -41,6 +41,48 @@
 
   /** Inferred from the document's title-info <lang> for native spellcheck routing. */
   $: lang = fb?.Description?.TitleInfo?.Lang || "en";
+
+  const dispatch = createEventDispatcher<{ dirty: boolean }>();
+  let baselineUndoDepth = 0;
+  let lastEmittedBodyDirty: boolean | null = null;
+
+  /** Body edits are tracked via PM's undo stack: capture baseline on
+   *  view creation, emit `dirty: true` when the depth grows past it
+   *  and `dirty: false` once the user undoes back to it. Baseline is
+   *  set in the view-factory (called at view creation, before any
+   *  transactions) — capturing it inside `update` would set it AFTER
+   *  the first user edit, leaving undo-to-clean unreachable. */
+  function dirtyPlugin(): Plugin {
+    return new Plugin({
+      view: (v) => {
+        baselineUndoDepth = undoDepth(v.state);
+        lastEmittedBodyDirty = false;
+        return {
+          update(v, prev) {
+            if (v.state.doc === prev.doc) return;
+            const dirty = undoDepth(v.state) > baselineUndoDepth;
+            if (lastEmittedBodyDirty !== dirty) {
+              lastEmittedBodyDirty = dirty;
+              dispatch("dirty", dirty);
+            }
+          },
+        };
+      },
+    });
+  }
+
+  /** Re-snapshot the baseline at the current PM state. App.svelte calls
+   *  this after a successful Save so subsequent undos that return to
+   *  the just-saved point are recognised as clean. */
+  export function markSaved(): void {
+    if (!view) return;
+    baselineUndoDepth = undoDepth(view.state);
+    if (lastEmittedBodyDirty !== false) {
+      lastEmittedBodyDirty = false;
+      dispatch("dirty", false);
+    }
+  }
+
 
   /** Serialize current PM doc back to a FictionBook, merged with the original description + binaries. */
   export function currentFB(): FictionBook | null {
@@ -273,6 +315,7 @@
         keymap(baseKeymap),
         searchPlugin(),
         noteLinksPlugin(),
+        dirtyPlugin(),
       ],
     });
     view = new EditorView(container, {
@@ -303,6 +346,7 @@
         keymap(baseKeymap),
         searchPlugin(),
         noteLinksPlugin(),
+        dirtyPlugin(),
       ],
     }));
   }
