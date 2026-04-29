@@ -6,6 +6,153 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 88 — 2026-04-29 — unsaved-changes guard → v1.0.2 [dev → main]
+
+Surfaced during the pre-announcement audit of the original FBE
+issue tracker (`docs/announcements/grib-fbe.md`). FBE issue
+#161 — *silent hiding of doc invalidity* — describes the
+classic "edit, then close without saving, no warning, work
+gone" footgun. Verified that fbe-go was vulnerable in exactly
+the same way: PM body or description-form edits silently lost
+on Cmd-Q. Critical to fix before announcing publicly.
+
+### Architecture — hybrid dirty detection
+
+The body editor and the description form have FUNDAMENTALLY
+different shapes that defeat any single-strategy approach:
+
+- Body lives in ProseMirror. The Go parser and the PM
+  serializer build STRUCTURALLY DIFFERENT `FictionBook.Bodies`
+  trees for the same content — `<image>` lands in
+  `Section.Image` after the parser but as an inline element
+  inside `Section.Body[]` after `pmDocToFB2`; the parser emits
+  every `Body` field including absent ones (`Lang:""`,
+  `Image:null`); the serializer omits them. Stringifying both
+  diverges byte-for-byte even with no edits.
+- Description has no PM involvement. Both clean and current
+  readings come straight from `fb.Description`, with the same
+  shape on both sides (after a normalizer pre-warm).
+
+So the rev tracks each surface differently:
+
+- **Body**: Editor's `dirtyPlugin` captures the PM undo depth
+  in the view-factory (called once at view creation, before any
+  transactions — capturing it inside `update` would set the
+  baseline AFTER the first edit and leave undo-to-clean
+  unreachable) and emits `dirty: true|false` on each
+  doc-changing transaction. `Editor.markSaved()` re-baselines
+  after a successful save.
+- **Description**: A canonicalized JSON snapshot of
+  `fb.Description` is captured at open / save and compared on
+  demand. Canonicalization sorts keys alphabetically and drops
+  `null`, empty strings, empty arrays, and recursively-empty
+  objects so the comparison is content-only. `normalizeFb`
+  pre-warms every default the lazy-mount form initializers add
+  on first visit (`Translators`, `Sequences`, `Annotation`,
+  `Coverpage`, `PublishInfo`, `CustomInfo`, `SrcURL`, plus
+  per-author `Email` / `HomePage`) so the snapshot doesn't
+  diverge the moment the user opens the description tab.
+
+`isDirty = bodyDirty || (descSnapshot !== cleanDescSnapshot)`.
+
+### Tab-switch sync — body edits survive view changes
+
+`{#if view === "body"}` unmounts the Editor on tab switch.
+The PM state is gone; on return the freshly-mounted Editor
+rebuilds from `fb`, which never received the edits. Result:
+in-flight body work silently disappears.
+
+Fix: `App.svelte` watches `prevView !== view` transitions and
+runs `fb = editor.currentFB()` when leaving the body view, so
+PM body edits are persisted into `fb` before Editor unmounts.
+PM undo history within the editor is still reset on tab switch
+(can't survive component unmount); a "preserve undo across tab
+switch" follow-up is parked in `docs/POST-1.0.md`.
+
+### Backend — Wails OnBeforeClose + native dialogs
+
+- `app.go::OnBeforeClose(ctx)` is wired in `main.go` and runs
+  on every window-close attempt (Cmd-Q, X button, Alt-F4).
+- It asks the frontend whether the doc is dirty via an
+  emit-then-await round trip on the Wails event bus
+  (`app:check-dirty` → `app:dirty-response`) — server-side
+  flag would always be racy because the body lives in PM.
+  2-second timeout falls back to "dirty" for safety.
+- If dirty, opens a native 3-button MessageDialog
+  (Save / Discard / Cancel). "Save" emits
+  `app:save-and-quit`; the frontend completes the save and
+  calls `App.ForceQuit()` to bypass the next OnBeforeClose
+  (`forceClose` flag). "Discard" sets the same flag and
+  returns false. "Cancel" returns true (window stays).
+- `App.ConfirmUnsavedChanges()` is a separate exposed method
+  the frontend calls before File → Open, so opening a different
+  file doesn't silently clobber edits either.
+
+### Failed approaches noted (so we don't try them again)
+
+Two earlier rounds were dead ends, both documented in the
+in-line comments:
+
+- **Full-FB content snapshot** with stable-key stringify and
+  null/empty stripping — runs into the parser-vs-PM-serializer
+  structural shape mismatch on Body. Body content can't be
+  compared by serialized form alone.
+- **Reactive `$: if (fb …)` flag** that flips `descDirty` on
+  any `fb` invalidation — produces a feedback loop because the
+  same block reads `descDirty`. Every clearDirty triggered a
+  microtask-later flip back to true.
+
+The hybrid above sidesteps both: no body-shape comparison, no
+self-referential reactive guard.
+
+### Modified
+
+- `app.go` — `OnBeforeClose`, `ConfirmUnsavedChanges`,
+  `ForceQuit`, `askFrontendIsDirty`. `dirty bool` field
+  removed (frontend owns truth).
+- `main.go` — wire `OnBeforeClose: app.OnBeforeClose`.
+- `frontend/src/editor/Editor.svelte` — `dirtyPlugin`,
+  `markSaved`.
+- `frontend/src/App.svelte` — hybrid `bodyDirty` +
+  `cleanDescSnapshot`, `normalizeFb`, `canonicalize`,
+  tab-switch PM-to-fb sync, Wails event listeners for
+  `app:check-dirty` / `app:save-and-quit`, prompts before
+  File → Open.
+- `version.go` — 1.0.1 → 1.0.2.
+- `wails.json` — productVersion 1.0.1 → 1.0.2.
+- `frontend/package.json` — version 1.0.1 → 1.0.2.
+- `frontend/package-lock.json` — auto-resynced.
+- `docs/POST-1.0.md` — undo-across-tab-switch + image-undo
+  edge case parked.
+- `CHANGELOG.md` — `[1.0.2]` entry added.
+
+### Tests
+
+Manual end-to-end on macOS, run by Dmitry:
+
+- ✅ Open → no edit → Cmd-Q: no dialog
+- ✅ Open → body edit → Cmd-Q: dialog
+- ✅ Open → body edit → undo all → Cmd-Q: no dialog
+- ✅ Open → description edit → Cmd-Q: dialog
+- ✅ Open → description retype to original → Cmd-Q: no dialog
+- ✅ Open → desc tab → File → Open: no dialog (no edits)
+- ✅ Open → body edit → desc → back: body edits preserved
+- ⚠️ Open → kill all images → text edit → undo: PM history
+  edge case where image undos either skip or run away. Not
+  reliably reproducible; deferred (see POST-1.0).
+
+`go test ./...` and `npm run check` / `npm test` /
+`npm run build` all green; svelte-check 0 errors.
+
+### Release process
+
+Same shape as 1.0.1: commit + push to dev, merge dev → main
+with `--no-ff`, tag `v1.0.2` on the merge commit, push tag —
+`release.yml` detects no `-rc/-beta/-alpha` and publishes as
+**Latest** (1.0.1 demoted to "previous").
+
+---
+
 ## Rev 87 — 2026-04-28 — annotation editor data-loss fix → v1.0.1 [dev → main]
 
 First patch on top of v1.0.0. Found minutes after public flip
