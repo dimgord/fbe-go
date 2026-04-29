@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import DocumentTree from "./tree/DocumentTree.svelte";
   import Editor from "./editor/Editor.svelte";
   import Toolbar from "./editor/Toolbar.svelte";
@@ -25,6 +25,157 @@
   let currentPath = "";
   let status = "";
   let error = "";
+
+  // Dirty-tracking is hybrid because the body editor and the description
+  // form have fundamentally different shapes:
+  //   - Body lives in ProseMirror; the parser and PM serializer build
+  //     STRUCTURALLY DIFFERENT FictionBook.Bodies trees for the same
+  //     content (Section.Image vs inline image inside Section.Body[],
+  //     Body.Title field vs no-Title-field, etc.). Stringifying both
+  //     and comparing diverges even with no edits, so we can't snapshot
+  //     the body. Track via PM's undo stack instead — Editor's
+  //     dirtyPlugin emits `dirty: true|false` based on undo depth vs a
+  //     baseline captured at mount / save.
+  //   - Description has no PM involvement; both clean and current
+  //     readings come straight from `fb.Description`. The parser /
+  //     defaulters / mutations agree on the shape (after normalizeFb
+  //     pre-warm), so a canonicalized JSON snapshot of just the
+  //     Description sub-tree is reliable.
+  //
+  // isDirty = bodyDirty (from PM) OR descSnapshot mismatch. Cleared on
+  // open / save / sample fallback.
+  let bodyDirty = false;
+  let cleanDescSnapshot: string | null = null;
+
+  /** Description form subforms (DescriptionPanel, TitleInfoForm,
+   *  AuthorField, CoverpageField, PublishInfoForm, DocumentInfoForm,
+   *  CustomInfoForm) carry `$: if (!info.X) info.X = …` initializers
+   *  that inject empty defaults the first time each is mounted.
+   *  Without this eager normalization, the clean snapshot captured on
+   *  the body view doesn't yet carry those defaults — so a single visit
+   *  to the description tab mutates `fb`, and the snapshot comparison
+   *  wrongly flags the doc as dirty even after the user undoes /
+   *  retypes their edits back to the original text.
+   *
+   *  Apply every defaulter here so the snapshot is taken in the same
+   *  shape that any future description-form mount will produce. New
+   *  defaults added to subforms must be mirrored here. */
+  function normalizeFb(target: FictionBook | null): void {
+    if (!target) return;
+    if (!target.Description.PublishInfo) target.Description.PublishInfo = {};
+    if (!target.Description.CustomInfo)  target.Description.CustomInfo  = [];
+
+    for (const info of [target.Description.TitleInfo, target.Description.SrcTitleInfo]) {
+      if (!info) continue;
+      if (!info.Translators) info.Translators = [];
+      if (!info.Sequences)   info.Sequences   = [];
+      if (!info.Annotation)  info.Annotation  = { Children: [] };
+      if (!info.Coverpage)   info.Coverpage   = { Images: [] };
+      normalizeAuthors(info.Authors);
+      normalizeAuthors(info.Translators);
+    }
+
+    if (target.Description.DocumentInfo) {
+      if (!target.Description.DocumentInfo.SrcURL) target.Description.DocumentInfo.SrcURL = [];
+      normalizeAuthors(target.Description.DocumentInfo.Authors);
+      normalizeAuthors(target.Description.DocumentInfo.Publishers);
+    }
+
+    if (target.Description.PublishInfo) {
+      if (!target.Description.PublishInfo.Sequences) target.Description.PublishInfo.Sequences = [];
+    }
+  }
+
+  /** AuthorField.svelte's `$: if (!author.Email) author.Email = []` and
+   *  matching HomePage init. Applied to every author / translator /
+   *  publisher slot. */
+  function normalizeAuthors(list: import("./fb2/types").Author[] | null | undefined): void {
+    if (!list) return;
+    for (const a of list) {
+      if (!a.Email)    a.Email    = [];
+      if (!a.HomePage) a.HomePage = [];
+    }
+  }
+
+  /** Canonical content-only stringification.
+   *
+   *  The Go parser and the TS PM-serializer build identically-shaped
+   *  FictionBook objects with two systematic differences:
+   *    1. Key insertion order differs (Go's encoding/json uses struct
+   *       declaration order; pmDocToFB2 builds fields in TS construction
+   *       order).
+   *    2. Go emits empty/null fields ("Lang":"", "Image":null,
+   *       "Epigraph":null) for every absent value because the FictionBook
+   *       struct's fields aren't all marked `omitempty`. The PM
+   *       serializer simply omits those keys.
+   *
+   *  Both differences would make plain JSON.stringify diverge byte-for-
+   *  byte even when the user hasn't touched anything. We canonicalize:
+   *  sort keys alphabetically, and treat null / empty string / empty
+   *  array as semantically absent (drop them). The result is purely
+   *  content-driven — independent of which serializer produced the
+   *  object. */
+  function canonicalize(v: unknown): unknown {
+    if (v === null || v === undefined) return undefined;
+    if (typeof v === "string") return v === "" ? undefined : v;
+    if (Array.isArray(v)) {
+      const out = v.map(canonicalize).filter((x) => x !== undefined);
+      return out.length === 0 ? undefined : out;
+    }
+    if (typeof v === "object") {
+      const src = v as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      let kept = 0;
+      for (const k of Object.keys(src).sort()) {
+        const cv = canonicalize(src[k]);
+        if (cv !== undefined) { out[k] = cv; kept++; }
+      }
+      return kept === 0 ? undefined : out;
+    }
+    return v;
+  }
+  function stableStringify(value: unknown): string {
+    return JSON.stringify(canonicalize(value)) ?? "";
+  }
+  function descSnapshot(): string {
+    return stableStringify(fb?.Description);
+  }
+  function isCurrentlyDirty(): boolean {
+    if (bodyDirty) return true;
+    if (cleanDescSnapshot === null) return false;
+    return descSnapshot() !== cleanDescSnapshot;
+  }
+  /** Capture the current Description serialization as the clean baseline
+   *  and reset bodyDirty. Called after open / save. Eagerly applies the
+   *  description-form defaults via `normalizeFb` so the clean side
+   *  carries the same shape the form initializers will produce on first
+   *  mount. */
+  function captureCleanSnapshot() {
+    normalizeFb(fb);
+    cleanDescSnapshot = descSnapshot();
+    bodyDirty = false;
+  }
+  function onEditorDirty(e: CustomEvent<boolean>) {
+    bodyDirty = e.detail;
+  }
+
+  /** When the user leaves the "body" view (tab-switch to description, or
+   *  any other reason `view` changes), serialize the live PM doc back
+   *  into `fb` so subsequent re-mounts of Editor (and any save) see the
+   *  user's body edits. Without this, switching tabs unmounts Editor via
+   *  `{#if view === "body"}`, the PM state is gone, and on return the
+   *  freshly-mounted Editor rebuilds from a stale `fb` — the body edits
+   *  silently disappear. */
+  let prevView: View = view;
+  $: {
+    if (prevView === "body" && view !== "body" && editor) {
+      const synced = editor.currentFB();
+      if (synced) fb = synced;
+    }
+    prevView = view;
+  }
+
+
   let editor: Editor | undefined = undefined;
   /** Bound to Editor.view so SearchBar (and any other sibling) gets a
       reactive reference to the live PM EditorView. */
@@ -316,6 +467,19 @@
     try {
       const App = await wailsApp();
       if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
+      // Guard the in-memory replacement: if the current document has
+      // unsaved edits, prompt before discarding them. The native Save /
+      // Discard / Cancel dialog lives on the Go side
+      // (App.ConfirmUnsavedChanges) so it matches the OS look exactly.
+      if (isCurrentlyDirty()) {
+        const choice = await App.ConfirmUnsavedChanges();
+        if (choice === "cancel") return;
+        if (choice === "save") {
+          await save(false);
+          if (isCurrentlyDirty()) return; // save failed or was cancelled at file picker
+        }
+        // discard: fall through, the next fb assignment overwrites the doc
+      }
       const path = preset ?? await App.PickFB2ToOpen();
       if (!path) return;
       console.log(`[fbe] opening ${path}`);
@@ -334,6 +498,7 @@
       filename = path.split(/[\\/]/).pop() ?? path;
       status = `Opened ${filename}`;
       setTimeout(() => (status = ""), 3000);
+      captureCleanSnapshot();
       void refreshRecent();
     } catch (e) {
       const msg = (e as Error).message || String(e);
@@ -350,6 +515,7 @@
         fb = SAMPLE_BOOK;
         currentPath = "";
         filename = "blank.fb2 (sample)";
+        captureCleanSnapshot();
       }
     }
   }
@@ -375,6 +541,10 @@
       currentPath = path;
       filename = path.split(/[\\/]/).pop() ?? path;
       status = `Saved ${filename}`;
+      captureCleanSnapshot();
+      // Re-baseline PM's undo stack so subsequent undos that return to
+      // this just-saved point are recognised as clean.
+      editor?.markSaved();
       setTimeout(() => (status = ""), 3000);
       void refreshRecent();
     } catch (e) {
@@ -481,6 +651,35 @@
     const detachExternalLinks = installExternalLinkHandler();
     void refreshRecent();
 
+    // Wire the unsaved-changes plumbing:
+    //   - "app:check-dirty" — Go OnBeforeClose asks whether the live doc
+    //     differs from the last clean snapshot. We answer with a bool
+    //     via "app:dirty-response".
+    //   - "app:save-and-quit" — Go's "Save" dialog branch dispatched a
+    //     save request. Run the save, then ForceQuit if it succeeded.
+    let detachListeners: Array<() => void> = [];
+    void (async () => {
+      const rt = await import("../wailsjs/runtime/runtime").catch(() => null);
+      const App = await wailsApp();
+      if (!rt || !App) return;
+      const offCheck = rt.EventsOn("app:check-dirty", () => {
+        rt.EventsEmit("app:dirty-response", isCurrentlyDirty());
+      });
+      const offSave = rt.EventsOn("app:save-and-quit", async () => {
+        try {
+          await save(false);
+        } catch (e) {
+          console.error("[fbe] save-and-quit: save failed", e);
+          return;
+        }
+        if (!isCurrentlyDirty()) {
+          try { await App.ForceQuit(); } catch { /* app is exiting */ }
+        }
+      });
+      if (typeof offCheck === "function") detachListeners.push(offCheck);
+      if (typeof offSave === "function") detachListeners.push(offSave);
+    })();
+
     // Live-follow OS color-scheme changes while theme === "system".
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onSystemChange = (e: MediaQueryListEvent) => { systemDark = e.matches; };
@@ -556,18 +755,21 @@
           if (current && current.Bodies && current.Bodies.length > 0) {
             fb = current as FictionBook;
             filename = "(opened in native window)";
+            captureCleanSnapshot();
             return;
           }
         } catch { /* fall through to sample */ }
       }
       fb = SAMPLE_BOOK;
       filename = "blank.fb2 (sample)";
+      captureCleanSnapshot();
     })();
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       mq.removeEventListener("change", onSystemChange);
       detachExternalLinks();
       window.clearTimeout(updateTimer);
+      detachListeners.forEach((off) => off());
     };
   });
 </script>
@@ -665,7 +867,7 @@
         on:pointercancel={endDragOutline}
         on:keydown={onOutlineResizerKey}
       ></div>
-      <section><Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} /></section>
+      <section><Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} /></section>
       {#if showPanel}
         <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
