@@ -6,6 +6,39 @@ log (every code change, every rev, every fix) see
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use
 [SemVer](https://semver.org/).
 
+## [1.0.2] — 2026-04-29
+
+Second patch release. Closes the unsaved-changes data-loss gap that
+was inherited from the original FBE issue tracker (#161 — silent
+hiding of doc invalidity / unsaved edits). Verified against the
+sibling pre-flight audit done before the public announcement.
+
+### Added
+
+- **Unsaved-changes guard.** Quitting (Cmd-Q on macOS, X / Alt-F4 on
+  Linux) with edited but unsaved content now opens a native
+  Save / Discard / Cancel dialog instead of silently dropping the
+  work. Same dialog appears before File → Open replaces the
+  in-memory document with another file.
+- **Body changes survive tab switches.** Switching to the Description
+  tab and back used to discard the in-flight ProseMirror edits; the
+  live PM doc is now serialized into `fb` on tab leave so the next
+  Editor mount picks them up. (Undo history within the body editor
+  is still reset on tab switch — see post-1.0 backlog.)
+
+### Fixed
+
+- Quitting clean documents no longer prompts. The hybrid dirty
+  detector tracks the body editor through PM's undo stack (so
+  edit-then-undo-back-to-clean correctly reports clean) and the
+  description form through a canonicalized JSON snapshot of
+  `fb.Description` (so editing then re-typing the original text
+  also reverts to clean).
+- Description-form defaulters that mount lazily (`Translators`,
+  `Sequences`, `Annotation`, author `Email` / `HomePage`, `Date`,
+  `Coverpage`, `PublishInfo`, `CustomInfo`, `SrcURL`) no longer
+  cause the doc to be reported dirty without any user interaction.
+
 ## [1.0.1] — 2026-04-28
 
 First patch release. Fixes a critical data-loss bug in the

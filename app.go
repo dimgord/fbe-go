@@ -42,6 +42,13 @@ type App struct {
 	current *doc.FictionBook // currently-open document
 	path    string           // current file path, empty if untitled
 
+	// forceClose is set after the user has explicitly chosen "Discard" /
+	// "Save" via the unsaved-changes dialog. The next OnBeforeClose call
+	// (triggered by the wailsrt.Quit() that follows a Save) checks this
+	// flag and skips the dialog so the app actually exits instead of
+	// re-prompting forever.
+	forceClose bool
+
 	// systemFonts is populated asynchronously on startup by walking the
 	// OS font directories via `sysfont`. Cached as a sorted, deduped
 	// list of family names for the Settings dialog's font-family picker.
@@ -304,6 +311,126 @@ func (a *App) ListSystemFonts() []string {
 	out := make([]string, len(a.systemFonts))
 	copy(out, a.systemFonts)
 	return out
+}
+
+// askFrontendIsDirty asks the webview whether the in-memory document
+// differs from its last clean snapshot (the JSON-stringified merged
+// FictionBook captured at open / save). The frontend owns the source
+// of truth — body edits live in ProseMirror and only flow into `fb`
+// via `editor.currentFB()`, so a server-side flag would always be
+// stale or racy. Round-trip:
+//
+//   1. Subscribe once for "app:dirty-response".
+//   2. Emit "app:check-dirty" to the frontend.
+//   3. Wait up to 2s for the response.
+//
+// On timeout we conservatively return true so an unresponsive webview
+// can't silently drop user data on quit.
+func (a *App) askFrontendIsDirty(ctx context.Context) bool {
+	ch := make(chan bool, 1)
+	wailsrt.EventsOnce(ctx, "app:dirty-response", func(args ...any) {
+		if len(args) > 0 {
+			if d, ok := args[0].(bool); ok {
+				ch <- d
+				return
+			}
+		}
+		ch <- true
+	})
+	wailsrt.EventsEmit(ctx, "app:check-dirty")
+	select {
+	case d := <-ch:
+		return d
+	case <-time.After(2 * time.Second):
+		return true
+	}
+}
+
+// ConfirmUnsavedChanges shows a native 3-button "Save / Discard / Cancel"
+// dialog and returns "save", "discard", or "cancel". Used by the frontend
+// before File→Open / File→New flows replace the in-memory document.
+//
+// Returns "cancel" on dialog error so destructive in-memory replacement
+// stays gated behind explicit user intent — unknown dialog state should
+// not silently advance the workflow.
+func (a *App) ConfirmUnsavedChanges() string {
+	resp, err := wailsrt.MessageDialog(a.ctx, wailsrt.MessageDialogOptions{
+		Type:          wailsrt.QuestionDialog,
+		Title:         "Unsaved changes",
+		Message:       "You have unsaved changes in the current document. What would you like to do?",
+		Buttons:       []string{"Save", "Discard", "Cancel"},
+		DefaultButton: "Save",
+		CancelButton:  "Cancel",
+	})
+	if err != nil {
+		return "cancel"
+	}
+	switch resp {
+	case "Save":
+		return "save"
+	case "Discard":
+		return "discard"
+	default:
+		return "cancel"
+	}
+}
+
+// OnBeforeClose is called by Wails when the user attempts to close the
+// window (red traffic light on macOS, X button on Linux, Cmd-Q / Alt-F4).
+// Returns true to prevent the close, false to allow it.
+//
+// Flow:
+//   - If forceClose is set (we're back here from an explicit "Discard" or
+//     post-save Quit), allow close immediately.
+//   - Ask the frontend whether the doc is dirty (it knows by comparing
+//     a JSON-stringified snapshot against the open/save baseline). If
+//     clean, allow close.
+//   - Otherwise, show a native MessageDialog. "Save" triggers a save via
+//     a frontend event (the document lives in the PM editor, not Go), then
+//     re-quits. "Discard" sets forceClose and re-quits. "Cancel" stays.
+func (a *App) OnBeforeClose(ctx context.Context) bool {
+	if a.forceClose {
+		return false
+	}
+	if !a.askFrontendIsDirty(ctx) {
+		return false
+	}
+	resp, err := wailsrt.MessageDialog(ctx, wailsrt.MessageDialogOptions{
+		Type:          wailsrt.QuestionDialog,
+		Title:         "Unsaved changes",
+		Message:       "You have unsaved changes. Save them before closing?",
+		Buttons:       []string{"Save", "Discard", "Cancel"},
+		DefaultButton: "Save",
+		CancelButton:  "Cancel",
+	})
+	if err != nil {
+		// On dialog error, stay open — losing user data on a corner-case
+		// runtime hiccup is the worse failure mode.
+		return true
+	}
+	switch resp {
+	case "Discard":
+		a.forceClose = true
+		return false
+	case "Save":
+		// The document lives in the PM editor. Hand off to the frontend
+		// to run its Save flow (which respects untitled vs. titled,
+		// triggers SaveAs picker if needed) and re-trigger Quit on
+		// success. ForceQuit() unblocks the next OnBeforeClose call.
+		wailsrt.EventsEmit(ctx, "app:save-and-quit")
+		return true
+	default:
+		return true
+	}
+}
+
+// ForceQuit lets the frontend bypass the unsaved-changes dialog after
+// it has handled the save itself (the "Save" branch of the close-time
+// dialog dispatches "app:save-and-quit", the frontend completes the save,
+// then calls this to actually exit).
+func (a *App) ForceQuit() {
+	a.forceClose = true
+	wailsrt.Quit(a.ctx)
 }
 
 // OnShutdown is called by Wails just before the webview tears down. We grab
