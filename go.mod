@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/adrg/sysfont v0.1.2
-	github.com/adrg/xdg v0.3.0
+	github.com/adrg/xdg v0.5.3
 	github.com/lestrrat-go/libxml2 v0.0.0-20260304224138-bb3877930cf7
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/text v0.36.0
