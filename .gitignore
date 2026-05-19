@@ -9,6 +9,7 @@ frontend/package.json.md5
 *.log
 .vscode/
 .idea/
+build/
 
 # Compiled CLI binary (top-level, after `go build ./cmd/fbe`)
 /fbe
