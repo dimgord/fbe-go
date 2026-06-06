@@ -33,6 +33,9 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/updates"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
+	"github.com/dimgord/fbe-go/internal/fb2/zipfb2"
+
+	"archive/zip"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -81,6 +84,19 @@ func (a *App) OnStartup(ctx context.Context) {
 	// even on cold cache. sysfont is pure-Go (no CGo) so this works on
 	// both macOS and Linux from one codepath.
 	go a.populateSystemFonts()
+
+	// File drop: forward the first dropped path to the frontend, which
+	// runs its standard openFile flow (unsaved-changes guard, picker
+	// bypass, status text, recent-files update). Multi-file drops fold
+	// to the first entry — fbe-go is single-document. WebView drop is
+	// disabled in main.go's DragAndDrop block, so this is the only
+	// path file drops can take.
+	wailsrt.OnFileDrop(ctx, func(_, _ int, paths []string) {
+		if len(paths) == 0 {
+			return
+		}
+		wailsrt.EventsEmit(ctx, "app:file-drop", paths[0])
+	})
 }
 
 // populateSystemFonts walks the OS font registry, dedupes by family, and
@@ -524,6 +540,16 @@ func (a *App) PickImageToUpload() (string, error) {
 // OpenFile reads an FB2 (or FB2.zip) file and returns the parsed document as JSON.
 // Panics are recovered so a bad document surfaces as a normal JS-side error
 // instead of killing the webview.
+//
+// Format detection peeks at the first 4 bytes: the zip local-file-header magic
+// is `PK\x03\x04`. On match we route through `zipfb2.Unpack` (which finds the
+// single `.fb2` entry inside the archive) before handing the stream to
+// `parser.Parse`. Without this auto-detect, dropping a `.fb2.zip` from Finder
+// hits `parser.Parse` with the zip's binary header and fails with
+// "XML syntax error on line 1: illegal character code U+0003" — U+0003 is the
+// `\x03` of the PK magic. The file dialog filter masked this for the Open menu
+// path (only `*.fb2` was offered), but the Wails OnFileDrop hook delivers
+// whatever the user actually drops, including archives.
 func (a *App) OpenFile(path string) (fb *doc.FictionBook, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -537,9 +563,35 @@ func (a *App) OpenFile(path string) (fb *doc.FictionBook, err error) {
 	}
 	defer f.Close()
 
-	fb, err = parser.Parse(f)
-	if err != nil {
-		return nil, err
+	// Peek the magic; if zip, unwrap; otherwise rewind and parse as raw XML.
+	magic := make([]byte, 4)
+	if n, _ := f.Read(magic); n == 4 && magic[0] == 'P' && magic[1] == 'K' && magic[2] == 0x03 && magic[3] == 0x04 {
+		st, err := f.Stat()
+		if err != nil {
+			return nil, err
+		}
+		// zip.NewReader needs a ReaderAt + size; *os.File satisfies io.ReaderAt.
+		zr, err := zip.NewReader(f, st.Size())
+		if err != nil {
+			return nil, fmt.Errorf("fb2 open zip: %w", err)
+		}
+		rc, err := zipfb2.Unpack(zr)
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		fb, err = parser.Parse(rc)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if _, err := f.Seek(0, 0); err != nil {
+			return nil, err
+		}
+		fb, err = parser.Parse(f)
+		if err != nil {
+			return nil, err
+		}
 	}
 	a.current = fb
 	a.path = path
@@ -634,8 +686,38 @@ func (a *App) RemoveFromRecent(path string) error {
 // UpdateDocument replaces the current document with a new version from the frontend.
 // The ProseMirror editor serializes its state back to doc.FictionBook JSON via a
 // TypeScript serializer (frontend/src/editor/serialize.ts).
+//
+// Normalization is applied to defend against quirks of the Svelte description
+// editor that can materialize zero-value placeholder structs even when the user
+// never touched the field. The only known case so far: visiting Description →
+// title or src-title tab once would (until Rev 89) trigger CoverpageField's
+// reactive `$: if (!cover) cover = { Images: [] }` and write that placeholder
+// back through bind:cover into info.Coverpage. The writer would then emit
+// `<coverpage></coverpage>` (a non-nil pointer with an empty Images slice is
+// NOT skipped by `xml:",omitempty"`), failing the FB2 XSD which requires
+// `coverpage` to have at least one `<image>` child. Even though the Svelte
+// side has been fixed, this Go-side scrub ensures malformed data from any
+// future frontend regression still gets cleaned before reaching disk.
 func (a *App) UpdateDocument(fb *doc.FictionBook) {
+	if fb != nil {
+		normalizeFictionBook(fb)
+	}
 	a.current = fb
+}
+
+// normalizeFictionBook drops sub-elements that would round-trip as empty,
+// XSD-invalid placeholders. Currently only Coverpage{Images:nil}.
+func normalizeFictionBook(fb *doc.FictionBook) {
+	if fb.Description.TitleInfo != nil &&
+		fb.Description.TitleInfo.Coverpage != nil &&
+		len(fb.Description.TitleInfo.Coverpage.Images) == 0 {
+		fb.Description.TitleInfo.Coverpage = nil
+	}
+	if fb.Description.SrcTitleInfo != nil &&
+		fb.Description.SrcTitleInfo.Coverpage != nil &&
+		len(fb.Description.SrcTitleInfo.Coverpage.Images) == 0 {
+		fb.Description.SrcTitleInfo.Coverpage = nil
+	}
 }
 
 // CurrentDocument returns the in-memory document (useful after Open).
