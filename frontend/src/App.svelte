@@ -70,7 +70,17 @@
       if (!info.Translators) info.Translators = [];
       if (!info.Sequences)   info.Sequences   = [];
       if (!info.Annotation)  info.Annotation  = { Children: [] };
-      if (!info.Coverpage)   info.Coverpage   = { Images: [] };
+      // NEVER inject an empty Coverpage here. FB2 XSD requires `coverpage`
+      // to have at least one `<image>` child — an empty `<coverpage></coverpage>`
+      // fails validation with the cryptic "Missing child element(s). Expected
+      // is ( image )." message that points at an unrelated line. Until Rev 89
+      // we injected `{ Images: [] }` to keep the dirty-snapshot baseline
+      // matching CoverpageField's mount-time defaulter, but CoverpageField has
+      // since been changed to materialize Coverpage only when the user clicks
+      // "+ add cover image" — so this defaulter is no longer needed AND it
+      // was actively breaking XSD validation on every blank/freshly-opened
+      // document. Same logic applies for any future field that's only XSD-
+      // valid when populated: prefer letting the form leave it absent.
       normalizeAuthors(info.Authors);
       normalizeAuthors(info.Translators);
     }
@@ -173,6 +183,20 @@
       if (synced) fb = synced;
     }
     prevView = view;
+  }
+
+  // While ANY internal divider (outline resizer, validation-panel resizer)
+  // is being dragged, set body.resizing so the heavy contenteditable + XML
+  // pane drop out of layout via the global CSS rule. window.resize events
+  // DO NOT fire when the user drags a divider — the OS window stays the
+  // same size; only an internal grid-column width changes — so the
+  // onWindowResize debounce path below never catches these. This reactive
+  // mirror catches them at the source: draggingOutline/draggingPanel are
+  // set in startDrag* and cleared in endDrag* on actual pointerdown/up,
+  // which is as close to "while mouse is held" as the browser can give us.
+  $: if (typeof document !== "undefined") {
+    const dragging = draggingOutline || draggingPanel;
+    document.body.classList.toggle("resizing", dragging);
   }
 
 
@@ -643,9 +667,38 @@
     }
   }
 
+  // Live window-resize damping. With a 7 000-line book in the editor and
+  // the XML source panel open (~7 000 more divs), every continuous resize
+  // event from a window-edge drag triggers a full reflow of both DOM
+  // trees. Even with `content-visibility: auto` containment, on slower
+  // machines this can run 200-500 ms per frame — the resize handle drags
+  // with visible lag and snaps when released.
+  //
+  // Mitigation: detect a resize burst (≥2 events in <120 ms), toggle a
+  // body-level `resizing` class that hides the heavy panes via CSS
+  // `display: none`, then remove the class after 150 ms of resize-event
+  // silence (i.e. after the user releases the window edge). The browser
+  // can repaint a near-empty layout at 60 fps regardless of book size;
+  // the brief "blink" of hidden content during drag is the trade-off.
+  // Approximates the user request "resize only when mouse button is
+  // released" — browsers don't expose mouseup on the window chrome,
+  // so debounced silence is the next best proxy.
+  let resizeTimer: number | undefined;
+  function onWindowResize() {
+    if (!document.body.classList.contains("resizing")) {
+      document.body.classList.add("resizing");
+    }
+    if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(() => {
+      document.body.classList.remove("resizing");
+      resizeTimer = undefined;
+    }, 150);
+  }
+
   onMount(() => {
     document.title = "FictionBook Editor (Go)";
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onWindowResize);
     // Route every external <a href> click (editor content, Help, …) through
     // Wails runtime so the webview doesn't navigate away from the editor.
     const detachExternalLinks = installExternalLinkHandler();
@@ -676,8 +729,17 @@
           try { await App.ForceQuit(); } catch { /* app is exiting */ }
         }
       });
+      // File drop: Go's OnFileDrop forwards the first dropped path; we
+      // reuse the existing openFile() flow so the unsaved-changes guard,
+      // status text, and recent-files update all behave identically to
+      // a regular File→Open. Without this listener the drop would be
+      // silently swallowed (WebView drop is disabled in main.go).
+      const offDrop = rt.EventsOn("app:file-drop", (path: string) => {
+        if (typeof path === "string" && path) void openFile(path);
+      });
       if (typeof offCheck === "function") detachListeners.push(offCheck);
       if (typeof offSave === "function") detachListeners.push(offSave);
+      if (typeof offDrop === "function") detachListeners.push(offDrop);
     })();
 
     // Live-follow OS color-scheme changes while theme === "system".
@@ -766,6 +828,8 @@
     })();
     return () => {
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onWindowResize);
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       mq.removeEventListener("change", onSystemChange);
       detachExternalLinks();
       window.clearTimeout(updateTimer);
@@ -935,6 +999,28 @@
 <BinaryManagerDialog bind:open={showBinaries} bind:fb view={editorView} />
 
 <style>
+  /* Resize-burst damping (see onWindowResize + the dragging reactive
+     mirror in <script>). When EITHER the user drags a window edge OR
+     drags an internal divider (outline / validation-panel resizer),
+     `body.resizing` is on. We hide the heavy contenteditable + XML
+     pane via `display: none` so neither participates in the layout
+     reflow — the browser can repaint a near-empty layout at 60 fps
+     regardless of book size. The class clears on pointerup
+     (internal-divider case) or 150 ms after the last window.resize
+     event (window-edge case). The brief blink during drag is the
+     trade-off for a non-laggy handle.
+
+     Selector form: a single `:global(body.resizing .X)` rather than
+     `:global(body.resizing) :global(.X)` — Svelte 4 only emits a
+     descendant combinator when both ends are inside the SAME
+     `:global()` modifier. The two-modifier form silently scopes the
+     `.X` part to the component, which then never matches the
+     globally-mounted ProseMirror / XML-line divs. */
+  :global(body.resizing .ProseMirror),
+  :global(body.resizing .xml) {
+    display: none !important;
+  }
+
   /* Theme palette. Applied via [data-theme="light|dark"] on <html>; the
      default (no attribute) also resolves to light so server-rendered
      previews look right. Components reference these vars; hard-coded
