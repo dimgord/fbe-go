@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
@@ -48,6 +49,26 @@ func main() {
 		OnStartup:     app.OnStartup,
 		OnShutdown:    app.OnShutdown,
 		OnBeforeClose: app.OnBeforeClose,
+		// Empty Mac block is load-bearing: when `Mac` is nil, Wails v2.12's
+		// darwin/window.go leaves `zoomable` at C-int zero and
+		// WailsContext.m disables the green NSWindowZoomButton via
+		// `setEnabled:NO` (see lines 199-202). With a non-nil Mac block,
+		// `zoomable = !Mac.DisableZoom` evaluates to true and the
+		// fullscreen/zoom button works as the user expects on macOS.
+		Mac: &mac.Options{},
+		// File drop: without this block, dragging a .fb2 onto the window
+		// hits the default WebKit drop handler — which navigates the
+		// webview to the dropped file's URI and renders the XML as a
+		// wall of plain text inside the editor chrome (bug screenshot
+		// 2026-05-20). Disabling the WebView drop blocks that path and
+		// EnableFileDrop=true routes the drop through Wails' OnFileDrop
+		// callback, registered in app.OnStartup. CSS hooks (drop-target
+		// property/value) keep their defaults — we don't surface a
+		// drop-zone visual yet.
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop:     true,
+			DisableWebViewDrop: true,
+		},
 		Bind: []interface{}{
 			app,
 		},
