@@ -4,13 +4,29 @@
   export let cover: Coverpage | null | undefined;
   export let availableIDs: string[] = []; // IDs of binaries (images) available in the document.
 
-  $: if (!cover) cover = { Images: [] };
+  // Do NOT auto-init `cover = { Images: [] }` on mount: with `bind:cover`
+  // that would write a non-nil empty Coverpage back into info.Coverpage
+  // (e.g. SrcTitleInfo.Coverpage) just because the user clicked the
+  // src-title tab once — even if they never touched anything. On save,
+  // writer.go would emit `<coverpage></coverpage>` inside <src-title-info>,
+  // and libxml2 reports it as "Element coverpage: Missing child element(s).
+  // Expected is ( image )." with the line number of an UNRELATED non-empty
+  // coverpage (libxml2 doesn't always pinpoint the empty one).
+  //
+  // Instead, materialize `cover` only when the user explicitly hits
+  // "+ add cover image". The {#if cover} guard below renders nothing
+  // when cover is nullish — clean fall-through, no ghost element.
 
   function add() {
-    cover!.Images = [...cover!.Images, { Href: "" }];
+    if (!cover) cover = { Images: [] };
+    cover.Images = [...cover.Images, { Href: "" }];
   }
   function remove(i: number) {
-    cover!.Images = cover!.Images.filter((_, idx) => idx !== i);
+    if (!cover) return;
+    cover.Images = cover.Images.filter((_, idx) => idx !== i);
+    // If the last image was removed, collapse back to nullish so the
+    // writer omits the element entirely (matches "absent" source semantics).
+    if (cover.Images.length === 0) cover = null;
   }
 </script>
 

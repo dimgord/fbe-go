@@ -131,6 +131,10 @@ wails build    # production bundle
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — every FB2 editing operation from original FBE + its ProseMirror equivalent
 - [`docs/PHASES.md`](docs/PHASES.md) — implementation phases and estimates
 
+## Related projects
+
+- **[sopds-go](https://github.com/dimgord/sopds-go)** — self-hosted OPDS catalog server. Same author, same FB2 ecosystem, complementary role: fbe-go *edits* books; sopds-go *serves* them. PostgreSQL-backed library scanner with FB2 → EPUB/MOBI conversion and optional GPU-accelerated TTS. Edit metadata in fbe-go, then point sopds-go at the directory and read them on any OPDS-capable e-reader app (Moon+ Reader, FBReader, Calibre).
+
 ## License
 
 Released under the **MIT License** — see [LICENSE](LICENSE) for the full

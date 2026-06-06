@@ -219,6 +219,18 @@
     padding: 0 0.25rem;
     white-space: pre;
     line-height: 1.35;
+    /* The XML pane is non-virtualized — every line of the source is
+       rendered as its own grid div. A typical FB2 (Облачный атлас) has
+       7 000+ lines, and without these hints the browser reflows all of
+       them on every mousemove of the window resize handle. The actual
+       cost dwarfs the editor's contenteditable reflow.
+         - `content-visibility: auto` skips layout/paint for off-screen
+           lines until they scroll into view.
+         - `contain-intrinsic-size: auto 1.35em` reserves the right
+           placeholder height so the scrollbar geometry stays correct
+           without actually doing layout. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 1.35em;
   }
   .xml-line .ln {
     color: var(--fg-muted-soft);

@@ -831,11 +831,56 @@ func (l Link) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 }
 
 // Image — block or inline; distinguished by position in the tree.
+//
+// Href uses `xml:"-"` + a manually-emitted `l:href` literal in MarshalXML
+// for the same reason as Link (see the comment above the Link type):
+// `xml:"http://…/xlink href,attr"` makes Go's encoding/xml re-declare
+// `xmlns:xlink="http://…/xlink"` on every <image> with its own auto-
+// generated `xlink:` prefix instead of reusing the `xmlns:l` declared
+// once on the FictionBook root. The xlink redeclaration on a child of
+// <coverpage> trips libxml2's XSD content-model matcher and produces
+// the misleading "coverpage: Missing child element(s). Expected is
+// ( image )" error — the <image> IS there but the validator can't
+// reconcile the namespace-prefix collision. UnmarshalXML still accepts
+// `l:href`, `xlink:href`, bare `href`, or NSXLink-namespaced variants.
 type Image struct {
-	Href  string `xml:"http://www.w3.org/1999/xlink href,attr"`
+	Href  string `xml:"-"`
 	Alt   string `xml:"alt,attr,omitempty"`
 	Title string `xml:"title,attr,omitempty"`
 	ID    string `xml:"id,attr,omitempty"`
+}
+
+// UnmarshalXML reads xlink:href (or l:href / bare href) and other attrs.
+// Empty-element (no children) — Skip drains the End token.
+func (i *Image) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	for _, a := range start.Attr {
+		switch {
+		case a.Name.Local == "href" && (a.Name.Space == NSXLink || a.Name.Space == ""):
+			i.Href = a.Value
+		case a.Name.Local == "alt":
+			i.Alt = a.Value
+		case a.Name.Local == "title":
+			i.Title = a.Value
+		case a.Name.Local == "id":
+			i.ID = a.Value
+		}
+	}
+	return d.Skip()
+}
+
+// MarshalXML emits `<image l:href="…" .../>` using a literal `l:href`
+// attribute local-name so Go doesn't redeclare xmlns:xlink.
+func (i Image) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if i.Href != "" {
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "l:href"}, Value: i.Href})
+	}
+	addAttrIfSet(&start, "alt", i.Alt)
+	addAttrIfSet(&start, "title", i.Title)
+	addAttrIfSet(&start, "id", i.ID)
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	return e.EncodeToken(start.End())
 }
 
 // Table — FB2 <table> with rows.

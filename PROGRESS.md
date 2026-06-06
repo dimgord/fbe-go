@@ -6,6 +6,254 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 90 — 2026-05-20 — security: vitest 2 → 4 (deps) → v1.0.4 [dev]
+
+GitHub Dependabot flagged 6 open advisories on the fbe-go default branch
+after Rev 89 push. Analysis:
+
+| Alert | Sev | Pkg | Range | Real risk to fbe-go | Action |
+|---|---|---|---|---|---|
+| #16 / #17 | critical | `vitest` | <4.1.0 | Nil. CVE-2026-47429 requires Vitest UI server with `--api.host` (non-localhost) OR Windows host. We use `vitest run` only on macOS/Linux. Dev-dep, never in shipped binary. | Bump to `^4.1.0` (resolves 4.1.8) |
+| #12 / #13 | medium | `svelte` | <= 5.55.6 | Nil. Advisory GHSA-pr6f-5x2q-rwfp targets Svelte 5.x SSR + hydration code paths absent from 4.x. fbe-go pins `^4.2.19` and is a Wails desktop app — client-only mount, no SSR. | Dismissed as `not_used` |
+| #14 / #15 | medium | `svelte` | <= 5.55.6 | Nil. DOM-clobbering variant of the same Svelte 5 SSR vulnerability. Same reasoning. | Dismissed as `not_used` |
+
+Even though the actual exposure is zero in all six cases, the Vitest
+bump is cheap (dev-only, 80/80 tests still green) and removes the
+"critical" red mark from the repo's security tab. The four Svelte
+alerts are formal false-positives — semver range `<= 5.55.6`
+technically matches 4.x but the vulnerable code is post-Svelte-5
+SSR. Dismissal carries a per-alert comment explaining the reasoning
+for any future maintainer.
+
+Closed Dependabot PR #10 (`dependabot/npm_and_yarn/frontend/vitest-4.1.0`)
+in favour of this manual bump. PRs #8 (Go mods minor patch) and #9
+(prosemirror-model minor) are routine non-security and stay open for
+independent consideration.
+
+### Verification
+
+- `npm run test` → 6 test files, 80 tests, 0 failures (vitest 4.1.8 confirmed).
+- New `npm audit` flags moderate-only dev-server warnings on `esbuild`/`vite`
+  (transitive via vitest 4), which describe a cross-origin dev-server
+  request issue that does not apply to a Wails-bundled desktop app —
+  no production-server exposure.
+
+### Files Modified
+
+- `frontend/package.json` — `vitest: ^2.0.5 → ^4.1.0`.
+- `frontend/package-lock.json` — regenerated.
+- `version.go` / `wails.json` / `frontend/package.json` — `1.0.3 → 1.0.4`.
+
+---
+
+## Rev 89 — 2026-05-20 — drag-n-drop + macOS maximize + XSD coverpage + resize → v1.0.3 [dev]
+
+Five separate bugs surfaced in one session of real-world use against
+Облачный атлас (~7000-line FB2) and a fresh blank document. Fixed and
+verified end-to-end:
+
+### 1. Drag-and-drop renders FB2 as raw text wall
+
+**Symptom:** dragging a `.fb2` from Finder onto the editor window painted
+the entire XML source as continuous plain text inside the webview
+chrome, replacing the editor UI.
+
+**Root cause:** `main.go` had no `DragAndDrop` block in the Wails
+`options.App`. Without it, Wails leaves WebKit's default drop handler
+in place — WebKit treats the dropped file as a navigation target and
+renders its bytes inline as text. Wails v2.12's drag-and-drop options
+gate two flags:
+  - `EnableFileDrop = true` — route the drop through Wails' runtime
+    `OnFileDrop` callback (registered in `app.OnStartup`) instead of
+    swallowing it.
+  - `DisableWebViewDrop = true` — kill the default WebKit drop
+    behaviour so the wall-of-text path is shut entirely.
+
+**Fix:**
+- `main.go` — added `DragAndDrop: &options.DragAndDrop{EnableFileDrop: true, DisableWebViewDrop: true}`.
+- `app.go::OnStartup` — `wailsrt.OnFileDrop(ctx, ...)` forwards the
+  first dropped path as a `"app:file-drop"` event (single-document
+  app, multi-file drops fold to `paths[0]`).
+- `frontend/src/App.svelte` — `rt.EventsOn("app:file-drop", path => openFile(path))`
+  reuses the existing `openFile(preset?)` flow → unsaved-changes guard,
+  status text, recent-files update all behave identically to File→Open.
+
+### 2. Drag-and-drop of `.fb2.zip` errored "illegal character U+0003"
+
+**Symptom:** after fix #1, dropping a `.fb2.zip` failed with
+`fb2 parse: XML syntax error on line 1: illegal character code U+0003`.
+U+0003 = `\x03` of the zip local-file-header magic `PK\x03\x04`.
+
+**Root cause:** `app.OpenFile` called `parser.Parse(f)` directly, with
+no zip-magic detection. The Open File dialog filtered to `*.fb2` so
+the bug was masked there; drag-and-drop accepts whatever the user
+drops, including archives. CLI (`cmd/fbe`) already wraps with
+`zipfb2.Unpack` — the GUI path had never been updated.
+
+**Fix:** `app.go::OpenFile` peeks the first 4 bytes; on `PK\x03\x04`
+it routes through `zip.NewReader` + `zipfb2.Unpack` before
+`parser.Parse`; otherwise it rewinds and parses as raw XML. Symmetric
+with the CLI behaviour.
+
+### 3. macOS green-maximize button disabled
+
+**Symptom:** the green "zoom/fullscreen" traffic-light button was
+visually disabled — clicking it did nothing.
+
+**Root cause:** `main.go` had no `Mac:` block in `options.App`. Wails
+v2.12's `darwin/window.go:116` sets `zoomable = !Mac.DisableZoom` only
+when `Mac != nil`; with nil, `zoomable` stays at C-int zero, and
+`WailsContext.m:199-202` reacts to `!zoomable && resizable` by calling
+`setEnabled:NO` on `NSWindowZoomButton`. The nil-Mac fast path
+silently disables the button.
+
+**Fix:** `main.go` — added empty `Mac: &mac.Options{}` block. Empty is
+load-bearing: `DisableZoom` defaults to false, so `zoomable=true`, and
+the system button works as the user expects.
+
+### 4. XSD: "coverpage: Missing child element(s). Expected is ( image )."
+
+**Symptom:** validating ANY freshly-opened document (sample blank,
+Mitchell's "Облачный атлас", etc.) reported one XSD error at the
+line of the populated `<coverpage>`, claiming the `<image>` child was
+missing — even though the source clearly showed `<image l:href="…"/>`
+there. The error appeared without any user interaction beyond clicking
+Validate.
+
+**Root cause — TWO layers:**
+
+A. **Writer-side (`internal/fb2/doc/doc.go::Image`).** The `Href` field
+   used `xml:"http://www.w3.org/1999/xlink href,attr"`, triggering Go's
+   `encoding/xml` to redeclare `xmlns:xlink="…"` on every `<image>`
+   element with its own auto-generated `xlink:` prefix, instead of
+   reusing the `xmlns:l` prefix declared once on the FictionBook root.
+   libxml2's XSD content-model matcher got confused by the prefix
+   collision on a child of `<coverpage>` and reported the misleading
+   "missing image" error. (Same trap the `Link` type was already
+   defended against — the existing Link comment block was the
+   smoking-gun precedent.)
+
+   **Fix:** Image gets the same defense as Link — `Href` changes to
+   `xml:"-"` plus a custom `MarshalXML` that emits `l:href` as a
+   literal local-name attribute (colon included, namespace bypassed)
+   and `UnmarshalXML` that accepts `l:href` / `xlink:href` / bare
+   `href` / namespace-resolved variants. Verified: writer output now
+   round-trips through libxml2 with 0 XSD errors for both the broken
+   "Облачный атлас" and the working "Невеличка драма".
+
+B. **Frontend-side defaulter (`App.svelte::normalizeFb`).** The REAL
+   reason every document still failed after the writer fix: on
+   `captureCleanSnapshot()` — which fires immediately after the
+   bundled SAMPLE_BOOK loads, before the user touches anything —
+   `normalizeFb` was injecting `info.Coverpage = { Images: [] }` for
+   both TitleInfo and SrcTitleInfo. That non-nil empty object reached
+   Go as `&Coverpage{Images: nil}`, which the writer faithfully emitted
+   as `<coverpage></coverpage>`. libxml2 then correctly flagged the
+   empty element as "missing image" — but located the message line at
+   an UNRELATED non-empty coverpage further up the document, which
+   sent the investigation chasing the wrong tree.
+
+   This was the "looking under the streetlight" miss: I went deep on
+   Image's namespace handling and only found the second layer after
+   user feedback pushed me to question the events flow itself.
+
+   **Fix:** `App.svelte::normalizeFb` no longer injects an empty
+   Coverpage. `CoverpageField.svelte` similarly drops its mount-time
+   `$: if (!cover) cover = { Images: [] }` reactive — `cover` is
+   materialized only inside `add()` when the user explicitly clicks
+   "+ add cover image", and collapses back to `null` when the last
+   image is removed (matching "absent" source semantics).
+
+C. **Defense-in-depth (`app.go::UpdateDocument`).** Added a server-side
+   `normalizeFictionBook` scrub: if either TitleInfo or SrcTitleInfo
+   arrives with a non-nil Coverpage whose Images slice is empty, the
+   pointer is nil'd before storage. Catches any future frontend
+   regression before it can reach disk.
+
+### 5. Window/divider resize lag on large books → 60 fps
+
+**Symptom:** with "Облачный атлас" open and the validation pane visible,
+dragging the window edge OR any internal divider (outline / validation-
+panel) made the content reflow lag visibly (~500 ms per frame).
+
+**Root cause — TWO independent layout pressures:**
+
+  - **Editor side.** ~3000 PM block elements all contenteditable.
+    Without containment, every mousemove reflows all of them.
+  - **XML pane side.** Non-virtualized: every line of the source XML
+    renders as its own grid `<div class="xml-line">`. 7000+ lines for
+    a typical book — the real bottleneck on resize, dwarfing the
+    editor.
+
+**Fix — three layers:**
+
+A. **Containment hints** (cheap base layer):
+   - `Editor.svelte` — `:global(.ProseMirror div.section)` gets
+     `contain: layout style; content-visibility: auto; contain-intrinsic-size: auto 600px`.
+     Off-screen sections skip render entirely.
+   - `Editor.svelte` — `div.poem|table|cite|epigraph|annotation` get
+     `contain: layout style`.
+   - `ValidationPanel.svelte` — `.xml-line` gets
+     `content-visibility: auto; contain-intrinsic-size: auto 1.35em`.
+     Off-screen XML lines skip render.
+
+B. **Drag-burst damping** (real win): during a drag burst, body has
+   class `resizing`. CSS rule
+   `:global(body.resizing .ProseMirror), :global(body.resizing .xml) { display: none !important }`
+   removes the heavy panes from the layout tree entirely so the
+   browser can repaint the chrome at 60 fps regardless of book size.
+   The class is toggled by TWO paths because the events differ by
+   resize source:
+     - Window-edge resize → `window.addEventListener("resize", ...)`
+       debounced (`add` on first event, `remove` 150 ms after last —
+       proxy for mouseup, since the browser doesn't see mouseup on
+       window chrome).
+     - Internal divider resize → reactive mirror of
+       `draggingOutline || draggingPanel`. These are set by the
+       existing `pointerdown` / `pointerup` handlers on the divider
+       elements — exact mouseup detection, no debounce needed.
+     This was the "events are wrong" turning point: user feedback
+     correctly identified that `window.resize` doesn't fire for
+     internal-divider drags (window stays the same size; only an
+     internal grid-column changes) — the reactive mirror on the
+     existing dragging state catches them at the source.
+
+C. **CSS selector form correction.** Initially used
+   `:global(body.resizing) :global(.ProseMirror)` — Svelte 4 emits a
+   descendant combinator only when both ends live inside the same
+   `:global()` modifier. The two-modifier form silently scoped the
+   `.X` half to the component, which never matches the globally-
+   mounted ProseMirror / XML-line divs. Folded both sides into a
+   single `:global(body.resizing .X)` and added `!important` for
+   resilience against future stacking conflicts.
+
+### Files modified
+
+- `main.go` — Wails Mac + DragAndDrop blocks.
+- `app.go` — OnFileDrop registration, zip auto-detect in OpenFile,
+  normalizeFictionBook defense in UpdateDocument.
+- `internal/fb2/doc/doc.go` — Image gets MarshalXML/UnmarshalXML
+  paralleling Link.
+- `frontend/src/App.svelte` — file-drop listener, normalizeFb scrub,
+  drag-state → body.resizing reactive, window-resize debounce,
+  global CSS rule.
+- `frontend/src/description/CoverpageField.svelte` — drop mount-time
+  auto-init, lazy-materialize in add(), collapse to null on last
+  remove.
+- `frontend/src/editor/Editor.svelte` — content-visibility on
+  div.section, contain: layout style on poem/table/cite/epigraph/
+  annotation.
+- `frontend/src/validation/ValidationPanel.svelte` —
+  content-visibility on .xml-line.
+
+### Version
+
+- `version.go` — `Version = "1.0.3"`
+- `wails.json::info.productVersion` — `"1.0.3"`
+- `frontend/package.json::version` — `"1.0.3"`
+
+---
+
 ## Rev 88 — 2026-04-29 — unsaved-changes guard → v1.0.2 [dev → main]
 
 Surfaced during the pre-announcement audit of the original FBE
