@@ -6,6 +6,46 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 90 — 2026-05-20 — security: vitest 2 → 4 (deps) → v1.0.4 [dev]
+
+GitHub Dependabot flagged 6 open advisories on the fbe-go default branch
+after Rev 89 push. Analysis:
+
+| Alert | Sev | Pkg | Range | Real risk to fbe-go | Action |
+|---|---|---|---|---|---|
+| #16 / #17 | critical | `vitest` | <4.1.0 | Nil. CVE-2026-47429 requires Vitest UI server with `--api.host` (non-localhost) OR Windows host. We use `vitest run` only on macOS/Linux. Dev-dep, never in shipped binary. | Bump to `^4.1.0` (resolves 4.1.8) |
+| #12 / #13 | medium | `svelte` | <= 5.55.6 | Nil. Advisory GHSA-pr6f-5x2q-rwfp targets Svelte 5.x SSR + hydration code paths absent from 4.x. fbe-go pins `^4.2.19` and is a Wails desktop app — client-only mount, no SSR. | Dismissed as `not_used` |
+| #14 / #15 | medium | `svelte` | <= 5.55.6 | Nil. DOM-clobbering variant of the same Svelte 5 SSR vulnerability. Same reasoning. | Dismissed as `not_used` |
+
+Even though the actual exposure is zero in all six cases, the Vitest
+bump is cheap (dev-only, 80/80 tests still green) and removes the
+"critical" red mark from the repo's security tab. The four Svelte
+alerts are formal false-positives — semver range `<= 5.55.6`
+technically matches 4.x but the vulnerable code is post-Svelte-5
+SSR. Dismissal carries a per-alert comment explaining the reasoning
+for any future maintainer.
+
+Closed Dependabot PR #10 (`dependabot/npm_and_yarn/frontend/vitest-4.1.0`)
+in favour of this manual bump. PRs #8 (Go mods minor patch) and #9
+(prosemirror-model minor) are routine non-security and stay open for
+independent consideration.
+
+### Verification
+
+- `npm run test` → 6 test files, 80 tests, 0 failures (vitest 4.1.8 confirmed).
+- New `npm audit` flags moderate-only dev-server warnings on `esbuild`/`vite`
+  (transitive via vitest 4), which describe a cross-origin dev-server
+  request issue that does not apply to a Wails-bundled desktop app —
+  no production-server exposure.
+
+### Files Modified
+
+- `frontend/package.json` — `vitest: ^2.0.5 → ^4.1.0`.
+- `frontend/package-lock.json` — regenerated.
+- `version.go` / `wails.json` / `frontend/package.json` — `1.0.3 → 1.0.4`.
+
+---
+
 ## Rev 89 — 2026-05-20 — drag-n-drop + macOS maximize + XSD coverpage + resize → v1.0.3 [dev]
 
 Five separate bugs surfaced in one session of real-world use against

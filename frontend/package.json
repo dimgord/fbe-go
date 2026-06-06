@@ -1,7 +1,7 @@
 {
   "name": "fbe-go-frontend",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -21,7 +21,7 @@
     "tslib": "^2.7.0",
     "typescript": "^5.5.4",
     "vite": "^5.4.6",
-    "vitest": "^2.0.5"
+    "vitest": "^4.1.8"
   },
   "dependencies": {
     "prosemirror-commands": "^1.6.0",
