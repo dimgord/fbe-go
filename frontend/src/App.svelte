@@ -152,6 +152,7 @@
   }
   function isCurrentlyDirty(): boolean {
     if (bodyDirty) return true;
+    if (xmlDirty) return true;
     if (cleanDescSnapshot === null) return false;
     return descSnapshot() !== cleanDescSnapshot;
   }
@@ -199,6 +200,110 @@
     document.body.classList.toggle("resizing", dragging);
   }
 
+
+  // --- XML editing (raw FB2 source pane) ---
+  // editMode is shared between the body-view and description-view
+  // ValidationPanel instances (only one is mounted at a time).
+  // xmlDirty is true while the CM6 editor has unsaved edits — feeds
+  // into isCurrentlyDirty() so Save / Cmd-Q honour it.
+  let xmlEditMode = false;
+  let xmlDirty = false;
+  let xmlApplyError = "";
+  // One-deep Apply undo. Captured pre-Apply so the user can roll back
+  // a single commit if it turns out the parsed FB lost content despite
+  // the data-loss guard. Cleared on next Apply or on panel close.
+  let xmlUndoFb: FictionBook | null = null;
+  let xmlUndoXml = "";
+  function onXmlDirty(e: CustomEvent<{ dirty: boolean }>) {
+    xmlDirty = e.detail.dirty;
+    // Note: NOT clearing xmlApplyError on every keystroke — the user
+    // is actively fixing the typo and needs the error as context.
+    // It clears at the start of the next Apply attempt (success or
+    // failure both reset the message) and on editMode transitions.
+  }
+
+  // editMode-transition mirror. Clears any stale Apply error whenever
+  // the editor opens or closes — covers "Done → Edit XML" re-entry
+  // (where the banner would otherwise show the previous attempt's
+  // error) and Edit XML → Done → ... cycles.
+  let prevXmlEditMode = false;
+  $: if (xmlEditMode !== prevXmlEditMode) {
+    xmlApplyError = "";
+    prevXmlEditMode = xmlEditMode;
+  }
+  /** Close handler for ValidationPanel. Unconditional close — Wails
+   *  WKWebView silently swallows `window.confirm()` returns under
+   *  some configurations, so a prompt-guarded close ended up never
+   *  actually closing (bug-reported as "× doesn't exit"). The
+   *  document state isn't touched by closing the panel — only the
+   *  CM6 working buffer is discarded, which the user can re-open via
+   *  Validate. The global Cmd-Q unsaved-changes guard still catches
+   *  any genuine in-memory FB changes via isCurrentlyDirty(). */
+  function onPanelClose() {
+    showPanel = false;
+    xmlEditMode = false;
+    xmlDirty = false;
+    xmlApplyError = "";
+    xmlUndoFb = null;
+    xmlUndoXml = "";
+  }
+  async function onApplyXml(e: CustomEvent<{ xml: string }>) {
+    xmlApplyError = "";
+    const App = await wailsApp();
+    if (!App) {
+      xmlApplyError = "Wails bindings unavailable";
+      return;
+    }
+    try {
+      // Go-side ParseXMLString now parses + round-trips + checks for
+      // structurally significant element loss. A typo like `<autho>`
+      // instead of `<author>` would have wiped the body silently under
+      // the original parser.Parse; now it throws back here with a
+      // descriptive error and the user's CM6 text is preserved.
+      const parsed = await App.ParseXMLString(e.detail.xml);
+      if (!parsed) throw new Error("parser returned null");
+      // SNAPSHOT for one-deep Apply-undo — captured BEFORE we touch fb
+      // so we can roll back even if the data-loss guard missed
+      // something subtler than a structural drop.
+      xmlUndoFb = fb ? structuredClone(fb) : null;
+      xmlUndoXml = xmlSource;
+      // Wails generates doc.FictionBook structurally identical to our FB.
+      fb = parsed;
+      // @ts-expect-error — Wails-generated type wraps doc.FictionBook with XMLName/convertValues.
+      await App.UpdateDocument(fb);
+      try { xmlSource = await App.SerializeCurrent(); } catch { /* leave as-is */ }
+      try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* leave as-is */ }
+      captureCleanSnapshot();
+      // Explicit re-clear post-success. The clear at the top of this
+      // function happens BEFORE the await chain; if Svelte reactivity
+      // races with the panel's re-render, an explicit set here pins
+      // the empty state once the success path is committed.
+      xmlApplyError = "";
+      status = "XML applied — Undo Apply is available in the panel";
+      setTimeout(() => (status = ""), 5000);
+    } catch (err) {
+      xmlApplyError = (err as Error).message || String(err);
+    }
+  }
+  /** One-deep Apply undo. Restores fb + xmlSource to the snapshot
+   *  taken right before the last successful Apply. Snapshot is cleared
+   *  after Undo so a stale double-undo isn't possible. */
+  async function onUndoApplyXml() {
+    if (!xmlUndoFb) return;
+    fb = xmlUndoFb;
+    xmlSource = xmlUndoXml;
+    xmlUndoFb = null;
+    xmlUndoXml = "";
+    const App = await wailsApp();
+    if (App) {
+      // @ts-expect-error — Wails-generated type wraps doc.FictionBook with XMLName/convertValues.
+      try { await App.UpdateDocument(fb); } catch { /* ignore */ }
+      try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* ignore */ }
+    }
+    captureCleanSnapshot();
+    status = "Apply undone";
+    setTimeout(() => (status = ""), 3000);
+  }
 
   let editor: Editor | undefined = undefined;
   /** Bound to Editor.view so SearchBar (and any other sibling) gets a
@@ -952,8 +1057,15 @@
           {xmlSource}
           errors={validationErrors}
           {initialErrorsHeight}
-          on:close={() => (showPanel = false)}
+          theme={effectiveTheme}
+          applyError={xmlApplyError}
+          canUndoApply={xmlUndoFb !== null}
+          bind:editMode={xmlEditMode}
+          on:close={onPanelClose}
           on:resize={onPanelResize}
+          on:apply={onApplyXml}
+          on:undo-apply={onUndoApplyXml}
+          on:xml-dirty={onXmlDirty}
         />
       {/if}
     </main>
@@ -986,8 +1098,15 @@
           {xmlSource}
           errors={validationErrors}
           {initialErrorsHeight}
-          on:close={() => (showPanel = false)}
+          theme={effectiveTheme}
+          applyError={xmlApplyError}
+          canUndoApply={xmlUndoFb !== null}
+          bind:editMode={xmlEditMode}
+          on:close={onPanelClose}
           on:resize={onPanelResize}
+          on:apply={onApplyXml}
+          on:undo-apply={onUndoApplyXml}
+          on:xml-dirty={onXmlDirty}
         />
       {/if}
     </div>
