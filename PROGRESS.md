@@ -6,6 +6,192 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 91 — 2026-06-07 — Edit XML feature (CodeMirror 6 + safe Apply + Undo) → v1.0.5 [dev]
+
+The XML source pane was read-only since the panel's introduction. Rev 91 turns
+it into a real editable code surface so users can fix individual tags / values
+directly in the canonical FB2 XML without opening an external editor and
+re-importing. The implementation is intentionally conservative on the
+in-memory-FictionBook side: Apply is the only path that mutates `fb`, and Apply
+goes through a strict round-trip-verifier before touching anything.
+
+### 1. CodeMirror 6 editor (new `XmlEditor.svelte`)
+
+Wraps CM6 with `lineNumbers`, `highlightActiveLine`, `foldGutter`, `history`,
+`indentOnInput`, `bracketMatching`, `xml()` language, `oneDark` theme when the
+app is in dark mode, default keymap + history keymap + fold keymap +
+`indentWithTab`, `lineWrapping`, and a `updateListener` that bubbles every
+`docChanged` up through Svelte's `change` event.
+
+Exports: `getXml()` (read full doc), `setDoc(s)` (replace full doc — used after
+Apply normalization round-trip), `gotoLine(n)` (anchor selection, used by the
+clickable error list).
+
+Theme is a `Compartment` so flipping light↔dark reconfigures style without
+losing CM6 history / selection.
+
+Bundle impact: ~150 KB minified added to the production bundle (`vite build`
+reports 729 KB total, 230 KB gzipped — fine for a desktop app, the binary
+embeds frontend/dist once).
+
+### 2. ValidationPanel edit-mode toggle
+
+Title bar gets two button groups:
+
+  - **Read-only mode (default):** "Edit XML…" + ×
+  - **Edit mode:** Apply (active only when CM6 doc differs from baseline,
+    coloured warn-yellow) + Done + ×
+
+The `editMode` flag is `bind:`-exported so the parent (`App.svelte`) can flip
+it for things like the application-side close handler. Reactive sync between
+`xmlSource` (the parent's writer-output string) and the CM6 doc has three
+branches inside a single `$:` block:
+
+  - Enter edit mode (`editMode false→true`): seed CM6 with current xmlSource
+    and capture it as the dirty-tracking baseline.
+  - Exit edit mode (`editMode true→false`): reset working buffer so re-entry
+    starts clean.
+  - External xmlSource refresh while editing (`editMode true & xmlSource
+    !== lastSeen`): typically triggered by a successful Apply → parent
+    re-serializes → new xmlSource. Reflect the writer-normalized form into
+    CM6 via `setDoc` and reset baseline. Without this branch the dirty
+    mark would stay lit forever after Apply because CM6 still showed the
+    pre-normalization text.
+
+Apply STAYS in edit mode by design — the user clicked Apply, not Done. Done is
+the explicit "I'm finished" exit.
+
+### 3. Data-loss guard in `app.go::ParseXMLString` (critical)
+
+The first version of Apply hit a serious bug on the very first real test: a
+user removed `r` from `<author>`, clicked Apply, and lost the entire body. Root
+cause: `parser.Parse` is lenient on purpose — the lossless `Raw` invariant
+captures unknown elements verbatim so existing well-formed FB2 files round-trip
+faithfully. But a malformed input (e.g. `<autho>` with the close tag still
+spelled `</author>`) sends Go's `encoding/xml::d.Skip()` looking for the
+matching close, which it never finds, so Skip greedy-eats the entire rest of
+the document including `<body>`.
+
+Fix: `ParseXMLString` now parses + immediately round-trips through `writer.Write`
++ runs `dataLossMessage` to compare structurally significant element-opening
+counts (`book-title`, `author`, `body`, `section`, `p`, `binary`, `image`,
+`coverpage`, etc. — 23 tags) between input and round-trip output. If any
+significant element count dropped, Apply is rejected with a focused message:
+
+  - First pass: scan the input through `xsd.FindUnknownElements`. If any
+    unknown FB2 element name appears (which is what a typo'd opening tag
+    looks like), the rejection message names that element and its line
+    number — usually the root cause of every downstream "missing" element.
+    Format: `Unknown element <autho> at line 6 — likely a typo. Check that
+    tag and try Apply again.`
+  - Fallback: when no unknown tag is present (e.g. mismatched but
+    spell-correct close), report only the topmost-in-hierarchy element
+    that was dropped — not the full cascade. Listing every consequence
+    obscures the fix site.
+
+The user's CM6 text is preserved on rejection so they can fix and retry.
+
+### 4. One-deep Apply Undo
+
+Even with the round-trip guard, a malformed-but-still-equicount Apply could
+theoretically slip through. Plus the user explicitly asked for "no undo
+either" coverage. So: just before Apply commits the parsed FB,
+`onApplyXml` snapshots the current fb via `structuredClone` into
+`xmlUndoFb` + saves the pre-Apply `xmlSource` into `xmlUndoXml`. The panel
+gets a green "Undo Apply" banner above the editor when this snapshot is
+non-null; clicking it restores both. One-deep only — the snapshot is
+cleared by the next Apply or by panel close, to prevent stale double-undo.
+
+### 5. UX fixes from real-world test
+
+  - Banner positioning. Apply-error originally surfaced via the App-level
+    global `error` span in the header, which wrapped multi-line over the
+    toolbar and was unreadable. Now lives inside the panel itself as a
+    dedicated red banner above the CM6 editor. The panel's grid had to
+    grow a `.edit-mode-wrap` flex column so three direct children
+    (apply-error, undo-banner, XmlEditor) don't all consume implicit grid
+    rows.
+  - Error message verbosity. First version of `dataLossMessage` dumped
+    every tag count diff — wall of text. Replaced with the focused
+    "Unknown element <X> at line N" path (root cause) and a single-element
+    fallback for the rare no-unknown case.
+  - Done / × not exiting. `window.confirm()` is silently swallowed by
+    Wails' WKWebView under some build configurations — pressing Done or
+    × ended up never actually closing because the confirm appeared to
+    return falsy. Removed the prompt; Done / × now exit unconditionally.
+    Trade-off: unapplied CM6 edits are dropped silently. Acceptable
+    because (a) the in-memory FictionBook is untouched (no Apply ran)
+    and (b) the global Cmd-Q guard still catches genuine fb changes via
+    `isCurrentlyDirty()`.
+  - Stale error after fix + re-entry. After an Apply error → manual fix →
+    Apply success, the banner stayed showing. And after Done → Edit XML,
+    the error reappeared. Two clearing paths added: a `prevXmlEditMode`
+    reactive mirror clears `xmlApplyError` on every editMode flip; an
+    explicit re-clear at the end of Apply's success path (in addition to
+    the top-of-function clear) wins against any Svelte reactivity race
+    with the panel re-render.
+  - Earlier iteration cleared on every keystroke. User pushback: the
+    error message is needed AS CONTEXT while typing the fix; wiping it
+    at the first keystroke removes the reference text. Reverted —
+    error stays until the next Apply attempt or editMode transition.
+
+### 6. Apply / Save coupling
+
+`xmlDirty` (set from the panel's `xml-dirty` event) joins `bodyDirty` and the
+description-snapshot check in `isCurrentlyDirty()`. Cmd-Q now warns if the
+CM6 editor has unapplied edits AND the user still wants to quit — but only
+through the global unsaved-changes guard, not the panel's local Done/× buttons
+(which intentionally bypass the prompt for the Wails-confirm-swallowing reason
+above). The trade-off is documented in the comment block on `doneEdit` and
+`onPanelClose`.
+
+### Files modified
+
+- `app.go` — new `ParseXMLString` with round-trip + data-loss guard;
+  `dataLossMessage` / `compareElementCounts` / `countOpen` /
+  `unknownNameRE` helpers; `regexp` import; `archive/zip` + `zipfb2`
+  imports already pulled in for the OnFileDrop zip auto-detect.
+- `frontend/src/App.svelte` — `onApplyXml` (parse → snapshot → commit →
+  re-serialize → re-validate); `onUndoApplyXml`; `onXmlDirty`;
+  `onPanelClose`; `prevXmlEditMode` reactive mirror; new state vars
+  `xmlEditMode`, `xmlDirty`, `xmlApplyError`, `xmlUndoFb`, `xmlUndoXml`;
+  `isCurrentlyDirty()` now includes `xmlDirty`. Two `<ValidationPanel>`
+  call-sites updated with the new props (`theme`, `applyError`,
+  `canUndoApply`) and event handlers (`apply`, `undo-apply`,
+  `xml-dirty`).
+- `frontend/src/validation/XmlEditor.svelte` — new file; raw CM6 wrapper.
+- `frontend/src/validation/ValidationPanel.svelte` — `editMode` toggle
+  (bind:exported); Apply / Done buttons; apply-error banner + undo banner;
+  `.edit-mode-wrap` flex column for layout; reactive xmlSource-watcher
+  to refresh CM6 doc post-Apply; `theme` / `applyError` / `canUndoApply`
+  props.
+- `frontend/package.json` + `frontend/package-lock.json` — added
+  `codemirror`, `@codemirror/lang-xml`, `@codemirror/state`,
+  `@codemirror/view`, `@codemirror/commands`, `@codemirror/language`,
+  `@codemirror/theme-one-dark`.
+
+### Verification
+
+- `go build ./...` ✓
+- `go test ./...` ✓
+- Ad-hoc `TestParseXMLStringMessage` confirms typo `<autho>` is rejected
+  with `Unknown element <autho> at line 6 — likely a typo. Check that
+  tag and try Apply again.`
+- `svelte-check` 0 errors, 0 warnings
+- `vitest run` 80/80 pass
+- `vite build` ✓ (frontend bundle 729 KB / 230 KB gzip)
+
+### Future iterations (out of scope for Rev 91)
+
+- Inline XSD error decorations in CM6 (red squiggles + tooltips) wired
+  to the existing libxml2 validation output.
+- Auto-completion for FB2 element / attribute names via CM6's
+  `autocompletion`.
+- Cmd-Enter keybinding for Apply (currently mouse-only).
+- Multi-step Apply Undo / Redo if user demand warrants.
+
+---
+
 ## Rev 90 — 2026-05-20 — security: vitest 2 → 4 (deps) → v1.0.4 [dev]
 
 GitHub Dependabot flagged 6 open advisories on the fbe-go default branch

@@ -16,6 +16,7 @@ import (
 	"log"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -681,6 +682,156 @@ func (a *App) RemoveFromRecent(path string) error {
 	}
 	s.RecentFiles = out
 	return settings.Save(s)
+}
+
+// ParseXMLString parses an FB2 XML string (no zip support — that path
+// lives in OpenFile) and returns the parsed doc.FictionBook for the
+// frontend to validate before committing as the live document.
+//
+// Frontend's "Edit XML" feature uses this to confirm that user-edited
+// raw XML round-trips through the parser before mutating the in-memory
+// fb. On parse failure the JS-side keeps the user's text in the editor
+// and surfaces the error inline; on success the caller follows up with
+// UpdateDocument to swap a.current.
+//
+// `defer recover()` mirrors OpenFile — a malformed doc should surface
+// as a JS-side error, not a webview crash.
+//
+// Data-loss guard (critical): `parser.Parse` is lenient on purpose —
+// the Raw fallback (see `doc.Block.UnmarshalXML`) captures unknown
+// elements verbatim so existing well-formed FB2s round-trip losslessly.
+// But a user typo in the XML editor (e.g. `<autho>` instead of `<author>`)
+// is malformed: Go's encoding/xml `d.Skip()` reads tokens looking for the
+// matching close tag, doesn't find `</autho>`, and ends up greedy-eating
+// the rest of the document including the `<body>`. parser.Parse returns
+// no error in that case — just an FB struct that silently lost
+// everything past the typo. To prevent Apply from destroying content,
+// we round-trip the parsed FB through the writer and compare structural
+// tag counts (book-title, author, body, section, p, binary, etc.)
+// against the input. Any drop in a significant element is reported as
+// a parse error so the user keeps editing in CM6 instead of committing
+// a destructive change.
+func (a *App) ParseXMLString(xmlStr string) (fb *doc.FictionBook, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fb = nil
+			err = fmt.Errorf("ParseXMLString panic: %v", r)
+		}
+	}()
+	fb, err = parser.Parse(strings.NewReader(xmlStr))
+	if err != nil {
+		return nil, err
+	}
+	var rt bytes.Buffer
+	if werr := writer.Write(&rt, fb); werr != nil {
+		// Writer failure on a freshly-parsed doc means we'd produce a
+		// non-saveable round-trip. Treat as parse failure for the
+		// purpose of Apply.
+		return nil, fmt.Errorf("round-trip serialize: %w", werr)
+	}
+	if msg := dataLossMessage(xmlStr, rt.String()); msg != "" {
+		return nil, fmt.Errorf("%s", msg)
+	}
+	return fb, nil
+}
+
+// unknownNameRE pulls the bare element name out of xsd's "Unknown FB2
+// element 'NAME' — ..." message format. Used by dataLossMessage to
+// reformat the message for the Apply-reject context.
+var unknownNameRE = regexp.MustCompile(`Unknown FB2 element '([^']+)'`)
+
+// dataLossMessage compares structurally significant FB2 element
+// openings between the user-provided `in` and the writer's round-trip
+// output `rt`, and returns ONE focused, actionable error string — or
+// "" if no loss.
+//
+// Strategy:
+//
+//  1. Scan `in` for unknown FB2 element names via xsd.FindUnknownElements.
+//     If any unknown tag appears (e.g. `<autho>` from a typo'd `<author>`),
+//     return a message that names the first one and its line number.
+//     This is the root cause in the vast majority of editor typos — every
+//     "missing element" downstream is just a cascading consequence.
+//
+//  2. Only when no unknown tag is found, fall back to lost-element count.
+//     Then report just the FIRST (and topmost-in-hierarchy) element that
+//     dropped, not the full cascade. Mentioning every consequence makes
+//     the message a wall of text that obscures the actual fix site.
+//
+// The caller (frontend Apply handler) keeps the user's CM6 text intact
+// on error, so a focused single-issue message lets them jump to the
+// problem and re-Apply.
+func dataLossMessage(in, rt string) string {
+	if unks := xsd.FindUnknownElements([]byte(in)); len(unks) > 0 {
+		u := unks[0]
+		// Extract the bare element name from xsd's message
+		// ("Unknown FB2 element 'NAME' — …"). Its trailing
+		// "Preserved verbatim on save" is wrong in the Apply-reject
+		// context — we're rejecting, not saving. Build a focused
+		// message that names the typo and its location.
+		name := unknownNameRE.FindStringSubmatch(u.Message)
+		bare := ""
+		if len(name) >= 2 {
+			bare = name[1]
+		}
+		if bare != "" {
+			return fmt.Sprintf(
+				"Unknown element <%s> at line %d — likely a typo. Check that tag and try Apply again.",
+				bare, u.Line,
+			)
+		}
+		// Fallback if the message format ever changes.
+		return fmt.Sprintf("Unknown element at line %d — likely a typo.", u.Line)
+	}
+	// Topmost-first ordering — a missing <body> is the root cause when
+	// everything below it also goes missing.
+	hierarchical := []string{
+		"FictionBook", "description", "title-info", "src-title-info",
+		"document-info", "publish-info", "body",
+		"author", "coverpage", "annotation",
+		"section", "epigraph", "cite", "poem", "stanza",
+		"table", "tr", "td", "th",
+		"p", "v", "image", "binary",
+	}
+	for _, name := range hierarchical {
+		inC := countOpen(in, name)
+		rtC := countOpen(rt, name)
+		if rtC < inC {
+			return fmt.Sprintf(
+				"after parse, <%s> count dropped from %d to %d. The most likely cause is a structural error (mismatched tags, missing close). Fix and try Apply again",
+				name, inC, rtC,
+			)
+		}
+	}
+	return ""
+}
+
+// countOpen counts `<NAME` occurrences where the byte right after the
+// name is a non-name char (space, `>`, `/`, newline, tab). Misses
+// nothing valid; over-counts only if the same prefix appears verbatim
+// inside a CDATA / comment — acceptable for a typo-detection heuristic.
+func countOpen(s, name string) int {
+	needle := "<" + name
+	count := 0
+	pos := 0
+	for {
+		i := strings.Index(s[pos:], needle)
+		if i < 0 {
+			return count
+		}
+		end := pos + i + len(needle)
+		if end >= len(s) {
+			return count
+		}
+		c := s[end]
+		// Name boundary: tag can be followed by space, `>`, `/`, or
+		// whitespace; not by another name char. Avoids `<p` matching
+		// `<publish-info` etc.
+		if c == ' ' || c == '>' || c == '/' || c == '\t' || c == '\n' || c == '\r' {
+			count++
+		}
+		pos = end
+	}
 }
 
 // UpdateDocument replaces the current document with a new version from the frontend.

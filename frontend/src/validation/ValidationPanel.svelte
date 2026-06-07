@@ -1,8 +1,20 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import XmlEditor from "./XmlEditor.svelte";
 
   export let xmlSource: string = "";
   export let errors: { line: number; column: number; message: string }[] = [];
+  /** App's effective theme passed through to CM6. */
+  export let theme: "light" | "dark" = "light";
+  /** Last Apply attempt's error message (empty = no error). Surfaces
+   *  inline above the editor so the user sees WHY their Apply was
+   *  rejected without having to scan the App-level status bar. */
+  export let applyError: string = "";
+  /** True when an Undo target is available (parent captured a
+   *  pre-Apply snapshot). Controls visibility of the "Undo Apply"
+   *  banner — separate from edit-mode toggle so the banner stays
+   *  visible even after the user clicks Done. */
+  export let canUndoApply: boolean = false;
   // Initial height from persisted settings (px). `null` / `0` = use CSS
   // default (45%). Not bound — parent only seeds the initial value; the
   // panel reports changes via the `resize` event.
@@ -11,11 +23,87 @@
   const dispatch = createEventDispatcher<{
     close: void;
     resize: { height: number };
+    /** Fired when the user clicks Apply in edit mode. Parent should
+     *  call App.ParseXMLString → on success swap fb; on failure surface
+     *  an error and KEEP edit mode open. */
+    apply: { xml: string };
+    /** Fired when the user clicks "Undo Apply". Parent restores the
+     *  pre-Apply fb snapshot. */
+    "undo-apply": void;
+    /** Fired on every CM6 edit. Parent uses this for dirty tracking. */
+    "xml-dirty": { dirty: boolean };
   }>();
 
   let xmlPane: HTMLDivElement | undefined;
   let panelEl: HTMLDivElement | undefined;
   let highlightedLine: number | null = null;
+
+  // Edit-mode state. Exported as a bind:able prop so the parent
+  // (App.svelte) can flip it off after a successful Apply →
+  // ParseXMLString → UpdateDocument cycle. On parse failure the parent
+  // leaves it `true` and surfaces the error inline; the user's text
+  // stays in the CM6 doc.
+  export let editMode = false;
+  let xmlEditor: XmlEditor | undefined;
+  let editedXml = "";
+  let lastBaselineXml = "";  // what we entered editMode with
+  $: editDirty = editMode && editedXml !== lastBaselineXml;
+  $: dispatch("xml-dirty", { dirty: editDirty });
+
+  // Three-way sync of editMode + xmlSource into CM6:
+  //   - editMode flips false→true: seed CM6 with current xmlSource and
+  //     capture it as the dirty-tracking baseline.
+  //   - editMode flips true→false: reset working buffer.
+  //   - editMode stays true but xmlSource changes externally (parent
+  //     re-ran SerializeCurrent after a successful Apply): refresh CM6
+  //     to the new (writer-normalized) form and reset baseline so the
+  //     dirty mark clears. Without this last branch, the user's Apply
+  //     would commit fine but the editor would still show their
+  //     pre-normalization text and the dirty mark would stay lit.
+  let prevEditMode = false;
+  let lastSeenXmlSource = "";
+  $: {
+    if (editMode && !prevEditMode) {
+      lastBaselineXml = xmlSource;
+      editedXml = xmlSource;
+      lastSeenXmlSource = xmlSource;
+    } else if (!editMode && prevEditMode) {
+      editedXml = "";
+      lastBaselineXml = "";
+      lastSeenXmlSource = "";
+    } else if (editMode && xmlSource !== lastSeenXmlSource) {
+      lastBaselineXml = xmlSource;
+      lastSeenXmlSource = xmlSource;
+      xmlEditor?.setDoc(xmlSource);
+      // CM6 docChanged fires from setDoc → onEditorChange updates
+      // editedXml → editDirty drops to false on next reactive pass.
+    }
+    prevEditMode = editMode;
+  }
+
+  function enterEditMode() { editMode = true; }
+  /** "Done" — exits edit mode unconditionally. Any unapplied CM6
+   *  edits are dropped on the floor (the in-memory FictionBook stays
+   *  untouched since no Apply ran). No confirm prompt because Wails'
+   *  WKWebView silently swallows `window.confirm` returns under some
+   *  build configurations — bug-reported as "Done doesn't exit".
+   *  If the user wants to keep their text, Apply is the explicit
+   *  commit; Done is the explicit abandon. */
+  function doneEdit() { editMode = false; }
+  /** "Apply" — pushes the current CM6 buffer to the parent, which
+   *  parses and commits to the in-memory FictionBook. On success the
+   *  parent's re-Serialize bumps xmlSource → the reactive above
+   *  refreshes CM6 to the normalized form and clears the baseline
+   *  (so editDirty → false). On failure the parent leaves editMode
+   *  true and surfaces the error; the user's text is preserved
+   *  verbatim in CM6 for them to fix and retry. */
+  function applyEdit() {
+    const next = xmlEditor?.getXml() ?? editedXml;
+    dispatch("apply", { xml: next });
+  }
+  function onEditorChange(e: CustomEvent<string>) {
+    editedXml = e.detail;
+  }
 
   // Errors-pane height in pixels. `null` = "use default CSS" (45% of panel).
   // Switches to a concrete number once the user starts dragging the resizer.
@@ -103,22 +191,72 @@
 
 <div class="panel" bind:this={panelEl}>
   <div class="panel-title">
-    <span>XML source{xmlLines.length > 0 ? ` · ${xmlLines.length} lines` : ""}</span>
-    <button on:click={() => dispatch("close")} title="Close panel">×</button>
+    <span>
+      XML source{xmlLines.length > 0 ? ` · ${xmlLines.length} lines` : ""}
+      {#if editDirty}<span class="dirty-mark" title="Unsaved edits">●</span>{/if}
+    </span>
+    <div class="title-actions">
+      {#if editMode}
+        <button
+          class="action apply"
+          on:click={applyEdit}
+          disabled={!editDirty}
+          title="Parse XML and replace the in-memory document; editor stays open"
+        >Apply</button>
+        <button
+          class="action"
+          on:click={doneEdit}
+          title={editDirty ? "Close editor (prompts about unapplied edits)" : "Close editor"}
+        >Done</button>
+      {:else}
+        <button
+          class="action"
+          on:click={enterEditMode}
+          disabled={!xmlSource}
+          title="Edit raw XML"
+        >Edit XML…</button>
+      {/if}
+      <button on:click={() => dispatch("close")} title="Close panel">×</button>
+    </div>
   </div>
 
-  <div class="xml" bind:this={xmlPane}>
-    {#each xmlLines as line, i}
-      <div
-        id={`xml-line-${i + 1}`}
-        class="xml-line"
-        class:hl={highlightedLine === i + 1}
-      >
-        <span class="ln">{i + 1}</span>
-        <span class="content">{line}</span>
+  {#if editMode}
+    <div class="edit-mode-wrap">
+      {#if applyError}
+        <div class="apply-error" role="alert">
+          <strong>Apply failed — your text is preserved.</strong>
+          <div class="apply-error-msg">{applyError}</div>
+        </div>
+      {/if}
+      {#if canUndoApply}
+        <div class="undo-banner">
+          <span>Last Apply succeeded. Lost something?</span>
+          <button class="action" on:click={() => dispatch("undo-apply")}>Undo Apply</button>
+        </div>
+      {/if}
+      <div class="edit-host">
+        <XmlEditor
+          bind:this={xmlEditor}
+          initial={lastBaselineXml}
+          {theme}
+          on:change={onEditorChange}
+        />
       </div>
-    {/each}
-  </div>
+    </div>
+  {:else}
+    <div class="xml" bind:this={xmlPane}>
+      {#each xmlLines as line, i}
+        <div
+          id={`xml-line-${i + 1}`}
+          class="xml-line"
+          class:hl={highlightedLine === i + 1}
+        >
+          <span class="ln">{i + 1}</span>
+          <span class="content">{line}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   {#if errors.length > 0}
     <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
@@ -205,6 +343,100 @@
   .panel-title button:hover {
     background: var(--bg-hover);
     color: var(--fg-strong);
+  }
+  .title-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .title-actions .action {
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--border-button, var(--border));
+    background: var(--bg-surface);
+    color: var(--fg);
+    line-height: 1.1;
+  }
+  .title-actions .action:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+  .title-actions .action:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .title-actions .action.apply {
+    background: var(--bg-active, #fce6a0);
+    color: var(--fg-strong);
+  }
+  .title-actions .action.apply:hover:not(:disabled) {
+    background: var(--bg-active-hover, #f5da7c);
+  }
+  .dirty-mark {
+    color: var(--warn-fg, #c97a00);
+    margin-left: 0.35rem;
+    font-size: 0.7rem;
+    vertical-align: middle;
+  }
+  /* edit-mode-wrap is a flex column inside the panel's `1fr` grid
+     row. Without this wrapper, apply-error + undo-banner + XmlEditor
+     are direct grid children and each consumes its own (implicit) row,
+     which pushes the editor off-screen and breaks the resizer/errors
+     rows below. The wrap stays in the `1fr` slot; banners take their
+     natural height; the editor gets the leftover via flex:1. */
+  .edit-mode-wrap {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+  .edit-host {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .apply-error {
+    background: var(--bg-errors, #fff5f5);
+    border-bottom: 1px solid var(--err-border, #f3c5c5);
+    color: var(--err-fg, #a13030);
+    padding: 0.55rem 0.8rem;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-size: 0.82rem;
+    flex: 0 0 auto;
+  }
+  .apply-error-msg {
+    margin-top: 0.2rem;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.74rem;
+    white-space: pre-wrap;
+  }
+  .undo-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.35rem 0.7rem;
+    background: var(--bg-ok, #f2faf4);
+    border-bottom: 1px solid var(--border);
+    color: var(--fg-secondary);
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-size: 0.78rem;
+    flex: 0 0 auto;
+  }
+  .undo-banner .action {
+    font-weight: 600;
+    padding: 0.18rem 0.55rem;
+    font-size: 0.76rem;
+    border: 1px solid var(--border-button, var(--border));
+    background: var(--bg-surface);
+    color: var(--fg);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .undo-banner .action:hover {
+    background: var(--bg-hover);
   }
 
   .xml {
