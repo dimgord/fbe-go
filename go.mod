@@ -7,7 +7,7 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/lestrrat-go/libxml2 v0.0.0-20260304224138-bb3877930cf7
 	github.com/wailsapp/wails/v2 v2.12.0
-	golang.org/x/text v0.37.0
+	golang.org/x/text v0.38.0
 )
 
 require (
