@@ -6,6 +6,36 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 102 — 2026-10-30 — One gateway to Go; "Clear list" in Settings works again → v3.7.0 [dev]
+
+**Regression from Rev 99, fixed.** Settings → "Clear list" did `recentFiles = []` and
+`SaveSettings`, but `Store.Replace` now keeps Go-owned fields from disk, so nothing was
+cleared. New `ClearRecentFiles` binding. The Rev 99 test covered `Replace` itself, not
+its one caller that relied on the old behaviour.
+
+**`runtime/backend.ts`.** Wails bindings were imported in six files with a copy of
+`wailsApp()` in three, and five `@ts-expect-error` hid the same model mismatch at each
+call. `backend()` now returns the gateway or null, and `Backend` declares the four
+FictionBook-typed methods once, so the casts and suppressions are gone. It also wraps
+events and `BrowserOpenURL`. The null check is now real: the old
+`import(...).catch(() => null)` could not detect a missing bridge, because the generated
+module always exists and only its calls fail. `setBackend` lets a test substitute a fake.
+No bindings are imported outside this file any more.
+
+Verified: 93 unit tests, the WebKit search/history/annotation flows, and the built `.app`
+launched with a file under a throwaway `$HOME`, which opened it through the real bridge.
+
+### Files Modified
+
+- `frontend/src/runtime/backend.ts`, `backend.test.ts` (new).
+- `frontend/src/App.svelte`, `settings/SettingsDialog.svelte`, `binary/BinaryManagerDialog.svelte`,
+  `editor/search/SearchBar.svelte`, `help/HelpDialog.svelte`, `runtime/externalLink.ts` — use the gateway.
+- `app.go` — `ClearRecentFiles`.
+- `CLAUDE.md` — gateway rule.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.6.0 → 3.7.0.
+
+---
+
 ## Rev 101 — 2026-10-30 — Undefined `--bg` fixed everywhere; theme lint catches undefined variables → v3.6.0 [dev]
 
 The recent-searches dropdown had a see-through background, so the outline showed

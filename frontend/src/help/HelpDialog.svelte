@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backend } from "../runtime/backend";
   import { createEventDispatcher, onMount } from "svelte";
   import pkg from "../../package.json";
 
@@ -18,11 +19,8 @@
 
   async function loadVersion(): Promise<void> {
     try {
-      const App = await import("../../wailsjs/go/main/App").catch(() => null);
-      if (App && typeof App.AppVersion === "function") {
-        const v = await App.AppVersion();
-        if (v) version = v;
-      }
+      const v = await backend()?.AppVersion();
+      if (v) version = v;
     } catch {
       // Keep the package.json fallback — browser tab / non-Wails dev.
     }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
+  import { backend } from "../runtime/backend";
   import type { settings as SettingsNS } from "../../wailsjs/go/models";
   import {
     HOTKEY_ACTIONS,
@@ -87,12 +88,8 @@
   // we've applied live (reset panes / clear recent); Apply writes `draft`.
   let loaded = false;
 
-  async function wailsApp() {
-    return await import("../../wailsjs/go/main/App").catch(() => null);
-  }
-
   async function load() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try {
       const s = await App.LoadSettings();
@@ -144,7 +141,7 @@
       cancel();
       return;
     }
-    const App = await wailsApp();
+    const App = backend();
     if (App) {
       try {
         await App.SaveSettings(draft);
@@ -166,7 +163,7 @@
   //     sticks — documented inline below.
 
   async function resetPanes() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try {
       const s = await App.LoadSettings();
@@ -182,12 +179,10 @@
   }
 
   async function clearRecent() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try {
-      const s = await App.LoadSettings();
-      s.recentFiles = [];
-      await App.SaveSettings(s);
+      await App.ClearRecentFiles();
       await load();
     } catch (e) {
       console.warn("[fbe] clear recent failed:", e);
@@ -249,7 +244,7 @@
   }
 
   async function resetAllHotkeys() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App || !draft) return;
     try {
       // Trip defaults-merge on the Go side: save an empty map, then reload —

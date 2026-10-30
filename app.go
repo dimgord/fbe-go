@@ -642,6 +642,11 @@ func (a *App) ClearRecentSearches() error {
 	return a.settings.Update(func(s *settings.Settings) { s.RecentSearches = nil })
 }
 
+// ClearRecentFiles empties the MRU list. SaveSettings cannot: Store.Replace keeps Go-owned fields.
+func (a *App) ClearRecentFiles() error {
+	return a.settings.Update(func(s *settings.Settings) { s.RecentFiles = nil })
+}
+
 // RemoveFromRecent drops a path from the MRU list (e.g. when it no longer
 // exists on disk). No-op if absent.
 func (a *App) RemoveFromRecent(path string) error {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backend } from "../runtime/backend";
   import { createEventDispatcher, onMount } from "svelte";
   import type { EditorView } from "prosemirror-view";
   import type { FictionBook, Binary } from "../fb2/types";
@@ -42,10 +43,6 @@
     renaming = null;
     open = false;
     dispatch("close");
-  }
-
-  async function wailsApp() {
-    return await import("../../wailsjs/go/main/App").catch(() => null);
   }
 
   function beginRename(b: Binary) {
@@ -95,7 +92,7 @@
 
   async function upload() {
     if (!fb) return;
-    const App = await wailsApp();
+    const App = backend();
     if (!App) { errorMessage = "Wails bindings unavailable — run `wails dev` or a proper build."; return; }
     let path: string;
     try {

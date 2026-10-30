@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backend } from "../../runtime/backend";
   import { createEventDispatcher, onMount, tick } from "svelte";
   import type { EditorView } from "prosemirror-view";
   import {
@@ -27,19 +28,15 @@
   let historyOpen = false;
   let historyIdx = -1;
 
-  const backend = () => import("../../../wailsjs/go/main/App").catch(() => null);
-
   /** Only a query that found something is worth keeping; called on Enter and on close. */
   async function remember() {
     const q = pattern.trim();
     if (!q || matchCount === 0 || q === recent[0]) return;
-    const App = await backend();
-    recent = (await App?.AddRecentSearch(q).catch(() => null)) ?? recent;
+    recent = (await backend()?.AddRecentSearch(q).catch(() => null)) ?? recent;
   }
 
   async function clearHistory() {
-    const App = await backend();
-    await App?.ClearRecentSearches().catch(() => null);
+    await backend()?.ClearRecentSearches().catch(() => null);
     recent = [];
     closeHistory();
   }
@@ -83,8 +80,7 @@
     await tick();
     findInput?.focus();
     findInput?.select();
-    const App = await backend();
-    recent = (await App?.RecentSearches().catch(() => null)) ?? [];
+    recent = (await backend()?.RecentSearches().catch(() => null)) ?? [];
   });
 
   async function switchMode(next: "find" | "replace") {

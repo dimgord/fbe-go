@@ -26,15 +26,13 @@ export function isExternalUrl(href: string | null | undefined): href is string {
 /** Routes a URL to the OS default handler via Wails runtime. Falls back to
  *  `window.open` in plain browser contexts (vite dev without the Wails
  *  bridge, or the dev-server tab opened directly). */
+import { backend } from "./backend";
+
 export async function openExternalUrl(url: string): Promise<void> {
-  try {
-    const rt = await import("../../wailsjs/runtime/runtime");
-    if (typeof rt.BrowserOpenURL === "function") {
-      rt.BrowserOpenURL(url);
-      return;
-    }
-  } catch {
-    /* not running under Wails */
+  const App = backend();
+  if (App) {
+    App.openUrl(url);
+    return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
 }

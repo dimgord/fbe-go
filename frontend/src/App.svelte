@@ -7,6 +7,7 @@
   import ValidationPanel from "./validation/ValidationPanel.svelte";
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
+  import { backend } from "./runtime/backend";
   import SearchBar from "./editor/search/SearchBar.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
   import type { BookPosition } from "./tree/position";
@@ -252,7 +253,7 @@
   }
   async function onApplyXml(e: CustomEvent<{ xml: string }>) {
     xmlApplyError = "";
-    const App = await wailsApp();
+    const App = backend();
     if (!App) {
       xmlApplyError = "Wails bindings unavailable";
       return;
@@ -272,7 +273,6 @@
       xmlUndoXml = xmlSource;
       // Wails generates doc.FictionBook structurally identical to our FB.
       fb = parsed;
-      // @ts-expect-error — Wails-generated type wraps doc.FictionBook with XMLName/convertValues.
       await App.UpdateDocument(fb);
       try { xmlSource = await App.SerializeCurrent(); } catch { /* leave as-is */ }
       try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* leave as-is */ }
@@ -297,9 +297,8 @@
     xmlSource = xmlUndoXml;
     xmlUndoFb = null;
     xmlUndoXml = "";
-    const App = await wailsApp();
+    const App = backend();
     if (App) {
-      // @ts-expect-error — Wails-generated type wraps doc.FictionBook with XMLName/convertValues.
       try { await App.UpdateDocument(fb); } catch { /* ignore */ }
       try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* ignore */ }
     }
@@ -427,7 +426,7 @@
   // and validation-pane resize. Silent on error — persistence is a
   // convenience, not correctness.
   async function patchSettings(mutate: (s: any) => void) {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try {
       const s = await App.LoadSettings();
@@ -580,12 +579,8 @@
     }
   }
 
-  async function wailsApp() {
-    return await import("../wailsjs/go/main/App").catch(() => null);
-  }
-
   async function refreshRecent() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try { recentFiles = (await App.RecentFiles()) ?? []; } catch { /* ignore */ }
   }
@@ -597,7 +592,7 @@
     error = ""; status = "";
     recentMenuOpen = false;
     try {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
       // Guard the in-memory replacement: if the current document has
       // unsaved edits, prompt before discarding them. The native Save /
@@ -640,7 +635,7 @@
         // Recent-file pointed at something that no longer exists (or is
         // unreadable) — purge it so the menu doesn't keep offering a dead
         // entry.
-        const App = await wailsApp();
+        const App = backend();
         try { await App?.RemoveFromRecent(preset); } catch { /* ignore */ }
         void refreshRecent();
       } else {
@@ -661,7 +656,7 @@
   async function save(saveAs: boolean) {
     error = ""; status = "";
     try {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) throw new Error("Wails bindings not available — save works only in the desktop app.");
       const current = liveDoc();
       if (!current) throw new Error("No document loaded.");
@@ -672,7 +667,6 @@
         path = await App.PickFB2ToSave(suggested);
         if (!path) return;
       }
-      // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
       await App.UpdateDocument(current);
       await App.SaveFile(path);
       currentPath = path;
@@ -692,11 +686,10 @@
   async function exportHTML() {
     error = ""; status = "";
     try {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) throw new Error("Wails bindings not available.");
       const current = liveDoc();
       if (current) {
-        // @ts-expect-error
         await App.UpdateDocument(current);
       }
       const suggested = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
@@ -713,7 +706,7 @@
   async function validate() {
     error = ""; status = "";
     try {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) throw new Error("Wails bindings not available.");
       if (!fb) throw new Error("No document loaded.");
 
@@ -721,7 +714,6 @@
       // serialized XML and the validation result reflect unsaved edits.
       const current = liveDoc();
       if (current) {
-        // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
         await App.UpdateDocument(current);
       }
 
@@ -828,13 +820,12 @@
     let launchReady: (p: string) => void = () => {};
     const launchFile = new Promise<string>((r) => (launchReady = r));
     void (async () => {
-      const rt = await import("../wailsjs/runtime/runtime").catch(() => null);
-      const App = await wailsApp();
-      if (!rt || !App) { launchReady(""); return; }
-      const offCheck = rt.EventsOn("app:check-dirty", () => {
-        rt.EventsEmit("app:dirty-response", isCurrentlyDirty());
+      const App = backend();
+      if (!App) { launchReady(""); return; }
+      const offCheck = App.on("app:check-dirty", () => {
+        App.emit("app:dirty-response", isCurrentlyDirty());
       });
-      const offSave = rt.EventsOn("app:save-and-quit", async () => {
+      const offSave = App.on("app:save-and-quit", async () => {
         try {
           await save(false);
         } catch (e) {
@@ -850,13 +841,13 @@
       // status text, and recent-files update all behave identically to
       // a regular File→Open. Without this listener the drop would be
       // silently swallowed (WebView drop is disabled in main.go).
-      const offDrop = rt.EventsOn("app:file-drop", (path: string) => {
+      const offDrop = App.on("app:file-drop", (path: string) => {
         if (typeof path === "string" && path) void openFile(path);
       });
       if (typeof offCheck === "function") detachListeners.push(offCheck);
       if (typeof offSave === "function") detachListeners.push(offSave);
       // OS "open this file" (double-click / Open With) while the app is already running.
-      const offOpen = rt.EventsOn("app:open-file", (path: string) => {
+      const offOpen = App.on("app:open-file", (path: string) => {
         if (typeof path === "string" && path) void openFile(path);
       });
       if (typeof offDrop === "function") detachListeners.push(offDrop);
@@ -875,7 +866,7 @@
     // errors-height. Settings-read errors are swallowed — we'd rather use
     // in-memory defaults than block mount.
     void (async () => {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) return;
       try {
         const s = await App.LoadSettings();
@@ -917,7 +908,7 @@
     // first paint. A network flake just means "no banner this launch",
     // which is the right trade-off — the banner's job is to be polite.
     const updateTimer = window.setTimeout(async () => {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) return;
       try {
         const info = await App.CheckForUpdate();
@@ -940,7 +931,7 @@
         if (fb) return;
         // open failed (error is shown) — fall through to the sample
       }
-      const App = await wailsApp();
+      const App = backend();
       if (App) {
         try {
           const current = await App.CurrentDocument();
