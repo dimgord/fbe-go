@@ -28,9 +28,10 @@
 
   // Grouped action list — stable order per category.
   const CATEGORIES: HotkeyCategory[] = ["File", "Edit", "Format", "Paragraph", "Blocks", "Dialogs"];
-  const ACTIONS_BY_CATEGORY = Object.fromEntries(
-    CATEGORIES.map((c) => [c, (HOTKEY_ACTIONS as readonly HotkeyAction[]).filter((a) => a.category === c)]),
-  ) as Record<HotkeyCategory, readonly HotkeyAction[]>;
+  const ACTIONS_BY_CATEGORY = CATEGORIES.reduce((acc, c) => {
+    acc[c] = (HOTKEY_ACTIONS as readonly HotkeyAction[]).filter((a) => a.category === c);
+    return acc;
+  }, {} as Record<HotkeyCategory, readonly HotkeyAction[]>);
 
   // Draft state. Loaded on open (watched via $:) and mutated by inputs;
   // committed to disk only on Apply. Cancel discards without saving.
