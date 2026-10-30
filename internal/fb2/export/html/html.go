@@ -215,16 +215,7 @@ func (e *exporter) writeTitle(t *doc.Title, tag string) {
 }
 
 func (e *exporter) writeEpigraph(ep *doc.Epigraph) {
-	e.write(`<blockquote class="epigraph">` + "\n")
-	for _, b := range ep.Children {
-		e.writeBlock(b, "")
-	}
-	for _, p := range ep.TextAuthor {
-		e.write(`<p class="text-author">`)
-		e.writeInlines(p.Children)
-		e.write("</p>\n")
-	}
-	e.write("</blockquote>\n")
+	e.writeQuote("epigraph", ep.Children, ep.TextAuthor)
 }
 
 func (e *exporter) writeBlock(b doc.Block, _ string) {
@@ -236,9 +227,7 @@ func (e *exporter) writeBlock(b doc.Block, _ string) {
 	case b.EmptyLine != nil:
 		e.write(`<p class="empty-line"></p>` + "\n")
 	case b.Subtitle != nil:
-		e.write(`<p class="subtitle">`)
-		e.writeInlines(b.Subtitle.Children)
-		e.write("</p>\n")
+		e.writeP("subtitle", b.Subtitle.Children)
 	case b.Poem != nil:
 		e.writePoem(b.Poem)
 	case b.Cite != nil:
@@ -274,36 +263,19 @@ func (e *exporter) writePoem(p *doc.Poem) {
 			e.writeTitle(s.Title, "h4")
 		}
 		if s.Subtitle != nil {
-			e.write(`<p class="subtitle">`)
-			e.writeInlines(s.Subtitle.Children)
-			e.write("</p>\n")
+			e.writeP("subtitle", s.Subtitle.Children)
 		}
 		for _, v := range s.Verses {
-			e.write(`<p class="v">`)
-			e.writeInlines(v.Children)
-			e.write("</p>\n")
+			e.writeP("v", v.Children)
 		}
 		e.write("</div>\n")
 	}
-	for _, ta := range p.TextAuthor {
-		e.write(`<p class="text-author">`)
-		e.writeInlines(ta.Children)
-		e.write("</p>\n")
-	}
+	e.writeParagraphs("text-author", p.TextAuthor)
 	e.write("</div>\n")
 }
 
 func (e *exporter) writeCite(c *doc.Cite) {
-	e.write(`<blockquote class="cite">` + "\n")
-	for _, b := range c.Children {
-		e.writeBlock(b, "")
-	}
-	for _, p := range c.TextAuthor {
-		e.write(`<p class="text-author">`)
-		e.writeInlines(p.Children)
-		e.write("</p>\n")
-	}
-	e.write("</blockquote>\n")
+	e.writeQuote("cite", c.Children, c.TextAuthor)
 }
 
 func (e *exporter) writeTable(t *doc.Table) {
@@ -378,6 +350,36 @@ func (e *exporter) resolveBinaryHref(href string) string {
 	return binary.DataURL(bin)
 }
 
+// writeP writes one classed paragraph.
+func (e *exporter) writeP(class string, items []doc.Inline) {
+	e.writef(`<p class="%s">`, class)
+	e.writeInlines(items)
+	e.write("</p>\n")
+}
+
+func (e *exporter) writeParagraphs(class string, ps []doc.Paragraph) {
+	for _, p := range ps {
+		e.writeP(class, p.Children)
+	}
+}
+
+// writeQuote writes an epigraph or cite: same rendering, different class.
+func (e *exporter) writeQuote(class string, children []doc.Block, authors []doc.Paragraph) {
+	e.writef(`<blockquote class="%s">`+"\n", class)
+	for _, b := range children {
+		e.writeBlock(b, "")
+	}
+	e.writeParagraphs("text-author", authors)
+	e.write("</blockquote>\n")
+}
+
+// writeWrapped writes inlines inside a simple tag.
+func (e *exporter) writeWrapped(tag string, items []doc.Inline) {
+	e.writef("<%s>", tag)
+	e.writeInlines(items)
+	e.writef("</%s>", tag)
+}
+
 func (e *exporter) writeInlines(items []doc.Inline) {
 	for _, i := range items {
 		e.writeInline(i)
@@ -390,29 +392,17 @@ func (e *exporter) writeInline(i doc.Inline) {
 	}
 	switch {
 	case i.Strong != nil:
-		e.write("<strong>")
-		e.writeInlines(i.Strong.Children)
-		e.write("</strong>")
+		e.writeWrapped("strong", i.Strong.Children)
 	case i.Emphasis != nil:
-		e.write("<em>")
-		e.writeInlines(i.Emphasis.Children)
-		e.write("</em>")
+		e.writeWrapped("em", i.Emphasis.Children)
 	case i.Strikethrough != nil:
-		e.write("<s>")
-		e.writeInlines(i.Strikethrough.Children)
-		e.write("</s>")
+		e.writeWrapped("s", i.Strikethrough.Children)
 	case i.Sub != nil:
-		e.write("<sub>")
-		e.writeInlines(i.Sub.Children)
-		e.write("</sub>")
+		e.writeWrapped("sub", i.Sub.Children)
 	case i.Sup != nil:
-		e.write("<sup>")
-		e.writeInlines(i.Sup.Children)
-		e.write("</sup>")
+		e.writeWrapped("sup", i.Sup.Children)
 	case i.Code != nil:
-		e.write("<code>")
-		e.writeInlines(i.Code.Children)
-		e.write("</code>")
+		e.writeWrapped("code", i.Code.Children)
 	case i.Style != nil:
 		e.writef(`<span class="style-%s">`, html.EscapeString(i.Style.Name))
 		e.writeInlines(i.Style.Children)

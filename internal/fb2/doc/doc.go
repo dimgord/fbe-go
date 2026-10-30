@@ -331,22 +331,22 @@ func (s Section) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 		return err
 	}
 	if s.Title != nil {
-		if err := e.EncodeElement(s.Title, xml.StartElement{Name: xml.Name{Local: "title"}}); err != nil {
+		if err := encodeAs(e, s.Title, "title"); err != nil {
 			return err
 		}
 	}
 	for _, ep := range s.Epigraph {
-		if err := e.EncodeElement(ep, xml.StartElement{Name: xml.Name{Local: "epigraph"}}); err != nil {
+		if err := encodeAs(e, ep, "epigraph"); err != nil {
 			return err
 		}
 	}
 	if s.Image != nil {
-		if err := e.EncodeElement(s.Image, xml.StartElement{Name: xml.Name{Local: "image"}}); err != nil {
+		if err := encodeAs(e, s.Image, "image"); err != nil {
 			return err
 		}
 	}
 	if s.Annotation != nil {
-		if err := e.EncodeElement(s.Annotation, xml.StartElement{Name: xml.Name{Local: "annotation"}}); err != nil {
+		if err := encodeAs(e, s.Annotation, "annotation"); err != nil {
 			return err
 		}
 	}
@@ -527,21 +527,21 @@ func (b *Block) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 func (b Block) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	switch {
 	case b.Paragraph != nil:
-		return e.EncodeElement(b.Paragraph, xml.StartElement{Name: xml.Name{Local: "p"}})
+		return encodeAs(e, b.Paragraph, "p")
 	case b.Poem != nil:
-		return e.EncodeElement(b.Poem, xml.StartElement{Name: xml.Name{Local: "poem"}})
+		return encodeAs(e, b.Poem, "poem")
 	case b.Subtitle != nil:
-		return e.EncodeElement(b.Subtitle, xml.StartElement{Name: xml.Name{Local: "subtitle"}})
+		return encodeAs(e, b.Subtitle, "subtitle")
 	case b.Cite != nil:
-		return e.EncodeElement(b.Cite, xml.StartElement{Name: xml.Name{Local: "cite"}})
+		return encodeAs(e, b.Cite, "cite")
 	case b.EmptyLine != nil:
-		return e.EncodeElement(b.EmptyLine, xml.StartElement{Name: xml.Name{Local: "empty-line"}})
+		return encodeAs(e, b.EmptyLine, "empty-line")
 	case b.Table != nil:
-		return e.EncodeElement(b.Table, xml.StartElement{Name: xml.Name{Local: "table"}})
+		return encodeAs(e, b.Table, "table")
 	case b.Image != nil:
-		return e.EncodeElement(b.Image, xml.StartElement{Name: xml.Name{Local: "image"}})
+		return encodeAs(e, b.Image, "image")
 	case b.Section != nil:
-		return e.EncodeElement(b.Section, xml.StartElement{Name: xml.Name{Local: "section"}})
+		return encodeAs(e, b.Section, "section")
 	case b.Raw != nil:
 		return b.Raw.MarshalXML(e, xml.StartElement{})
 	}
@@ -593,13 +593,7 @@ func (p Paragraph) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	addAttrIfSet(&start, "id", p.ID)
 	addAttrIfSet(&start, "style", p.Style)
 	addAttrIfSet(&start, "lang", p.Lang)
-	if err := e.EncodeToken(start); err != nil {
-		return err
-	}
-	if err := marshalInlineContent(e, p.Children); err != nil {
-		return err
-	}
-	return e.EncodeToken(start.End())
+	return encodeMixed(e, start, p.Children)
 }
 
 // addAttrIfSet appends an attribute to the start element if its value is non-empty.
@@ -694,39 +688,39 @@ func marshalInlineContent(e *xml.Encoder, children []Inline) error {
 				return err
 			}
 		case in.Strong != nil:
-			if err := e.EncodeElement(in.Strong, xml.StartElement{Name: xml.Name{Local: "strong"}}); err != nil {
+			if err := encodeAs(e, in.Strong, "strong"); err != nil {
 				return err
 			}
 		case in.Emphasis != nil:
-			if err := e.EncodeElement(in.Emphasis, xml.StartElement{Name: xml.Name{Local: "emphasis"}}); err != nil {
+			if err := encodeAs(e, in.Emphasis, "emphasis"); err != nil {
 				return err
 			}
 		case in.Style != nil:
-			if err := e.EncodeElement(in.Style, xml.StartElement{Name: xml.Name{Local: "style"}}); err != nil {
+			if err := encodeAs(e, in.Style, "style"); err != nil {
 				return err
 			}
 		case in.A != nil:
-			if err := e.EncodeElement(in.A, xml.StartElement{Name: xml.Name{Local: "a"}}); err != nil {
+			if err := encodeAs(e, in.A, "a"); err != nil {
 				return err
 			}
 		case in.Strikethrough != nil:
-			if err := e.EncodeElement(in.Strikethrough, xml.StartElement{Name: xml.Name{Local: "strikethrough"}}); err != nil {
+			if err := encodeAs(e, in.Strikethrough, "strikethrough"); err != nil {
 				return err
 			}
 		case in.Sub != nil:
-			if err := e.EncodeElement(in.Sub, xml.StartElement{Name: xml.Name{Local: "sub"}}); err != nil {
+			if err := encodeAs(e, in.Sub, "sub"); err != nil {
 				return err
 			}
 		case in.Sup != nil:
-			if err := e.EncodeElement(in.Sup, xml.StartElement{Name: xml.Name{Local: "sup"}}); err != nil {
+			if err := encodeAs(e, in.Sup, "sup"); err != nil {
 				return err
 			}
 		case in.Code != nil:
-			if err := e.EncodeElement(in.Code, xml.StartElement{Name: xml.Name{Local: "code"}}); err != nil {
+			if err := encodeAs(e, in.Code, "code"); err != nil {
 				return err
 			}
 		case in.Image != nil:
-			if err := e.EncodeElement(in.Image, xml.StartElement{Name: xml.Name{Local: "image"}}); err != nil {
+			if err := encodeAs(e, in.Image, "image"); err != nil {
 				return err
 			}
 		case in.Raw != nil:
@@ -774,13 +768,7 @@ func (s *StyleInline) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error
 // MarshalXML re-emits attribute + children.
 func (s StyleInline) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	addAttrIfSet(&start, "name", s.Name)
-	if err := e.EncodeToken(start); err != nil {
-		return err
-	}
-	if err := marshalInlineContent(e, s.Children); err != nil {
-		return err
-	}
-	return e.EncodeToken(start.End())
+	return encodeMixed(e, start, s.Children)
 }
 
 // Link = FB2 <a> — note references use type="note".
@@ -802,7 +790,7 @@ type Link struct {
 func (l *Link) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	for _, a := range start.Attr {
 		switch {
-		case a.Name.Local == "href" && (a.Name.Space == NSXLink || a.Name.Space == ""):
+		case isHrefAttr(a):
 			l.Href = a.Value
 		case a.Name.Local == "type":
 			l.Type = a.Value
@@ -817,17 +805,9 @@ func (l *Link) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 // re-declare `xmlns:xlink` on every <a>. The FictionBook root (emitted by
 // writer.Write) is responsible for declaring `xmlns:l` once.
 func (l Link) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	if l.Href != "" {
-		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "l:href"}, Value: l.Href})
-	}
+	addAttrIfSet(&start, "l:href", l.Href)
 	addAttrIfSet(&start, "type", l.Type)
-	if err := e.EncodeToken(start); err != nil {
-		return err
-	}
-	if err := marshalInlineContent(e, l.Children); err != nil {
-		return err
-	}
-	return e.EncodeToken(start.End())
+	return encodeMixed(e, start, l.Children)
 }
 
 // Image — block or inline; distinguished by position in the tree.
@@ -855,7 +835,7 @@ type Image struct {
 func (i *Image) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	for _, a := range start.Attr {
 		switch {
-		case a.Name.Local == "href" && (a.Name.Space == NSXLink || a.Name.Space == ""):
+		case isHrefAttr(a):
 			i.Href = a.Value
 		case a.Name.Local == "alt":
 			i.Alt = a.Value
@@ -871,9 +851,7 @@ func (i *Image) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 // MarshalXML emits `<image l:href="…" .../>` using a literal `l:href`
 // attribute local-name so Go doesn't redeclare xmlns:xlink.
 func (i Image) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	if i.Href != "" {
-		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: "l:href"}, Value: i.Href})
-	}
+	addAttrIfSet(&start, "l:href", i.Href)
 	addAttrIfSet(&start, "alt", i.Alt)
 	addAttrIfSet(&start, "title", i.Title)
 	addAttrIfSet(&start, "id", i.ID)
@@ -963,13 +941,7 @@ func (c Cell) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	addAttrIfSet(&start, "rowspan", c.RowSpan)
 	addAttrIfSet(&start, "align", c.Align)
 	addAttrIfSet(&start, "valign", c.VAlign)
-	if err := e.EncodeToken(start); err != nil {
-		return err
-	}
-	if err := marshalInlineContent(e, c.Children); err != nil {
-		return err
-	}
-	return e.EncodeToken(start.End())
+	return encodeMixed(e, start, c.Children)
 }
 
 // Binary holds a base64-encoded binary (typically an image).
@@ -977,4 +949,25 @@ type Binary struct {
 	ID          string `xml:"id,attr"`
 	ContentType string `xml:"content-type,attr"`
 	Data        string `xml:",chardata"` // base64
+}
+
+// encodeAs writes v as an element with the given local name.
+func encodeAs(e *xml.Encoder, v any, name string) error {
+	return e.EncodeElement(v, xml.StartElement{Name: xml.Name{Local: name}})
+}
+
+// encodeMixed writes start, the inline content and the end tag.
+func encodeMixed(e *xml.Encoder, start xml.StartElement, children []Inline) error {
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if err := marshalInlineContent(e, children); err != nil {
+		return err
+	}
+	return e.EncodeToken(start.End())
+}
+
+// isHrefAttr accepts xlink:href and a bare href, both seen in real files.
+func isHrefAttr(a xml.Attr) bool {
+	return a.Name.Local == "href" && (a.Name.Space == NSXLink || a.Name.Space == "")
 }

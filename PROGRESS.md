@@ -6,6 +6,29 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 110 — 2026-10-30 — DRY in `doc.go` and the HTML exporter → v3.15.0 [dev]
+
+Mechanical cleanups, checked for byte-identical output.
+
+- `doc.go`: `encodeAs(e, v, "name")` replaces 21 `xml.StartElement{Name: xml.Name{Local: …}}`
+  spellings, `encodeMixed` the four start/content/end sequences, and `isHrefAttr` the two href
+  checks. `l:href` goes through the existing `addAttrIfSet`.
+- `html.go`: `writeP`, `writeParagraphs`, `writeQuote` (epigraph and cite share rendering, while
+  their types stay separate) and `writeWrapped` for simple marks.
+
+Left as they are, as the review advised: the `Block`/`Inline` marshal switches, which are readable
+and type-safe, and the per-type attribute loops.
+
+Verified: writer output is identical before and after on all sample books, and the HTML export of
+the largest (9 MB) is byte-identical.
+
+### Files Modified
+
+- `internal/fb2/doc/doc.go`, `internal/fb2/export/html/html.go`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.14.0 → 3.15.0.
+
+---
+
 ## Rev 109 — 2026-10-30 — `app.go` sheds fonts and the close flow; CLI becomes testable → v3.14.0 [dev]
 
 `app.go` is 573 lines now, against 1,224 at the review.
