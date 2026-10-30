@@ -813,7 +813,7 @@
   </header>
 
   {#if view === "body"}
-    <Toolbar {editor} on:openBinaries={() => (showBinaries = true)} />
+    <Toolbar {editor} {hotkeys} on:openBinaries={() => (showBinaries = true)} />
     {#if searchOpen}
       <SearchBar
         view={editorView}

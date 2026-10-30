@@ -2,7 +2,7 @@
   import { onDestroy, onMount, createEventDispatcher } from "svelte";
   import { EditorState, Plugin, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
-  import { history, redo, undo, undoDepth } from "prosemirror-history";
+  import { history, undoDepth } from "prosemirror-history";
   import { keydownHandler, keymap } from "prosemirror-keymap";
   import { baseKeymap } from "prosemirror-commands";
   import { Node as PMNode } from "prosemirror-model";
@@ -10,20 +10,12 @@
   import { fb2ToPMDoc } from "./parse";
   import { pmDocToFB2 } from "./serialize";
   import { cleanPastedHTML, cleanPastedText } from "./paste";
-  import { searchPlugin, findNext as searchFindNext, findPrev as searchFindPrev } from "./search/plugin";
+  import { searchPlugin } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
   import { scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
   import { positionAt, type BookPosition } from "../tree/position";
-  import {
-    toggleStrong, toggleEmphasis, toggleStrikethrough,
-    toggleSub, toggleSup, toggleCode, toggleLink,
-    styleNormal, styleSubtitle, styleTextAuthor,
-    insertEmptyLine,
-    cloneContainer, removeOuterContainer,
-    addTitle, addEpigraph, addAnnotation, addTextAuthor,
-    insertCite, insertPoem, insertTableCmd,
-    mergeContainers,
-  } from "./commands";
+  import { toggleLink, insertTableCmd } from "./commands";
+  import { EDITOR_COMMANDS, type CommandId } from "./commandRegistry";
   import { HOTKEY_ACTIONS, toPMKey } from "../settings/hotkeys";
   import type { Command } from "prosemirror-state";
   import TableDialog from "./TableDialog.svelte";
@@ -279,57 +271,23 @@
     return nv;
   }
 
-  /** Map of action id → PM Command. Non-PM actions (Save, Find, dialogs) are
-      handled at the App level and not listed here. Keep in sync with the
-      `editor: true` rows of HOTKEY_ACTIONS. */
-  const EDITOR_COMMANDS: Record<string, Command> = {
-    ToggleStrong: toggleStrong,
-    ToggleEmphasis: toggleEmphasis,
-    ToggleStrikethrough: toggleStrikethrough,
-    ToggleSub: toggleSub,
-    ToggleSup: toggleSup,
-    ToggleCode: toggleCode,
-    StyleNormal: styleNormal,
-    StyleSubtitle: styleSubtitle,
-    StyleTextAuthor: styleTextAuthor,
-    InsertEmptyLine: insertEmptyLine,
-    CloneContainer: cloneContainer,
-    RemoveOuterContainer: removeOuterContainer,
-    AddTitle: addTitle,
-    AddEpigraph: addEpigraph,
-    AddAnnotation: addAnnotation,
-    AddTextAuthor: addTextAuthor,
-    InsertCite: insertCite,
-    InsertPoem: insertPoem,
-    MergeContainers: mergeContainers,
-    FindNext: (_s, _d, v) => (v ? searchFindNext(v) : false),
-    FindPrev: (_s, _d, v) => (v ? searchFindPrev(v) : false),
-  };
-
-  /** Build a PM keymap record from the current hotkeys map. Always includes
-      the undo/redo stack — those are hardcoded because rebinding them
-      invariably breaks in ways users don't expect. Also keeps F3 / Shift-F3
-      aliases for FindNext / FindPrev (legacy Windows affordance; independent
-      of the user's Ctrl-G remap). */
   function buildKeymap(hk: Record<string, string>): Record<string, Command> {
     const bindings: Record<string, Command> = {
-      "Mod-z": undo,
-      "Mod-y": redo,
-      "Mod-Shift-z": redo,
+      "Mod-z": EDITOR_COMMANDS.Undo,
+      "Mod-y": EDITOR_COMMANDS.Redo,
+      "Mod-Shift-z": EDITOR_COMMANDS.Redo,
     };
     for (const action of HOTKEY_ACTIONS) {
       if (!action.editor) continue;
       const raw = hk[action.id];
       if (!raw) continue;
       const pmKey = toPMKey(raw);
-      const cmd = EDITOR_COMMANDS[action.id];
-      if (!pmKey || !cmd) continue;
-      bindings[pmKey] = cmd;
+      if (pmKey) bindings[pmKey] = EDITOR_COMMANDS[action.id];
     }
     // F3 / Shift-F3 stay hardcoded as Windows-convention aliases — users can
     // still rebind FindNext to something else without losing these.
-    bindings["F3"] = (_s, _d, v) => (v ? searchFindNext(v) : false);
-    bindings["Shift-F3"] = (_s, _d, v) => (v ? searchFindPrev(v) : false);
+    bindings["F3"] = EDITOR_COMMANDS.FindNext;
+    bindings["Shift-F3"] = EDITOR_COMMANDS.FindPrev;
     return bindings;
   }
 
@@ -429,9 +387,10 @@
     lastMountedFB = null;
   });
 
-  export function exec(cmd: (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean): void {
+  /** Run a command from outside the editor, such as a toolbar button. */
+  export function run(id: CommandId): void {
     if (!view) return;
-    cmd(view.state, view.dispatch);
+    EDITOR_COMMANDS[id](view.state, view.dispatch, view);
     view.focus();
   }
 
@@ -451,19 +410,6 @@
     insertTableCmd(e.detail.rows, e.detail.cols, e.detail.header)(view.state, view.dispatch);
     view.focus();
   }
-
-  // Re-export commands so App.svelte can import-and-bind from the same place.
-  export {
-    toggleStrong, toggleEmphasis, toggleStrikethrough,
-    toggleSub, toggleSup, toggleCode,
-    styleNormal, styleSubtitle, styleTextAuthor,
-    insertEmptyLine,
-    cloneContainer, removeOuterContainer,
-    addTitle, addEpigraph, addAnnotation, addTextAuthor,
-    insertCite, insertPoem,
-    mergeContainers,
-    undo, redo,
-  };
 </script>
 
 <div bind:this={container} class="editor" />

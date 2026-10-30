@@ -6,6 +6,31 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 107 — 2026-10-30 — Typed command registry; toolbar shows the user's real hotkeys → v3.12.0 [dev]
+
+The same command set was listed three times in `Editor.svelte` plus `Toolbar.svelte`, and the
+toolbar did `(editor as any)[name]`, so a typo was a silently dead button. `EDITOR_COMMANDS` was
+kept "in sync by comment" with `HOTKEY_ACTIONS`.
+
+- `editor/commandRegistry.ts` is the single `Record<CommandId, Command>`. `CommandId` is derived
+  from the `editor: true` rows of `HOTKEY_ACTIONS` (now `as const satisfies`), so a row with no
+  command, or a wrong id at a call site, no longer compiles.
+- `Editor` exposes `run(id)`; the `exec` export and the re-export block of 21 commands are gone.
+- Toolbar tooltips come from the user's bindings through `displayAccel`, and they used to
+  hard-code `⌘B` even after a rebind. Undo and Redo stay fixed, since those keys are not rebindable.
+
+Verified in WebKit: tooltip from settings, bold and undo by button and hotkey, Cite, F3 with focus
+in the editor.
+
+### Files Modified
+
+- `frontend/src/editor/commandRegistry.ts` (new).
+- `frontend/src/editor/Editor.svelte`, `Toolbar.svelte`, `frontend/src/App.svelte`.
+- `frontend/src/settings/hotkeys.ts` — `EditorActionId`; `settings/SettingsDialog.svelte` — types.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.11.0 → 3.12.0.
+
+---
+
 ## Rev 106 — 2026-10-30 — Insert commands ask the schema instead of repeating it → v3.11.0 [dev]
 
 `insertCite`, `insertPoem` and `insertTableCmd` carried hand-written parent lists, a second
