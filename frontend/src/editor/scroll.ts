@@ -44,10 +44,6 @@ export function scrollContainer(view: EditorView): HTMLElement | null {
   return el;
 }
 
-function isAlive(view: EditorView): boolean {
-  return (view as unknown as { docView: unknown }).docView !== null;
-}
-
 let currentRun = 0;
 
 /**
@@ -71,7 +67,7 @@ export function scrollPosIntoView(
     if (!force) return;
     // Two frames: the section must have painted as on-screen before `auto` takes over again.
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (run === currentRun && isAlive(view)) {
+      if (run === currentRun && !view.isDestroyed) {
         view.dispatch(view.state.tr.setMeta(forceKey, DecorationSet.empty));
       }
     }));
@@ -79,7 +75,7 @@ export function scrollPosIntoView(
 
   let frames = 0;
   const step = () => {
-    if (run !== currentRun || !isAlive(view)) return;
+    if (run !== currentRun || view.isDestroyed) return;
     let coords: { top: number; bottom: number };
     try {
       coords = view.coordsAtPos(Math.min(pos, view.state.doc.content.size));

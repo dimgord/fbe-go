@@ -6,6 +6,34 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 97 — 2026-10-30 — Hotkey changes no longer reset editor plugins; PM's public `isDestroyed` → v3.2.0 [dev]
+
+The plugin list existed twice in `Editor.svelte`, once in `mount` and once in a
+`reconfigure` run on Settings → Apply. Forgetting a site was the small problem (Rev 95
+nearly did). The real one: `reconfigure` keeps plugin state but destroys and recreates
+every plugin **view**. That reset `dirtyPlugin`'s baseline and last-emitted flag with
+no event to App, so undo after Apply reported clean or dirty wrongly, and
+`searchPlugin`'s view `destroy` blanked the store, so an open find bar said "No matches"
+over live highlights.
+
+Hotkeys now live in one `handleKeyDown` plugin that reads `activeKeymap`, a reactive
+`keydownHandler(buildKeymap(hotkeys))`. Changing hotkeys touches no plugin, so the second
+list, `lastHotkeys` and the `reconfigure` are gone.
+
+Separately, the four casts to PM's private `docView` (`scroll.ts`, `search/plugin.ts`,
+twice in `binary/refs.ts`) became the public `view.isDestroyed`.
+
+Verified: `svelte-check`, `vitest` 85/85, and in WebKit that search, F3 and Shift+F3 still
+work through the new key path. The Settings → Apply path itself was not driven in WebKit.
+
+### Files Modified
+
+- `frontend/src/editor/Editor.svelte` — `activeKeymap`, `reconfigure` block removed.
+- `frontend/src/editor/scroll.ts`, `search/plugin.ts`, `search/plugin.test.ts`, `binary/refs.ts` — `isDestroyed`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.1.0 → 3.2.0.
+
+---
+
 ## Rev 96 — 2026-10-30 — Data safety: atomic writes, lossless annotation editor, Save from Description → v3.1.0 [dev]
 
 First stage of the fixes from the OOP/DRY review.

@@ -13,7 +13,7 @@ function fakeView(text: string): EditorView {
   const doc = schema.node("doc", null, [schema.node("p", null, [schema.text(text)])]);
   const view = {
     state: EditorState.create({ doc, plugins: [searchPlugin()] }),
-    docView: {},
+    isDestroyed: false,
     dom: { scrollHeight: 0, clientHeight: 0, parentElement: null },
     dispatch(tr: Parameters<EditorState["apply"]>[0]) {
       view.state = view.state.apply(tr);

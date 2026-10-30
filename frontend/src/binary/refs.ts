@@ -71,7 +71,7 @@ export function renameBinary(
     }
   }
 
-  if (view && (view as unknown as { docView: unknown }).docView !== null) {
+  if (view && !view.isDestroyed) {
     const tr = view.state.tr;
     let edits = 0;
     view.state.doc.descendants((node, pos) => {
@@ -111,7 +111,7 @@ export function countBinaryRefs(
   }
 
   let editorRefs = 0;
-  if (view && (view as unknown as { docView: unknown }).docView !== null) {
+  if (view && !view.isDestroyed) {
     view.state.doc.descendants((node) => {
       if (node.type.name !== "image_block" && node.type.name !== "image_inline") return;
       if (hrefMatches(node.attrs.href, id)) editorRefs++;

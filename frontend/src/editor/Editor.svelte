@@ -3,7 +3,7 @@
   import { EditorState, Plugin, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
   import { history, redo, undo, undoDepth } from "prosemirror-history";
-  import { keymap } from "prosemirror-keymap";
+  import { keydownHandler, keymap } from "prosemirror-keymap";
   import { baseKeymap } from "prosemirror-commands";
   import { Node as PMNode } from "prosemirror-model";
   import { fb2Schema } from "./schema";
@@ -31,10 +31,9 @@
 
   export let fb: FictionBook | null = null;
 
-  /** User-configurable hotkey map, loaded from settings.Hotkeys. Passing a
-      new object identity triggers a reconfigure — history / document survive,
-      but the keymap plugin is swapped. Empty / missing actions are simply
-      not bound. */
+  /** User-configurable hotkey map, loaded from settings.Hotkeys. A new object
+      takes effect at once, see `activeKeymap`. Empty / missing actions are
+      simply not bound. */
   export let hotkeys: Record<string, string> = {};
 
   /** Export the EditorView so the toolbar in App.svelte can dispatch commands. */
@@ -305,7 +304,7 @@
       doc,
       plugins: [
         history(),
-        keymap(buildKeymap(hotkeys)),
+        new Plugin({ props: { handleKeyDown: (v, e) => activeKeymap(v, e) } }),
         keymap({ "Mod-[": noteLinksBack }),
         keymap(baseKeymap),
         searchPlugin(),
@@ -324,29 +323,11 @@
         image_inline: (node) => createImageView(node),
       },
     });
-    lastHotkeys = hotkeys;
   }
 
-  /** Rebuild just the user-facing keymap without re-mounting — preserves
-      document state, selection, and undo history via PluginKey continuity
-      in prosemirror-history (historyKey) and our searchPlugin (searchPluginKey).
-      Called when the parent writes a new `hotkeys` object (Settings → Apply). */
-  let lastHotkeys: Record<string, string> | null = null;
-  $: if (view && hotkeys !== lastHotkeys) {
-    lastHotkeys = hotkeys;
-    view.updateState(view.state.reconfigure({
-      plugins: [
-        history(),
-        keymap(buildKeymap(hotkeys)),
-        keymap({ "Mod-[": noteLinksBack }),
-        keymap(baseKeymap),
-        searchPlugin(),
-        scrollForcePlugin(),
-        noteLinksPlugin(),
-        dirtyPlugin(),
-      ],
-    }));
-  }
+  /** Settings → Apply swaps the bindings here. Never `reconfigure` for this: PM destroys every
+   *  plugin view on it, which reset the dirty baseline and blanked the search bar. */
+  $: activeKeymap = keydownHandler(buildKeymap(hotkeys));
 
   /**
    * Build a PM doc from the FictionBook; on schema failure, fall back to a

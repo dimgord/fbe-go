@@ -226,12 +226,12 @@ export function searchPlugin(): Plugin<SearchState> {
 //    EditorView; it's cleaner than wrapping every dispatch in a PM command. ──
 
 /**
- * `view.docView` is null on a destroyed EditorView — guard all entry points
+ * Guard all entry points
  * so stale refs propagated through `bind:view` during a view-switch don't
  * trip PM's internal `docView.matchesNode` on a dead view.
  */
 function isAlive(view: EditorView | undefined): view is EditorView {
-  return !!view && (view as unknown as { docView: unknown }).docView !== null;
+  return !!view && !view.isDestroyed;
 }
 
 export function setSearch(view: EditorView, pattern: string, flags: SearchFlags): void {
