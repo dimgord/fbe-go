@@ -6,7 +6,7 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
-## Rev 93 — 2026-10-30 — XSD validation on pure-Go helium; libxml2 and `-tags xsd` removed → v1.0.7 [dev]
+## Rev 93 — 2026-10-30 — XSD validation on pure-Go helium; libxml2 and `-tags xsd` removed → v2.0.0 [dev]
 
 The v1.0.6 release (Rev 92) never published: both Linux jobs failed to compile.
 GitHub's `ubuntu-latest` moved to 26.04 with libxml2 2.15, whose
@@ -76,7 +76,9 @@ pass locally; Linux is verified by this push's CI.
 - `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `flake.nix`.
 - `app.go` (comments), `frontend/src/help/HelpDialog.svelte` (credits).
 - `README.md`, `NOTICE.md`, `CLAUDE.md`, `docs/ARCHITECTURE.md`.
-- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 1.0.6 → 1.0.7.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 1.0.6 → 2.0.0.
+  A major bump: the validator backend, the build (no `-tags xsd`, no libxml2) and the Go
+  toolchain floor (1.26) all changed; first committed as 1.0.7, raised to 2.0.0 in a follow-up.
 
 ---
 
