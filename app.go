@@ -622,6 +622,26 @@ func (a *App) RecentFiles() []string {
 	return s.RecentFiles
 }
 
+// RecentSearches returns the search history, most recent first.
+func (a *App) RecentSearches() []string {
+	s, err := a.settings.Load()
+	if err != nil || s.RecentSearches == nil {
+		return []string{}
+	}
+	return s.RecentSearches
+}
+
+// AddRecentSearch records query and returns the updated history.
+func (a *App) AddRecentSearch(query string) []string {
+	_ = a.settings.Update(func(s *settings.Settings) { s.AddRecentSearch(query) })
+	return a.RecentSearches()
+}
+
+// ClearRecentSearches empties the search history.
+func (a *App) ClearRecentSearches() error {
+	return a.settings.Update(func(s *settings.Settings) { s.RecentSearches = nil })
+}
+
 // RemoveFromRecent drops a path from the MRU list (e.g. when it no longer
 // exists on disk). No-op if absent.
 func (a *App) RemoveFromRecent(path string) error {

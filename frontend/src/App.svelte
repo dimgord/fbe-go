@@ -8,6 +8,8 @@
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
   import SearchBar from "./editor/search/SearchBar.svelte";
+  import PositionBar from "./tree/PositionBar.svelte";
+  import type { BookPosition } from "./tree/position";
   import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
   import UpdateBanner from "./updates/UpdateBanner.svelte";
   import type { updates as UpdatesNS } from "../wailsjs/go/models";
@@ -19,6 +21,7 @@
 
   type View = "body" | "description";
   let view: View = "body";
+  let position: BookPosition | null = null;
 
   let fb: FictionBook | null = null;
   let filename = "(untitled)";
@@ -1041,7 +1044,7 @@
       style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}`}
     >
       <aside>
-        <DocumentTree {fb} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
+        <DocumentTree {fb} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
       <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
       <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
@@ -1058,7 +1061,10 @@
         on:pointercancel={endDragOutline}
         on:keydown={onOutlineResizerKey}
       ></div>
-      <section><Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} /></section>
+      <section>
+        <Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} on:position={(e) => (position = e.detail)} />
+        <PositionBar {position} />
+      </section>
       {#if showPanel}
         <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->

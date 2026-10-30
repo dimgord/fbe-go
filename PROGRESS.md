@@ -6,6 +6,44 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 100 — 2026-10-30 — Recent searches and a position indicator → v3.5.0 [dev]
+
+**Recent searches.** The find box keeps a history of 20 queries between sessions. ↓ or the
+▾ button opens the list; ↑/↓ and Enter or a click pick an entry, which runs the search;
+Esc closes only the list; "Clear history" empties it. A query is recorded on Enter and on
+closing the bar, and only if it found something, so typing an incremental query or a typo
+adds no noise. The list lives in `Settings.RecentSearches`, written through new
+`AddRecentSearch` / `RecentSearches` / `ClearRecentSearches` bindings; `Store.Replace` keeps
+it from disk like the other Go-owned MRU fields. `pushFront` now backs both MRU lists.
+
+**Position indicator.** A thin bar stuck to the bottom of the text shows where you are,
+e.g. `Книга › Глава 3 · 42%`, and the outline highlights that section and keeps it in view.
+`tree/position.ts` is a pure `positionAt(doc, pos)`. Its paths match `buildOutline`, which
+a test asserts, because the highlight is a key match between the two. `Editor` reports the
+position at the top of the visible text, at most once a frame, on scroll and on doc changes.
+The listener is a capture-phase one on `window`, since scroll does not bubble. It reports
+reading position, not caret position: the point is "where am I", and the caret can be
+chapters behind after scrolling. Percent is by document position rather than pixels,
+because off-screen `content-visibility` sections make pixel heights meaningless.
+
+Verified in WebKit on the 142-section book: the bar follows scrolling, search jumps and
+outline clicks; the tree item stays highlighted and in view; history add, keyboard pick,
+mouse pick, Esc, no-match not saved, clear. Go tests cover the cap, dedupe and `Replace`.
+
+### Files Modified
+
+- `internal/fb2/settings/settings.go` — `RecentSearches`, `AddRecentSearch`, `pushFront`; tests.
+- `app.go` — three bindings.
+- `frontend/src/tree/position.ts`, `position.test.ts`, `PositionBar.svelte` (new).
+- `frontend/src/tree/DocumentTree.svelte`, `OutlineItem.svelte` — active item.
+- `frontend/src/editor/Editor.svelte` — `position` event.
+- `frontend/src/editor/search/SearchBar.svelte` — history dropdown.
+- `frontend/src/App.svelte` — wiring.
+- `README.md` — features.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.4.0 → 3.5.0.
+
+---
+
 ## Rev 99 — 2026-10-30 — Session and settings get owners; no more unsynchronized state in App → v3.4.0 [dev]
 
 Wails runs every bound method on its own goroutine, and `OnStartup` on another, but

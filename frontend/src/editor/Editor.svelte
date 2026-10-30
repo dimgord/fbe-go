@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, createEventDispatcher } from "svelte";
+  import { onDestroy, onMount, createEventDispatcher } from "svelte";
   import { EditorState, Plugin, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
   import { history, redo, undo, undoDepth } from "prosemirror-history";
@@ -12,7 +12,8 @@
   import { cleanPastedHTML, cleanPastedText } from "./paste";
   import { searchPlugin, findNext as searchFindNext, findPrev as searchFindPrev } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
-  import { scrollForcePlugin, scrollPosIntoView } from "./scroll";
+  import { scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
+  import { positionAt, type BookPosition } from "../tree/position";
   import {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
     toggleSub, toggleSup, toggleCode, toggleLink,
@@ -42,7 +43,7 @@
   /** Inferred from the document's title-info <lang> for native spellcheck routing. */
   $: lang = fb?.Description?.TitleInfo?.Lang || "en";
 
-  const dispatch = createEventDispatcher<{ dirty: boolean }>();
+  const dispatch = createEventDispatcher<{ dirty: boolean; position: BookPosition }>();
   let baselineUndoDepth = 0;
   let lastEmittedBodyDirty: boolean | null = null;
 
@@ -70,6 +71,41 @@
       },
     });
   }
+
+  // What sits at the top of the visible text, reported once per frame at most.
+  const POSITION_PROBE_Y = 40;
+  let positionFrame = 0;
+  let lastPosition = "";
+
+  function schedulePosition(): void {
+    if (!positionFrame) positionFrame = requestAnimationFrame(reportPosition);
+  }
+
+  function reportPosition(): void {
+    positionFrame = 0;
+    if (!view || view.isDestroyed) return;
+    const box = (scrollContainer(view) ?? (view.dom as HTMLElement)).getBoundingClientRect();
+    const hit = view.posAtCoords({ left: box.left + box.width / 2, top: box.top + POSITION_PROBE_Y });
+    if (!hit) return;
+    const next = positionAt(view.state.doc, hit.pos);
+    const key = `${next.path.join(".")}@${next.percent}`;
+    if (key !== lastPosition) {
+      lastPosition = key;
+      dispatch("position", next);
+    }
+  }
+
+  function onAnyScroll(e: Event): void {
+    if (view && e.target instanceof Node && e.target.contains(view.dom)) schedulePosition();
+  }
+
+  onMount(() => {
+    window.addEventListener("scroll", onAnyScroll, true); // scroll does not bubble
+    return () => {
+      window.removeEventListener("scroll", onAnyScroll, true);
+      cancelAnimationFrame(positionFrame);
+    };
+  });
 
   /** Re-snapshot the baseline at the current PM state. App.svelte calls
    *  this after a successful Save so subsequent undos that return to
@@ -311,6 +347,13 @@
         scrollForcePlugin(),
         noteLinksPlugin(),
         dirtyPlugin(),
+        new Plugin({
+          view: () => ({
+            update(v, prev) {
+              if (v.state.doc !== prev.doc) schedulePosition();
+            },
+          }),
+        }),
       ],
     });
     view = new EditorView(container, {
@@ -323,6 +366,7 @@
         image_inline: (node) => createImageView(node),
       },
     });
+    schedulePosition();
   }
 
   /** Settings → Apply swaps the bindings here. Never `reconfigure` for this: PM destroys every

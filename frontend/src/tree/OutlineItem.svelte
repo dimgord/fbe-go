@@ -3,6 +3,11 @@
   import type { OutlineNode } from "./outline";
 
   export let node: OutlineNode;
+  export let activeKey = "";
+
+  let button: HTMLButtonElement;
+  $: active = activeKey === node.path.join(".");
+  $: if (active && button) button.scrollIntoView({ block: "nearest" });
 
   const dispatch = createEventDispatcher<{ navigate: { path: number[] } }>();
 
@@ -19,7 +24,10 @@
 <li>
   <button
     type="button"
+    bind:this={button}
     class="item kind-{node.kind}"
+    class:active
+    aria-current={active ? "location" : undefined}
     on:click={handleClick}
     title={node.label}>
     {node.label}
@@ -27,7 +35,7 @@
   {#if node.children.length > 0}
     <ul>
       {#each node.children as child (child.path.join("."))}
-        <svelte:self node={child} on:navigate={onChildNavigate} />
+        <svelte:self node={child} {activeKey} on:navigate={onChildNavigate} />
       {/each}
     </ul>
   {/if}
@@ -57,6 +65,10 @@
     text-overflow: ellipsis;
   }
   .item:hover { background: var(--bg-hover); }
+  .item.active {
+    background: var(--bg-active);
+    color: var(--fg-strong);
+  }
   .item.kind-body {
     font-weight: 600;
     color: var(--fg-link);

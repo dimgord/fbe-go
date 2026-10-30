@@ -31,6 +31,7 @@ type Settings struct {
 	Panes             PaneSizes         `json:"panes"`
 	Hotkeys           map[string]string `json:"hotkeys"` // action -> accelerator (e.g. "InsertPoem": "Ctrl+Shift+P")
 	RecentFiles       []string          `json:"recentFiles"`
+	RecentSearches    []string          `json:"recentSearches"`
 	WordsList         []WordsEntry      `json:"wordsList"`
 	FastMode          bool              `json:"fastMode"`
 }
@@ -88,8 +89,11 @@ func ConfigPath() (string, error) {
 	return filepath.Join(dir, "fbe", "config.json"), nil
 }
 
-// recentFilesCap is the maximum length of the Most-Recently-Used list.
-const recentFilesCap = 10
+// Maximum lengths of the Most-Recently-Used lists.
+const (
+	recentFilesCap    = 10
+	recentSearchesCap = 20
+)
 
 // Store is the settings file. The app has several writers (recents, window geometry, the
 // Settings dialog) on different goroutines; Update serializes their read-modify-write cycles.
@@ -152,7 +156,7 @@ func (st *Store) Update(fn func(*Settings)) error {
 	return st.save(s)
 }
 
-// Replace stores settings edited by the frontend. Recent files and window geometry are kept
+// Replace stores settings edited by the frontend. The MRU lists and window geometry are kept
 // from disk: Go owns them, and the frontend's copy may be older.
 func (st *Store) Replace(next *Settings) error {
 	st.mu.Lock()
@@ -162,23 +166,33 @@ func (st *Store) Replace(next *Settings) error {
 		return err
 	}
 	merged := *next
-	merged.RecentFiles, merged.Window = cur.RecentFiles, cur.Window
+	merged.RecentFiles, merged.RecentSearches, merged.Window = cur.RecentFiles, cur.RecentSearches, cur.Window
 	return st.save(&merged)
 }
 
 // AddRecent moves path to the front of the MRU list, capped at recentFilesCap.
 func (s *Settings) AddRecent(path string) {
-	if path == "" {
-		return
+	s.RecentFiles = pushFront(s.RecentFiles, path, recentFilesCap)
+}
+
+// AddRecentSearch moves query to the front of the search history, capped at recentSearchesCap.
+func (s *Settings) AddRecentSearch(query string) {
+	s.RecentSearches = pushFront(s.RecentSearches, query, recentSearchesCap)
+}
+
+// pushFront returns list with item first, without its earlier occurrence, at most limit long.
+func pushFront(list []string, item string, limit int) []string {
+	if item == "" {
+		return list
 	}
-	out := make([]string, 0, recentFilesCap)
-	out = append(out, path)
-	for _, p := range s.RecentFiles {
-		if p != path && len(out) < recentFilesCap {
-			out = append(out, p)
+	out := make([]string, 0, limit)
+	out = append(out, item)
+	for _, x := range list {
+		if x != item && len(out) < limit {
+			out = append(out, x)
 		}
 	}
-	s.RecentFiles = out
+	return out
 }
 
 // RemoveRecent drops path from the MRU list; a no-op if absent.

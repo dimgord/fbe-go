@@ -96,7 +96,7 @@ func TestReplaceKeepsGoOwnedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Update(func(s *Settings) { s.AddRecent("/new.fb2"); s.Window.W = 900 }); err != nil {
+	if err := st.Update(func(s *Settings) { s.AddRecent("/new.fb2"); s.AddRecentSearch("q"); s.Window.W = 900 }); err != nil {
 		t.Fatal(err)
 	}
 	draft.Theme = "dark"
@@ -107,7 +107,7 @@ func TestReplaceKeepsGoOwnedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Theme != "dark" || len(got.RecentFiles) != 1 || got.Window.W != 900 {
+	if got.Theme != "dark" || len(got.RecentFiles) != 1 || len(got.RecentSearches) != 1 || got.Window.W != 900 {
 		t.Fatalf("got %+v", got)
 	}
 }
@@ -132,5 +132,29 @@ func TestConcurrentUpdatesAllLand(t *testing.T) {
 	}
 	if len(s.RecentFiles) != recentFilesCap {
 		t.Fatalf("lost updates: %v", s.RecentFiles)
+	}
+}
+
+func TestRecentSearches(t *testing.T) {
+	var s Settings
+	s.AddRecentSearch("")
+	if len(s.RecentSearches) != 0 {
+		t.Fatal("empty query recorded")
+	}
+	for i := 0; i < recentSearchesCap+5; i++ {
+		s.AddRecentSearch(fmt.Sprintf("q%d", i))
+	}
+	s.AddRecentSearch("q10")
+	if len(s.RecentSearches) != recentSearchesCap || s.RecentSearches[0] != "q10" {
+		t.Fatalf("history: %v", s.RecentSearches)
+	}
+	n := 0
+	for _, q := range s.RecentSearches {
+		if q == "q10" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("q10 appears %d times", n)
 	}
 }
