@@ -10,7 +10,8 @@
  *    Callers should merge the serialized bodies with the original description.
  *  - Binaries are likewise preserved from the original.
  */
-import type { Node as PMNode, Mark } from "prosemirror-model";
+import type { Node as PMNode } from "prosemirror-model";
+import { textToInline } from "./markCodec";
 import type {
   FictionBook, Body, Section, Block, Paragraph, Inline,
   Title, Epigraph, Annotation, Cite, Poem, Stanza,
@@ -277,7 +278,7 @@ function buildInlines(node: PMNode): Inline[] {
   const out: Inline[] = [];
   node.forEach((child) => {
     if (child.isText) {
-      pushTextWithMarks(child.text ?? "", child.marks, out);
+      out.push(textToInline(child.text ?? "", child.marks));
     } else if (child.type.name === "image_inline") {
       out.push({
         Image: {
@@ -292,51 +293,4 @@ function buildInlines(node: PMNode): Inline[] {
     }
   });
   return out;
-}
-
-/**
- * Convert a PM text node with marks into an Inline. We nest marks
- * right-to-left so the outermost element corresponds to the first mark.
- * Order-within-marks: strong > emphasis > strikethrough > sub > sup > code > style > link.
- */
-function pushTextWithMarks(text: string, marks: readonly Mark[], out: Inline[]): void {
-  if (marks.length === 0) {
-    out.push({ Text: text });
-    return;
-  }
-  const ordered = [...marks].sort((a, b) => markOrder(a) - markOrder(b));
-  let inner: Inline = { Text: text };
-  for (let i = ordered.length - 1; i >= 0; i--) {
-    inner = wrapMark(ordered[i], inner);
-  }
-  out.push(inner);
-}
-
-function markOrder(m: Mark): number {
-  switch (m.type.name) {
-    case "strong":        return 1;
-    case "emphasis":      return 2;
-    case "strikethrough": return 3;
-    case "sub":           return 4;
-    case "sup":           return 5;
-    case "code":          return 6;
-    case "style":         return 7;
-    case "link":          return 8;
-    default:              return 99;
-  }
-}
-
-function wrapMark(m: Mark, child: Inline): Inline {
-  const children: Inline[] = [child];
-  switch (m.type.name) {
-    case "strong":        return { Strong: { Children: children } };
-    case "emphasis":      return { Emphasis: { Children: children } };
-    case "strikethrough": return { Strikethrough: { Children: children } };
-    case "sub":           return { Sub: { Children: children } };
-    case "sup":           return { Sup: { Children: children } };
-    case "code":          return { Code: { Children: children } };
-    case "style":         return { Style: { Name: m.attrs.name ?? "", Children: children } };
-    case "link":          return { A: { Href: m.attrs.href ?? "", Type: m.attrs.type ?? "", Children: children } };
-  }
-  return child;
 }

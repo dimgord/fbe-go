@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fb2ToPMDoc } from "../editor/parse";
-import { buildOutline } from "./outline";
+import { buildOutline, findNodePos } from "./outline";
 import { positionAt } from "./position";
 import type { Block, FictionBook, Section } from "../fb2/types";
 
@@ -68,6 +68,17 @@ describe("positionAt", () => {
     for (const text of ["in one", "lead", "in two a", "in two b", "a note"]) {
       expect(known).toContain(positionAt(doc, posOf(doc, text)).path.join("."));
     }
+  });
+
+  it("round-trips through findNodePos for every outline node", () => {
+    for (const path of outlinePaths(buildOutline(book))) {
+      const nums = path.split(".").map(Number);
+      const pos = findNodePos(doc, nums);
+      expect(pos).not.toBeNull();
+      expect(positionAt(doc, pos! + 1).path).toEqual(nums);
+    }
+    expect(findNodePos(doc, [9])).toBeNull();
+    expect(findNodePos(doc, [])).toBeNull();
   });
 
   it("grows from start to end and stays within 0–100", () => {

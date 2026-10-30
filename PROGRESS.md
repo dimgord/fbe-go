@@ -6,6 +6,35 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 108 — 2026-10-30 — Mark table; Editor.svelte is view lifecycle only → v3.13.0 [dev]
+
+- **`editor/markCodec.ts`.** Mark name, FB2 field, nesting order and attributes were spelled out
+  in `parse.ts`, `serialize.ts` and `outline.ts` (the `AnnotationEditor` copy went in Rev 96).
+  One ordered table now drives all three, and `plainText` replaces `flattenInlines`. Adding a
+  mark is one row.
+- **`editor/dirtyTracker.ts`.** The baseline moved from a closure set by the plugin view into
+  keyed plugin state, so it can no longer be lost when a view is recreated (the root cause fixed
+  around in Rev 97). `markSaved` is now a transaction. Tests cover undo back to clean and undo
+  past the saved point, which the old code had none of.
+- **`editor/imageView.ts`.** `createImageViews(getBinaries)` holds the NodeViews and their cache.
+  A missing image now drops `src` instead of setting an empty one.
+- **`findNodePos` → `tree/outline.ts`,** beside the code that creates those paths, with a
+  round-trip test against `positionAt` for every outline node. **`errorDoc` → `parse.ts`.**
+
+`Editor.svelte` goes from 660 lines at the review to 462.
+
+Verified in WebKit: a body edit is dirty, undo clears it, Save clears it, undo past the save is
+dirty again; images resolve; the outline jumps; toolbar, hotkeys and F3 still work.
+
+### Files Modified
+
+- `frontend/src/editor/markCodec.ts`, `dirtyTracker.ts`, `dirtyTracker.test.ts`, `imageView.ts` (new).
+- `frontend/src/editor/Editor.svelte`, `parse.ts`, `serialize.ts`.
+- `frontend/src/tree/outline.ts`, `position.test.ts`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.12.0 → 3.13.0.
+
+---
+
 ## Rev 107 — 2026-10-30 — Typed command registry; toolbar shows the user's real hotkeys → v3.12.0 [dev]
 
 The same command set was listed three times in `Editor.svelte` plus `Toolbar.svelte`, and the

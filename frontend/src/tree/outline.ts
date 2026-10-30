@@ -8,7 +8,9 @@
  *  - kind:  which FB2 element the node corresponds to
  *  - children: nested outline nodes
  */
-import type { FictionBook, Section, Title, Inline } from "../fb2/types";
+import type { Node as PMNode } from "prosemirror-model";
+import type { FictionBook, Section, Title } from "../fb2/types";
+import { plainText } from "../editor/markCodec";
 
 export type OutlineKind = "body" | "section";
 
@@ -60,23 +62,30 @@ function titleText(t: Title | null | undefined): string {
   if (!t) return "";
   const parts: string[] = [];
   for (const block of t.Children ?? []) {
-    if (block.Paragraph) parts.push(flattenInlines(block.Paragraph.Children ?? []));
+    if (block.Paragraph) parts.push(plainText(block.Paragraph.Children ?? []));
   }
   return parts.join(" ").trim();
 }
 
-function flattenInlines(items: Inline[]): string {
-  let out = "";
-  for (const i of items) {
-    if (i.Text) out += i.Text;
-    if (i.Strong?.Children)        out += flattenInlines(i.Strong.Children);
-    if (i.Emphasis?.Children)      out += flattenInlines(i.Emphasis.Children);
-    if (i.Strikethrough?.Children) out += flattenInlines(i.Strikethrough.Children);
-    if (i.Sub?.Children)           out += flattenInlines(i.Sub.Children);
-    if (i.Sup?.Children)           out += flattenInlines(i.Sup.Children);
-    if (i.Code?.Children)          out += flattenInlines(i.Code.Children);
-    if (i.Style?.Children)         out += flattenInlines(i.Style.Children);
-    if (i.A?.Children)             out += flattenInlines(i.A.Children);
+/** The position of the body or section at an outline path, counting same-type siblings. */
+export function findNodePos(doc: PMNode, path: number[]): number | null {
+  let cursor = doc;
+  let pos = 0;
+  for (let depth = 0; depth < path.length; depth++) {
+    const type = depth === 0 ? "body" : "section";
+    let seen = 0;
+    let found = false;
+    for (let c = 0; c < cursor.childCount && !found; c++) {
+      const child = cursor.child(c);
+      if (child.type.name === type && seen++ === path[depth]) {
+        pos += 1;
+        cursor = child;
+        found = true;
+      } else {
+        pos += child.nodeSize;
+      }
+    }
+    if (!found) return null;
   }
-  return out;
+  return path.length > 0 ? pos : null;
 }

@@ -15,6 +15,7 @@ import type {
   Table, Image,
 } from "../fb2/types";
 import { fb2Schema } from "./schema";
+import { wrappersOf } from "./markCodec";
 
 const N = fb2Schema.nodes;
 const M = fb2Schema.marks;
@@ -25,6 +26,20 @@ export function fb2ToPMDoc(fb: FictionBook): PMNode {
     return fb2Schema.topNodeType.createAndFill()!;
   }
   return N.doc.create(null, bodies);
+}
+
+/** Stands in for a book that cannot be rendered, so the app stays alive instead of going blank. */
+export function errorDoc(message: string): PMNode {
+  const text = (t: string) => N.paragraph.create(null, fb2Schema.text(t));
+  return N.doc.create(null, [
+    N.body.create(null, [
+      N.section.create(null, [
+        N.title.create(null, [text("Could not render this document")]),
+        text(message),
+        text("The raw FB2 is still loaded — Save As will write it back unchanged."),
+      ]),
+    ]),
+  ]);
 }
 
 function buildBody(body: Body): PMNode | null {
@@ -263,19 +278,10 @@ function pushInline(i: Inline, marks: Mark[], out: PMNode[]): void {
     out.push(fb2Schema.text(i.Text, marks));
   }
 
-  const wrap = (markName: keyof typeof M, attrs: Record<string, unknown> = {}, children: Inline[] = []) => {
-    const m = M[markName].create(attrs);
-    for (const c of children) pushInline(c, marks.concat([m]), out);
-  };
-
-  if (i.Strong)        wrap("strong", {}, i.Strong.Children ?? []);
-  if (i.Emphasis)      wrap("emphasis", {}, i.Emphasis.Children ?? []);
-  if (i.Strikethrough) wrap("strikethrough", {}, i.Strikethrough.Children ?? []);
-  if (i.Sub)           wrap("sub", {}, i.Sub.Children ?? []);
-  if (i.Sup)           wrap("sup", {}, i.Sup.Children ?? []);
-  if (i.Code)          wrap("code", {}, i.Code.Children ?? []);
-  if (i.Style)         wrap("style", { name: i.Style.Name }, i.Style.Children ?? []);
-  if (i.A)             wrap("link", { href: i.A.Href, type: i.A.Type ?? "" }, i.A.Children ?? []);
+  for (const { codec, wrapper } of wrappersOf(i)) {
+    const m = M[codec.mark].create(codec.attrs?.(wrapper) ?? {});
+    for (const c of wrapper.Children ?? []) pushInline(c, marks.concat([m]), out);
+  }
 
   if (i.Image) {
     out.push(N.image_inline.create({

@@ -2,25 +2,27 @@
   import { onDestroy, onMount, createEventDispatcher } from "svelte";
   import { EditorState, Plugin, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
-  import { history, undoDepth } from "prosemirror-history";
+  import { history } from "prosemirror-history";
   import { keydownHandler, keymap } from "prosemirror-keymap";
   import { baseKeymap } from "prosemirror-commands";
   import { Node as PMNode } from "prosemirror-model";
   import { fb2Schema } from "./schema";
-  import { fb2ToPMDoc } from "./parse";
+  import { errorDoc, fb2ToPMDoc } from "./parse";
   import { pmDocToFB2 } from "./serialize";
   import { cleanPastedHTML, cleanPastedText } from "./paste";
   import { searchPlugin } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
   import { scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
   import { positionAt, type BookPosition } from "../tree/position";
+  import { findNodePos } from "../tree/outline";
+  import { dirtyPlugin, markClean } from "./dirtyTracker";
+  import { createImageViews } from "./imageView";
   import { toggleLink, insertTableCmd } from "./commands";
   import { EDITOR_COMMANDS, type CommandId } from "./commandRegistry";
   import { HOTKEY_ACTIONS, toPMKey } from "../settings/hotkeys";
   import type { Command } from "prosemirror-state";
   import TableDialog from "./TableDialog.svelte";
   import type { FictionBook, Binary } from "../fb2/types";
-  import type { NodeView } from "prosemirror-view";
 
   export let fb: FictionBook | null = null;
 
@@ -36,34 +38,6 @@
   $: lang = fb?.Description?.TitleInfo?.Lang || "en";
 
   const dispatch = createEventDispatcher<{ dirty: boolean; position: BookPosition }>();
-  let baselineUndoDepth = 0;
-  let lastEmittedBodyDirty: boolean | null = null;
-
-  /** Body edits are tracked via PM's undo stack: capture baseline on
-   *  view creation, emit `dirty: true` when the depth grows past it
-   *  and `dirty: false` once the user undoes back to it. Baseline is
-   *  set in the view-factory (called at view creation, before any
-   *  transactions) — capturing it inside `update` would set it AFTER
-   *  the first user edit, leaving undo-to-clean unreachable. */
-  function dirtyPlugin(): Plugin {
-    return new Plugin({
-      view: (v) => {
-        baselineUndoDepth = undoDepth(v.state);
-        lastEmittedBodyDirty = false;
-        return {
-          update(v, prev) {
-            if (v.state.doc === prev.doc) return;
-            const dirty = undoDepth(v.state) > baselineUndoDepth;
-            if (lastEmittedBodyDirty !== dirty) {
-              lastEmittedBodyDirty = dirty;
-              dispatch("dirty", dirty);
-            }
-          },
-        };
-      },
-    });
-  }
-
   // What sits at the top of the visible text, reported once per frame at most.
   const POSITION_PROBE_Y = 40;
   let positionFrame = 0;
@@ -99,18 +73,10 @@
     };
   });
 
-  /** Re-snapshot the baseline at the current PM state. App.svelte calls
-   *  this after a successful Save so subsequent undos that return to
-   *  the just-saved point are recognised as clean. */
+  /** The current state is saved: undoing back to it now reads as clean. */
   export function markSaved(): void {
-    if (!view) return;
-    baselineUndoDepth = undoDepth(view.state);
-    if (lastEmittedBodyDirty !== false) {
-      lastEmittedBodyDirty = false;
-      dispatch("dirty", false);
-    }
+    if (view) markClean(view);
   }
-
 
   /** Serialize current PM doc back to a FictionBook, merged with the original description + binaries. */
   export function currentFB(): FictionBook | null {
@@ -143,133 +109,12 @@
     }
   }
 
-  /** Walk the doc by outline path: [bodyIdx, sectionIdx, sub, …]. Returns the position of that node. */
-  function findNodePos(doc: PMNode, path: number[]): number | null {
-    if (path.length === 0) return null;
-    // Step 0: the bodyIdx-th body child of doc.
-    let cursor = doc;
-    let absPos = 0;
-    let remaining = path.slice();
-    // Descend through body → section → sub…
-    // First, pick body.
-    const bodyIdx = remaining.shift()!;
-    let i = 0;
-    for (let c = 0; c < cursor.childCount; c++) {
-      const child = cursor.child(c);
-      if (child.type.name === "body") {
-        if (i === bodyIdx) {
-          absPos += 1; // enter body
-          cursor = child;
-          break;
-        }
-        i++;
-      }
-      absPos += child.nodeSize;
-    }
-    // Then descend into sections.
-    while (remaining.length > 0) {
-      const want = remaining.shift()!;
-      let sIdx = 0;
-      let found = false;
-      for (let c = 0; c < cursor.childCount; c++) {
-        const child = cursor.child(c);
-        if (child.type.name === "section") {
-          if (sIdx === want) {
-            absPos += 1; // enter section
-            cursor = child;
-            found = true;
-            break;
-          }
-          sIdx++;
-        }
-        absPos += child.nodeSize;
-      }
-      if (!found) return null;
-    }
-    return absPos;
-  }
-
   let container: HTMLDivElement;
 
-  // Image rendering: schema.ts' toDOM generates `fb2://binary${href}` which
-  // relies on a custom asset-server handler we never wired up — images would
-  // otherwise render as broken icons. We resolve href → `data:` URL on the
-  // fly via NodeViews, closed over a shared binariesRef that we refresh
-  // whenever fb.Binaries identity changes (file open, upload, rename,
-  // delete). `refreshImageViews()` iterates every active NodeView and
-  // re-resolves its src — cheap, since each view only reassigns img.src.
-  //
-  // Serialization is unaffected: pmDocToFB2 only reads node.attrs.href.
-  let binariesRef: { current: Binary[] } = { current: [] };
-  $: binariesRef.current = fb?.Binaries ?? [];
-  const imageViews = new Set<ImageNodeView>();
-
-  interface ImageNodeView extends NodeView {
-    refresh(): void;
-  }
-
-  function resolveBinary(href: string | undefined): string {
-    if (!href) return "";
-    const id = href.replace(/^#/, "");
-    const bin = binariesRef.current.find(b => b.ID === id);
-    return bin ? `data:${bin.ContentType};base64,${bin.Data}` : "";
-  }
-
-  function refreshImageViews(): void {
-    for (const v of imageViews) v.refresh();
-  }
-
-  // Re-resolve every image whenever the binaries array changes identity —
-  // new upload / delete / rename cascades here and images pick up fresh
-  // data: URLs without needing a PM remount (which would blow undo history).
-  $: void fb?.Binaries, refreshImageViews();
-
-  function createImageView(node: PMNode): ImageNodeView {
-    const blockLevel = node.type.name === "image_block";
-    const wrap = document.createElement(blockLevel ? "div" : "span");
-    wrap.className = "image";
-    if (node.attrs.href) wrap.setAttribute("data-href", node.attrs.href);
-    if (node.attrs.title) wrap.title = node.attrs.title;
-
-    const img = document.createElement("img");
-    img.alt = node.attrs.alt || "";
-    const resolved = resolveBinary(node.attrs.href);
-    if (resolved) {
-      img.src = resolved;
-    } else {
-      img.classList.add("missing");
-    }
-    wrap.appendChild(img);
-
-    // Keep a mutable reference to the current node so refresh() uses the
-    // latest href (after setNodeMarkup) without needing another update()
-    // round-trip.
-    let current = node;
-    const nv: ImageNodeView = {
-      dom: wrap,
-      update(next) {
-        if (next.type !== current.type) return false;
-        current = next;
-        wrap.setAttribute("data-href", next.attrs.href || "");
-        wrap.title = next.attrs.title || "";
-        img.alt = next.attrs.alt || "";
-        const src = resolveBinary(next.attrs.href);
-        img.src = src;
-        img.classList.toggle("missing", !src);
-        return true;
-      },
-      refresh() {
-        const src = resolveBinary(current.attrs.href);
-        img.src = src;
-        img.classList.toggle("missing", !src);
-      },
-      destroy() {
-        imageViews.delete(nv);
-      },
-    };
-    imageViews.add(nv);
-    return nv;
-  }
+  let binaries: Binary[] = [];
+  $: binaries = fb?.Binaries ?? [];
+  const images = createImageViews(() => binaries);
+  $: binaries, images.refresh();
 
   function buildKeymap(hk: Record<string, string>): Record<string, Command> {
     const bindings: Record<string, Command> = {
@@ -304,7 +149,7 @@
         searchPlugin(),
         scrollForcePlugin(),
         noteLinksPlugin(),
-        dirtyPlugin(),
+        dirtyPlugin((dirty) => dispatch("dirty", dirty)),
         new Plugin({
           view: () => ({
             update(v, prev) {
@@ -319,10 +164,7 @@
       attributes: { spellcheck: "true", lang },
       transformPastedHTML: cleanPastedHTML,
       transformPastedText: cleanPastedText,
-      nodeViews: {
-        image_block: (node) => createImageView(node),
-        image_inline: (node) => createImageView(node),
-      },
+      nodeViews: images.nodeViews,
     });
     schedulePosition();
   }
@@ -342,18 +184,7 @@
       return fb2ToPMDoc(src);
     } catch (err) {
       console.error("[fbe] fb2ToPMDoc failed:", err, src);
-      const msg = (err as Error).message || String(err);
-      const N = fb2Schema.nodes;
-      const body = N.body.create(null, [
-        N.section.create(null, [
-          N.title.create(null, [
-            N.paragraph.create(null, fb2Schema.text("Could not render this document")),
-          ]),
-          N.paragraph.create(null, fb2Schema.text(msg)),
-          N.paragraph.create(null, fb2Schema.text("The raw FB2 is still loaded — Save As will write it back unchanged.")),
-        ]),
-      ]);
-      return N.doc.create(null, [body]);
+      return errorDoc((err as Error).message || String(err));
     }
   }
 
