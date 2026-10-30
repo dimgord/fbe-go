@@ -649,13 +649,18 @@
     }
   }
 
+  /** The document as it stands now: the live editor in body view, `fb` otherwise (the switch away
+   *  from body flushed into it, and the description forms edit it directly). */
+  function liveDoc(): FictionBook | null {
+    return (view === "body" && editor) ? editor.currentFB() : fb;
+  }
+
   async function save(saveAs: boolean) {
     error = ""; status = "";
     try {
       const App = await wailsApp();
       if (!App) throw new Error("Wails bindings not available — save works only in the desktop app.");
-      if (!editor) throw new Error("Editor not ready.");
-      const current = editor.currentFB();
+      const current = liveDoc();
       if (!current) throw new Error("No document loaded.");
 
       let path = currentPath;
@@ -686,8 +691,7 @@
     try {
       const App = await wailsApp();
       if (!App) throw new Error("Wails bindings not available.");
-      if (!editor) throw new Error("Editor not ready.");
-      const current = editor.currentFB();
+      const current = liveDoc();
       if (current) {
         // @ts-expect-error
         await App.UpdateDocument(current);
@@ -712,7 +716,7 @@
 
       // Push the latest editor state to Go (if we're in body view) so the
       // serialized XML and the validation result reflect unsaved edits.
-      const current = (view === "body" && editor) ? editor.currentFB() : fb;
+      const current = liveDoc();
       if (current) {
         // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
         await App.UpdateDocument(current);
@@ -993,10 +997,10 @@
         </ul>
       {/if}
     </div>
-    <button on:click={() => save(false)} disabled={!editor}>Save</button>
-    <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
+    <button on:click={() => save(false)} disabled={!fb}>Save</button>
+    <button on:click={() => save(true)} disabled={!fb}>Save As…</button>
     <button on:click={validate} disabled={!fb}>Validate</button>
-    <button on:click={exportHTML} disabled={!editor}>Export HTML…</button>
+    <button on:click={exportHTML} disabled={!fb}>Export HTML…</button>
     <button on:click={() => (showSettings = true)} title="Settings" aria-label="Open settings">⚙</button>
     <button on:click={() => (showHelp = true)} title="Keyboard shortcuts and about">Help</button>
     <button

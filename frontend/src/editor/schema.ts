@@ -71,6 +71,7 @@ const nodes: Record<string, NodeSpec> = {
   },
 
   annotation: {
+    attrs: { id: { default: null }, lang: { default: null } },
     content: "(paragraph | poem | cite | subtitle | empty_line | table | raw_block)+",
     group: "structural",
     toDOM: () => ["div", { class: "annotation" }, 0],

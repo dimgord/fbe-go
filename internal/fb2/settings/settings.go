@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/dimgord/fbe-go/internal/fb2/fsutil"
 )
 
 // Settings captures everything originally held in FBE's Settings.h.
@@ -135,7 +137,7 @@ func Save(s *Settings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o644)
+	return fsutil.WriteFile(p, data)
 }
 
 // Default returns a reasonable starting configuration.

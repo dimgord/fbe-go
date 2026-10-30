@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"io"
 	"os"
 
 	"log"
@@ -28,6 +29,7 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
+	"github.com/dimgord/fbe-go/internal/fb2/fsutil"
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
@@ -658,12 +660,8 @@ func (a *App) SaveFile(path string) error {
 	if path == "" {
 		path = a.path
 	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := writer.Write(f, a.current); err != nil {
+	fb := a.current
+	if err := fsutil.WriteAtomic(path, func(w io.Writer) error { return writer.Write(w, fb) }); err != nil {
 		return err
 	}
 	a.path = path
@@ -1031,12 +1029,8 @@ func (a *App) ExportHTML(path string) error {
 	if a.current == nil {
 		return fmt.Errorf("no document open")
 	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return html.Export(f, a.current)
+	fb := a.current
+	return fsutil.WriteAtomic(path, func(w io.Writer) error { return html.Export(w, fb) })
 }
 
 // Validate runs XSD validation on a file path and returns per-error messages.

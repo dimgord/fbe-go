@@ -120,13 +120,16 @@ function buildEpigraph(node: PMNode): Epigraph {
   return out;
 }
 
-function buildAnnotation(node: PMNode): Annotation {
+export function buildAnnotation(node: PMNode): Annotation {
   const children: Block[] = [];
   node.forEach((child) => {
     const blk = buildBlock(child);
     if (blk) children.push(blk);
   });
-  return { Children: children };
+  const out: Annotation = { Children: children };
+  if (node.attrs.id) out.ID = node.attrs.id;
+  if (node.attrs.lang) out.Lang = node.attrs.lang;
+  return out;
 }
 
 function buildCite(node: PMNode): Cite {

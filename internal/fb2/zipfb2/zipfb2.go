@@ -24,8 +24,6 @@ func Unpack(zr *zip.Reader) (io.ReadCloser, error) {
 // Pack writes fb2Data as a single entry named entryName inside a new zip stream on w.
 func Pack(w io.Writer, entryName string, fb2Data io.Reader) error {
 	zw := zip.NewWriter(w)
-	defer zw.Close()
-
 	fw, err := zw.Create(entryName)
 	if err != nil {
 		return err
@@ -33,5 +31,5 @@ func Pack(w io.Writer, entryName string, fb2Data io.Reader) error {
 	if _, err := io.Copy(fw, fb2Data); err != nil {
 		return err
 	}
-	return nil
+	return zw.Close() // writes the central directory; a failure here means an unreadable zip
 }

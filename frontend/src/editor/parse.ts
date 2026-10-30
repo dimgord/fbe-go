@@ -104,14 +104,14 @@ function buildEpigraph(ep: Epigraph): PMNode | null {
   return N.epigraph.create(null, children);
 }
 
-function buildAnnotation(a: Annotation): PMNode | null {
+export function buildAnnotation(a: Annotation | null | undefined): PMNode {
   const children: PMNode[] = [];
-  for (const b of a.Children ?? []) {
+  for (const b of a?.Children ?? []) {
     const n = buildBlock(b);
     if (n) children.push(n);
   }
   if (children.length === 0) children.push(N.paragraph.createAndFill()!);
-  return N.annotation.create(null, children);
+  return N.annotation.create({ id: a?.ID ?? null, lang: a?.Lang ?? null }, children);
 }
 
 function buildCite(c: Cite): PMNode | null {

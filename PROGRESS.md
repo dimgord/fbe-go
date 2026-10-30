@@ -6,6 +6,55 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 96 — 2026-10-30 — Data safety: atomic writes, lossless annotation editor, Save from Description → v3.1.0 [dev]
+
+First stage of the fixes from the OOP/DRY review.
+
+1. **A failed save could leave an empty book.** `os.Create` truncates before the
+   writer runs, and `defer f.Close()` dropped close errors. New
+   `internal/fb2/fsutil`: `WriteAtomic(path, fn)` writes a temp file beside the
+   target, syncs it and renames it over; a failure at any step leaves the old file.
+   An existing file keeps its mode, and a symlinked target stays a link. Used by
+   every writer: `SaveFile`, `ExportHTML`, settings and all `fbe` CLI outputs.
+   `zipfb2.Pack` now returns `zw.Close()`'s error, because it writes the central
+   directory and a dropped failure means an unreadable zip. `copyAll` (a hand-rolled
+   `io.Copy`) and the `_ = writer.Write` leftover are gone.
+2. **The annotation editor lost content on the first keystroke.** It was a reduced
+   fork of parse/serialize: `cite`, `poem`, `table`, `raw_block`, `Style`, inline
+   images, and paragraph `ID`/`Style` were all dropped, though its comment claimed
+   they survived. The fork is deleted (about 100 lines). The `annotation` node is now
+   the PM root of that editor, with the exported `buildAnnotation` from both
+   `parse.ts` and `serialize.ts`, so it shares `fb2Schema` and the full conversion.
+   Sweep: the same builders dropped `Annotation.ID`/`Lang` in the main editor as well,
+   so the `annotation` node gained `id`/`lang` attrs.
+3. **Save, Save As and Export were disabled in Description view**, because they
+   needed the Editor, which is unmounted there; `app:save-and-quit` failed the same
+   way, although a Save there is what the description forms exist for. New
+   `liveDoc()` in `App.svelte` (the editor in body view, `fb` otherwise) is used by
+   save, export and validate; the buttons depend on `fb`.
+
+Verified in Playwright WebKit: an annotation with poem, cite and table, edited in
+Description (text appended, Enter, new paragraph) and saved from that tab: all
+blocks present, `ID`, `Style` kept, no error shown. `fsutil` tests cover failure,
+mode, new file and symlink. Unit tests: annotation round trip including `Raw`.
+
+### Files Modified
+
+- `internal/fb2/fsutil/fsutil.go`, `fsutil_test.go` (new).
+- `app.go` — `SaveFile`, `ExportHTML` through `WriteAtomic`.
+- `internal/fb2/settings/settings.go` — `Save` through `fsutil.WriteFile`.
+- `internal/fb2/zipfb2` — `Pack` returns the close error.
+- `cmd/fbe/main.go` — all outputs atomic; `copyAll` removed.
+- `frontend/src/description/AnnotationEditor.svelte` — fork removed.
+- `frontend/src/editor/parse.ts`, `serialize.ts` — exported `buildAnnotation`, `ID`/`Lang` kept.
+- `frontend/src/editor/schema.ts` — `annotation` attrs.
+- `frontend/src/editor/serialize.test.ts` — annotation round trip.
+- `frontend/src/App.svelte` — `liveDoc()`, buttons.
+- `CLAUDE.md` — write rule.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.0.0 → 3.1.0.
+
+---
+
 ## Rev 95 — 2026-10-30 — Find navigation really fixed (inverted condition, far jumps), F3 in the find box → v3.0.0 [dev]
 
 Rev 92 claimed to fix Next/Prev but was never run, and it made things worse. This

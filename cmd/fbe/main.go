@@ -17,12 +17,13 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
+	"github.com/dimgord/fbe-go/internal/fb2/fsutil"
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
-	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
 	"github.com/dimgord/fbe-go/internal/fb2/zipfb2"
 )
@@ -117,7 +118,7 @@ func cmdThumb(args []string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(args[1], data, 0o644)
+	return fsutil.WriteFile(args[1], data)
 }
 
 func cmdUnpack(args []string) error {
@@ -140,13 +141,10 @@ func cmdUnpack(args []string) error {
 	if len(args) >= 2 {
 		out = args[1]
 	}
-	f, err := os.Create(out)
-	if err != nil {
+	return fsutil.WriteAtomic(out, func(w io.Writer) error {
+		_, err := io.Copy(w, rc)
 		return err
-	}
-	defer f.Close()
-	_, err = copyAll(f, rc)
-	return err
+	})
 }
 
 func cmdPack(args []string) error {
@@ -163,12 +161,7 @@ func cmdPack(args []string) error {
 	if len(args) >= 2 {
 		out = args[1]
 	}
-	f, err := os.Create(out)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return zipfb2.Pack(f, args[0], in)
+	return fsutil.WriteAtomic(out, func(w io.Writer) error { return zipfb2.Pack(w, args[0], in) })
 }
 
 func cmdInfo(args []string) error {
@@ -202,32 +195,5 @@ func cmdExport(args []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := os.Create(args[2])
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_ = writer.Write // keep writer imported for later
-	return html.Export(out, fb)
-}
-
-// copyAll avoids importing io just for io.Copy.
-func copyAll(dst interface{ Write([]byte) (int, error) }, src interface{ Read([]byte) (int, error) }) (int64, error) {
-	buf := make([]byte, 32*1024)
-	var total int64
-	for {
-		n, err := src.Read(buf)
-		if n > 0 {
-			if _, werr := dst.Write(buf[:n]); werr != nil {
-				return total, werr
-			}
-			total += int64(n)
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				return total, nil
-			}
-			return total, err
-		}
-	}
+	return fsutil.WriteAtomic(args[2], func(w io.Writer) error { return html.Export(w, fb) })
 }
