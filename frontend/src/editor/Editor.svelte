@@ -12,6 +12,7 @@
   import { cleanPastedHTML, cleanPastedText } from "./paste";
   import { searchPlugin, findNext as searchFindNext, findPrev as searchFindPrev } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
+  import { scrollPosIntoView } from "./scroll";
   import {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
     toggleSub, toggleSup, toggleCode, toggleLink,
@@ -104,13 +105,7 @@
     if (!view || path.length === 0) return;
     const pos = findNodePos(view.state.doc, path);
     if (pos == null) return;
-    const coords = view.coordsAtPos(pos);
-    let el: HTMLElement | null = view.dom as HTMLElement;
-    while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement;
-    if (el) {
-      const elRect = el.getBoundingClientRect();
-      el.scrollTop += coords.top - elRect.top - 12;
-    }
+    scrollPosIntoView(view, pos, "top", 12);
     // Brief highlight on the nearest enclosing element (domAtPos may return a Text node).
     const dom = view.domAtPos(pos);
     const flashTarget =

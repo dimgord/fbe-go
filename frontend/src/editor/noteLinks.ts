@@ -16,6 +16,7 @@
  * `<body name="notes">` — but the resolver works for any internal anchor
  * (epigraph IDs, paragraph IDs, etc.).
  */
+import { scrollPosIntoView } from "./scroll";
 import {
   Plugin,
   PluginKey,
@@ -90,32 +91,13 @@ function resolveLinkTarget(state: EditorState, pos: number): number {
   return targetPos;
 }
 
-/** Move selection to `targetPos`, push/pop stack via meta, and scroll the
- *  target DOM element to the top of the viewport. PM's tr.scrollIntoView()
- *  alone uses minimal scrolling — that lands long target nodes (entire
- *  notes) on the LAST visible line, hiding the body. Calling scrollIntoView
- *  on the DOM directly with block:"start" puts the node header at the top. */
+/** Move selection to `targetPos`, push/pop stack via meta, and pin the target near the top of the
+ *  viewport. PM's tr.scrollIntoView() scrolls minimally (a long note lands on the last visible line),
+ *  and a one-shot DOM scrollIntoView misses on lazily rendered sections; see scrollPosIntoView. */
 function jump(view: EditorView, targetPos: number, meta: StackMeta) {
   const $pos = view.state.doc.resolve(targetPos + 1);
   const sel = TextSelection.near($pos);
   view.dispatch(view.state.tr.setSelection(sel).setMeta(noteLinksKey, meta));
-  // Schedule after the dispatch so PM has updated DOM positions.
-  // Prefer nodeDOM (gives the block element when target is a node-boundary
-  // like a section), fall back to domAtPos which works for ANY position
-  // including text-positions inside a paragraph (the "back" jump case).
-  queueMicrotask(() => {
-    let el: HTMLElement | null = null;
-    const blockDom = view.nodeDOM(targetPos);
-    if (blockDom instanceof HTMLElement) {
-      el = blockDom;
-    } else {
-      const dom = view.domAtPos(sel.from);
-      if (dom?.node) {
-        el = dom.node.nodeType === Node.ELEMENT_NODE
-          ? (dom.node as HTMLElement)
-          : dom.node.parentElement;
-      }
-    }
-    el?.scrollIntoView({ block: "start" });
-  });
+  // After the dispatch, so PM has updated DOM positions.
+  queueMicrotask(() => scrollPosIntoView(view, sel.from, "top", 12));
 }

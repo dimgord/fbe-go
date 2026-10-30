@@ -2,6 +2,7 @@ import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } 
 import { Decoration, DecorationSet, type EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 import { writable, type Readable } from "svelte/store";
+import { scrollPosIntoView } from "../scroll";
 
 export interface SearchFlags {
   caseSensitive: boolean;
@@ -247,7 +248,8 @@ export function findNext(view: EditorView): boolean {
   if (!isAlive(view)) return false;
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return false;
-  view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "next" }));
+  // The first Enter after typing visits the highlighted hit instead of skipping past it.
+  if (!onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "next" }));
   scrollActiveIntoView(view);
   return true;
 }
@@ -256,9 +258,16 @@ export function findPrev(view: EditorView): boolean {
   if (!isAlive(view)) return false;
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return false;
-  view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "prev" }));
+  if (!onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "prev" }));
   scrollActiveIntoView(view);
   return true;
+}
+
+/** Whether the selection already sits on the active hit, i.e. the user has been taken there. */
+function onActive(view: EditorView, st: SearchState): boolean {
+  const m = st.matches[st.active];
+  const sel = view.state.selection;
+  return !!m && sel.from === m.from && sel.to === m.to;
 }
 
 function scrollActiveIntoView(view: EditorView): void {
@@ -271,25 +280,9 @@ function scrollActiveIntoView(view: EditorView): void {
   // Move selection so typing / replace target the hit.
   view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, m.from, m.to)));
 
-  // PM's built-in `tr.scrollIntoView()` scrolls whatever container IT
-  // considers scrollable, which in our layout is typically the wrong one
-  // — `<section>` wraps the editor and owns the scrollbar, not
-  // `view.dom`. Walk up until we find a scrollable ancestor (same idiom
-  // as Editor.scrollToPath) and nudge it manually. Only scroll when the
-  // hit is near the viewport edges so already-visible matches don't cause
-  // the page to jump on every ▶ click.
-  const coords = view.coordsAtPos(m.from);
-  let el: HTMLElement | null = view.dom as HTMLElement;
-  while (el && el.scrollHeight <= el.clientHeight) el = el.parentElement;
-  if (!el) return;
-
-  const rect = el.getBoundingClientRect();
-  const MARGIN = 80;
-  if (coords.top < rect.top + MARGIN) {
-    el.scrollTop += coords.top - rect.top - MARGIN;
-  } else if (coords.bottom > rect.bottom - MARGIN) {
-    el.scrollTop += coords.bottom - rect.bottom + MARGIN;
-  }
+  // PM's own `tr.scrollIntoView()` picks the wrong container in our layout, and a one-shot jump
+  // misses on lazily rendered sections; see scrollPosIntoView.
+  scrollPosIntoView(view, m.from, "nearest");
 }
 
 /**
