@@ -72,7 +72,7 @@ In ProseMirror, a single node must be either block or inline. Splitting into two
 - Consistency: same validator for editor save and library-mode batch ops.
 - FictionBook.xsd is ~500 lines with no tricky XSD features (no complex types, no imports). A custom pure-Go validator is feasible.
 
-Implementation path: try `github.com/lestrrat-go/libxml2` first (CGo, but mature). If the deployment size hit is unacceptable, write a subset validator.
+Implementation path: try `github.com/lestrrat-go/libxml2` first (CGo, but mature). If the deployment size hit is unacceptable, write a subset validator. *(Rev 93: replaced by the pure-Go `github.com/lestrrat-go/helium/xsd` — the libxml2 binding stopped compiling against libxml2 ≥ 2.14.)*
 
 ## Cross-platform strategy
 
@@ -92,6 +92,6 @@ may be written in Rust or C where Go is awkward.
 
 - **ActiveX plugins (ExportHTML as COM DLL)** — Go plugins are fragile and platform-specific. Export formats live as Go packages under `internal/fb2/export/*`.
 - **Embedded IE MSHTML editor** — replaced by ProseMirror (cross-platform, web-based).
-- **MSXML dependency** — replaced by Go's `encoding/xml` for parsing/writing; libxml2 only for XSD validation (if that path is chosen).
+- **MSXML dependency** — replaced by Go's `encoding/xml` for parsing/writing; XSD validation via pure-Go helium (libxml2 until Rev 93).
 - **Windows Registry for settings** — replaced by JSON at the OS-standard config dir.
 - **`FarMenu.ini`** (FBShell) — Far Manager integration is niche, dropped.

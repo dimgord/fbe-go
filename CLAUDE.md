@@ -16,20 +16,15 @@ go build -o build/fbe ./cmd/fbe
 
 # Desktop app — needs Wails CLI (go install github.com/wailsapp/wails/v2/cmd/wails@latest)
 wails dev   -tags webkit2_41          # hot-reload dev mode   (webkit2_41 is Linux-only; no-op on macOS)
-wails build -tags 'xsd webkit2_41'    # production bundle with real XSD validation → build/bin/
+wails build -tags webkit2_41          # production bundle → build/bin/
 
 # Go tests (hermetic)
 go test ./...
 
-# XSD validator: the Go side has two backends selected by build tag.
-# Default = no-op stub. To get real validation, build/test with -tags xsd:
-go build  -tags xsd ./...
-go test   -tags xsd ./internal/fb2/xsd
-
 # Corpus test — huge real-world .fb2 set, gated behind -tags corpus so it stays
-# out of `go test ./...`. Requires libxml2 (-tags xsd). Point FBE_CORPUS_DIR at
+# out of `go test ./...`. Point FBE_CORPUS_DIR at
 # a directory of .fb2 files; default is ~/Documents/books.
-FBE_CORPUS_DIR=~/Documents/books go test -tags 'corpus xsd' -v ./internal/fb2/ -run TestCorpus
+FBE_CORPUS_DIR=~/Documents/books go test -tags corpus -v ./internal/fb2/ -run TestCorpus
 
 # Frontend (cd frontend/)
 npm run dev         # vite dev server (used by wails dev)
@@ -42,7 +37,7 @@ npm run test        # vitest (unit tests for editor/parse, editor/serialize, tre
 Single-test runs:
 
 ```sh
-go test ./internal/fb2/xsd -run TestValidate -tags xsd
+go test ./internal/fb2/xsd -run TestValidate
 (cd frontend && npx vitest run src/editor/serialize.test.ts)
 ```
 
@@ -76,7 +71,7 @@ settings/ JSON persistence at OS-standard config dir
 speller/  Hunspell (CGo, future)
 ```
 
-**XSD dual-backend** (`internal/fb2/xsd/`): `xsd.go` is the shared API; `xsd_stub.go` (default) returns `ErrNotImplemented`; `xsd_libxml2.go` (behind `-tags xsd`) links against libxml2 via `github.com/lestrrat-go/libxml2`. `SchemaFiles` is an `embed.FS` of the four bundled `.xsd` files. The stub path lets `go build ./...` succeed without libxml2 on the host.
+**XSD validator** (`internal/fb2/xsd/`): `xsd.go` is the shared API, `xsd_helium.go` the only backend — pure-Go `github.com/lestrrat-go/helium/xsd`, always compiled in (no build tag, no CGo; the old `-tags xsd` + libxml2 path was removed in Rev 93 because `lestrrat-go/libxml2` does not compile against libxml2 ≥ 2.14 and is unmaintained). `SchemaFiles` is an `embed.FS` of the four bundled `.xsd` files; the compiler resolves `FictionBook.xsd`'s `xs:import`s against it via `Compiler.FS`. helium reports a line (no column) and the element name per error; `positionOf` finds the column of `<name` on that line, and messages keep the libxml2 shape `Element '{ns}name': …` because `MergeXSDAndUnknown` parses the element name out of them (the frontend only displays them). helium may describe a violation from the other side than libxml2 did (e.g. "`<poem>`: missing `<stanza>`" on the poem line instead of "`<text-author>` not expected" one line below) — same error count, different anchor.
 
 **Lossless fallback invariant:** `doc.Block` and `doc.Inline` each carry a `Raw *RawElement` field; `Block.UnmarshalXML` / `unmarshalInlineContent` route unknown elements there instead of calling `d.Skip()`. Writer round-trips `Raw` verbatim, preserving attributes and nested content. Do not reintroduce silent skips — they caused a Rev-5 regression where an `<empty-line>` in an unexpected position was dropped. When adding new typed fields, make sure the dispatcher still falls through to `Raw` for unknown elements.
 
@@ -121,7 +116,7 @@ Branch workflow: `dev` is work-in-progress; `main` gets explicit merges.
 
 ## Corpus testing & fidelity
 
-The corpus test (`-tags 'corpus xsd'`) reports two key metrics:
+The corpus test (`-tags corpus`) reports two key metrics:
 
 - `fidelityBroken` — source was XSD-valid but our round-trip output is not. **This must stay at 0.** Any change that breaks it is a regression.
 - Per-file `Δ` in XSD error counts. A non-zero delta isn't automatically a bug: our writer normalizes element order (e.g., places `<empty-line>` where the schema allows instead of before `<title>`), which can legitimately change the error count on an already-invalid source. Inspect the errors before declaring a problem.
@@ -129,11 +124,10 @@ The corpus test (`-tags 'corpus xsd'`) reports two key metrics:
 ## Platform notes
 
 - **Wails v2.9.2–v2.12.0 macOS file-dialog crash:** never pass multi-dot patterns like `*.fb2.zip` to `OpenFileDialog` — the native code feeds each token to `[UTType typeWithFilenameExtension:]`, `fb2.zip` returns nil, and `[NSArray addObject:nil]` throws `NSInvalidArgumentException` from Obj-C (unrecoverable by Go `recover()`). Use `*.fb2` only; users open archives via "All files". Re-verified on v2.12.0 (Rev 25): the filter block in `WailsContext.m` (`USE_NEW_FILTERS` path) is byte-identical to v2.9.2 — no nil-guard added upstream.
-- **Linux build deps:** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`; `libxml2-dev` for `-tags xsd`.
-- **Linux CGo tag:** Wails v2's `#cgo` directives default to `webkit2gtk-4.0` (libsoup 2.x, missing from modern distros). The `webkit2_41` build tag flips every affected file to `webkit2gtk-4.1`. **Always pass `-tags webkit2_41` on Linux** — `wails dev -tags webkit2_41`, `wails build -tags 'xsd webkit2_41'`. The tag is a no-op on macOS (`//go:build linux` gates the affected files), so always-on is safe.
-- **libxml2 pin on Nix:** The flake's Linux deps use `pkgs.libxml2_13` (2.13.x) rather than `pkgs.libxml2`. nixpkgs-unstable sits on libxml2 2.15, which changed `xmlParseInNodeContext`'s signature (`xmlNodePtr` → `xmlNodePtr*`) and breaks `lestrrat-go/libxml2` — the CGo binding used by `-tags xsd`. Other Linux distros typically ship libxml2 2.9–2.12 which compiles fine, so this pin is Nix-specific. When upstream `lestrrat-go/libxml2` gains 2.14+ support, switch back to `pkgs.libxml2` and drop this note.
-- **NixOS / Nix:** `flake.nix` at the repo root provides a `devShells.default` for all four systems (`{x86_64,aarch64}-{linux,darwin}`). `nix develop` drops you into a shell with `go_1_25`, `nodejs_22`, and — on Linux only — `pkg-config`, `gtk3`, `webkitgtk_4_1`, `libxml2_13` (see libxml2 pin note above), `gsettings-desktop-schemas`. The Linux `shellHook` also exports `XDG_DATA_DIRS` pointing at the Nix-store GSettings schema directories — without this, GTK's file-chooser native dialog crashes at runtime with *"Settings schema 'org.gtk.Settings.FileChooser' is not installed"* (the binary builds fine, SIGTRAP only fires on Open/Save click). Wails CLI auto-installs into `$GOPATH/bin` on first entry. Pinned against `nixpkgs-unstable` via `flake.lock`. When bumping the Wails library version, consider whether to also `nix flake update` to refresh pinned nixpkgs.
-- **Go version:** `go.mod` pins 1.25.0 — do not downgrade.
+- **Linux build deps:** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`.
+- **Linux CGo tag:** Wails v2's `#cgo` directives default to `webkit2gtk-4.0` (libsoup 2.x, missing from modern distros). The `webkit2_41` build tag flips every affected file to `webkit2gtk-4.1`. **Always pass `-tags webkit2_41` on Linux** — `wails dev -tags webkit2_41`, `wails build -tags webkit2_41`. The tag is a no-op on macOS (`//go:build linux` gates the affected files), so always-on is safe.
+- **NixOS / Nix:** `flake.nix` at the repo root provides a `devShells.default` for all four systems (`{x86_64,aarch64}-{linux,darwin}`). `nix develop` drops you into a shell with `go_1_26`, `nodejs_22`, and — on Linux only — `pkg-config`, `gtk3`, `webkitgtk_4_1`, `gsettings-desktop-schemas`. The Linux `shellHook` also exports `XDG_DATA_DIRS` pointing at the Nix-store GSettings schema directories — without this, GTK's file-chooser native dialog crashes at runtime with *"Settings schema 'org.gtk.Settings.FileChooser' is not installed"* (the binary builds fine, SIGTRAP only fires on Open/Save click). Wails CLI auto-installs into `$GOPATH/bin` on first entry. Pinned against `nixpkgs-unstable` via `flake.lock`. When bumping the Wails library version, consider whether to also `nix flake update` to refresh pinned nixpkgs.
+- **Go version:** `go.mod` pins 1.26.1 (helium's minimum) — do not downgrade; CI/release use `1.26.x`, the flake `go_1_26`.
 
 ## Debugging a hung/crashing app
 

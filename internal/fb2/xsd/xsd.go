@@ -1,17 +1,9 @@
-// Package xsd validates an FB2 document against the bundled FictionBook.xsd.
-//
-// Two backends, selected via build tag:
-//
-//   default:      no-op validator that returns ErrNotImplemented
-//   -tags xsd:    CGo-based libxml2 validator (requires libxml-2.0 on the build host)
-//
-// Build with `go build -tags xsd ./...` to get real validation. The CLI and
-// Wails app can both be built either way.
+// Package xsd validates an FB2 document against the bundled FictionBook.xsd,
+// using the pure-Go github.com/lestrrat-go/helium (no CGo, no build tag).
 package xsd
 
 import (
 	"embed"
-	"errors"
 	"io/fs"
 )
 
@@ -25,11 +17,8 @@ type ValidationError struct {
 // Error implements the error interface for convenience.
 func (e ValidationError) Error() string { return e.Message }
 
-// ErrNotImplemented is returned by the default (no-op) backend.
-var ErrNotImplemented = errors.New("xsd: validator not compiled in — rebuild with -tags xsd")
-
 // SchemaFiles holds the bundled FictionBook.xsd and its imports.
-// Exposed so alternate backends (pure-Go, future) can access the schema payload.
+// The validator resolves the main schema's xs:imports against it.
 //
 //go:embed FictionBook.xsd FictionBookGenres.xsd FictionBookLang.xsd FictionBookLinks.xsd
 var SchemaFiles embed.FS

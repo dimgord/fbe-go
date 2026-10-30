@@ -41,7 +41,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
           cache: true
           cache-dependency-path: go.sum
 
@@ -55,7 +55,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libxml2-dev \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             pkg-config
@@ -66,7 +65,7 @@ jobs:
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
       - name: Generate Wails bindings (wails build -s, throw away binary)
-        run: wails build -tags 'xsd webkit2_41' -s
+        run: wails build -tags webkit2_41 -s
 
       - name: Frontend install
         working-directory: frontend
@@ -99,25 +98,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
           cache: true
           cache-dependency-path: go.sum
-
-      # Linux -tags xsd compiles lestrrat-go/libxml2 against the system
-      # libxml2 headers. Ubuntu 24.04 ships 2.9.x / 2.12.x which the
-      # binding supports; the libxml2_13 pin from our Nix flake is
-      # specifically a nixpkgs-unstable workaround (2.15.x ABI change).
-      - name: Install libxml2-dev (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libxml2-dev
 
       - name: go vet
         run: go vet ./internal/...
 
-      - name: go test (stub XSD)
+      - name: go test
         run: go test ./internal/...
-
-      - name: go test -tags xsd (real libxml2)
-        run: go test -tags xsd ./internal/...
