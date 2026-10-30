@@ -59,7 +59,8 @@
   }
 
   function onFindKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") {
+    // F3 too: the editor's keymap never sees keys typed in this input.
+    if (e.key === "Enter" || e.key === "F3") {
       e.preventDefault();
       if (!view) return;
       if (e.shiftKey) findPrev(view);

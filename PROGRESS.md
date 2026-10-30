@@ -6,6 +6,41 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 95 — 2026-10-30 — Find navigation really fixed (inverted condition, far jumps), F3 in the find box → v3.0.0 [dev]
+
+Rev 92 claimed to fix Next/Prev but was never run, and it made things worse. This
+time the bug was reproduced in real WebKit (Playwright) on a 28,345-paragraph,
+142-section book, with `window.go` stubbed.
+
+1. **Enter stuck at 2/N.** `findNext`/`findPrev` advanced when the selection was
+   NOT on the active hit, the reverse of the intent: the first press moved, every
+   later one only re-selected the same hit. Condition inverted.
+2. **Far jumps landed at the end of the book, the hit ~100,000px off-screen.** An
+   off-screen section (`content-visibility: auto`) occupies its 600px placeholder
+   while its children measure at full size, so `coordsAtPos` is wrong and Rev 92's
+   frame-by-frame correction could not converge. `scroll.ts` now renders the sections
+   around the target first, through a `cv-visible` node decoration
+   (`scrollForcePlugin`), then measures and scrolls, and clears the decoration two
+   frames after landing. A decoration, not a DOM class, because PM re-parses nodes
+   whose attributes change under it. Applies to find, outline clicks and note links.
+3. **F3 did nothing with focus in the find box** — the editor keymap never sees keys
+   typed in that input. `onFindKeydown` handles it.
+
+Verified in WebKit: 70 sequential presses, 40 far jumps with two rare words (before:
+29 and 14 misses, after: 0), rapid presses, wrap-around, ◀ ▶ buttons, F3, outline
+clicks; then by hand in the deployed app. `plugin.test.ts` fails if (1) comes back.
+
+### Files Modified
+
+- `frontend/src/editor/scroll.ts` — `scrollForcePlugin`, `sectionsAround`, cancellable runs.
+- `frontend/src/editor/search/plugin.ts` — inverted condition fixed.
+- `frontend/src/editor/search/plugin.test.ts` (new) — navigation tests.
+- `frontend/src/editor/search/SearchBar.svelte` — F3.
+- `frontend/src/editor/Editor.svelte` — plugin registered at both sites, `.cv-visible` CSS.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 2.0.1 → 3.0.0.
+
+---
+
 ## Rev 94 — 2026-10-30 — Taskfile with local deploy for macOS and Linux → v2.0.1 [dev]
 
 The repo had no `Taskfile.yml`. Added one with `run`, `frontend`, `build`,

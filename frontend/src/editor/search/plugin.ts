@@ -249,7 +249,7 @@ export function findNext(view: EditorView): boolean {
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return false;
   // The first Enter after typing visits the highlighted hit instead of skipping past it.
-  if (!onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "next" }));
+  if (onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "next" }));
   scrollActiveIntoView(view);
   return true;
 }
@@ -258,7 +258,7 @@ export function findPrev(view: EditorView): boolean {
   if (!isAlive(view)) return false;
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return false;
-  if (!onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "prev" }));
+  if (onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "prev" }));
   scrollActiveIntoView(view);
   return true;
 }

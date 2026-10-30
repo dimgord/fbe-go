@@ -12,7 +12,7 @@
   import { cleanPastedHTML, cleanPastedText } from "./paste";
   import { searchPlugin, findNext as searchFindNext, findPrev as searchFindPrev } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
-  import { scrollPosIntoView } from "./scroll";
+  import { scrollForcePlugin, scrollPosIntoView } from "./scroll";
   import {
     toggleStrong, toggleEmphasis, toggleStrikethrough,
     toggleSub, toggleSup, toggleCode, toggleLink,
@@ -309,6 +309,7 @@
         keymap({ "Mod-[": noteLinksBack }),
         keymap(baseKeymap),
         searchPlugin(),
+        scrollForcePlugin(),
         noteLinksPlugin(),
         dirtyPlugin(),
       ],
@@ -340,6 +341,7 @@
         keymap({ "Mod-[": noteLinksBack }),
         keymap(baseKeymap),
         searchPlugin(),
+        scrollForcePlugin(),
         noteLinksPlugin(),
         dirtyPlugin(),
       ],
@@ -479,6 +481,9 @@
     contain: layout style;
     content-visibility: auto;
     contain-intrinsic-size: auto 600px;
+  }
+  :global(.ProseMirror div.section.cv-visible) {
+    content-visibility: visible;
   }
   :global(.ProseMirror div.poem),
   :global(.ProseMirror div.table),
