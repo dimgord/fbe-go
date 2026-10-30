@@ -46,7 +46,7 @@
     border-bottom: 1px solid var(--warn);
     color: var(--warn-fg);
     font-size: 0.85rem;
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
   }
   .pill {
     padding: 0.12rem 0.45rem;

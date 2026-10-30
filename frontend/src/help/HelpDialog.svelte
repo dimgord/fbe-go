@@ -229,7 +229,7 @@
     max-height: 80vh;
     overflow: auto;
     box-shadow: 0 8px 24px var(--shadow);
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
     font-size: 0.9rem;
     color: var(--fg);
     /* Explicitly opt-in to text selection so users can copy the version
@@ -304,7 +304,7 @@
     border-bottom-width: 2px;
     border-radius: 3px;
     background: var(--bg-chrome);
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
     color: var(--fg);
   }
@@ -332,7 +332,7 @@
     flex: none;
     padding: 0.1rem 0.5rem;
     font-size: 0.72rem;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     color: var(--fg-secondary);
     background: var(--bg-chrome);
     border: 1px solid var(--border);

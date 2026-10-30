@@ -485,7 +485,7 @@
     max-height: 85vh;
     overflow: auto;
     box-shadow: 0 8px 24px var(--shadow);
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
     font-size: 0.9rem;
   }
   header {
@@ -610,7 +610,7 @@
     font-style: italic;
   }
   .row input.mono {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     width: 3rem;
     text-align: center;
   }
@@ -701,7 +701,7 @@
     border-radius: 3px;
     cursor: pointer;
     font: inherit;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85rem;
     text-align: center;
   }

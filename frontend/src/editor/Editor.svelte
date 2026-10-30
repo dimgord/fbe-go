@@ -589,7 +589,7 @@
   }
   :global(.ProseMirror span.code),
   :global(.ProseMirror code) {
-    font-family: "SF Mono", Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.92em;
     background: var(--bg-chrome);
     padding: 0.1em 0.3em;
@@ -621,7 +621,7 @@
     content: attr(alt) " (missing)";
     display: block;
     padding: 0.5em;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.8em;
     color: var(--warn-fg);
   }
@@ -659,7 +659,7 @@
       );
     border: 1px dashed var(--warn);
     color: var(--warn-fg);
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
     border-radius: 3px;
     user-select: none;
@@ -671,7 +671,7 @@
     background: var(--warn-bg-inline);
     border: 1px dashed var(--warn);
     color: var(--warn-fg);
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
     border-radius: 3px;
     user-select: none;

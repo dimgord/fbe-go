@@ -6,6 +6,40 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 103 — 2026-10-30 — Dirty logic extracted and tested; no empty placeholders in saved books → v3.8.0 [dev]
+
+First step of the `App.svelte` split, plus the last bug from the review.
+
+- **Saved books gained empty elements.** `normalizeFb` ran on every open and set
+  `PublishInfo = {}` and `Annotation = {Children: []}`, so each save wrote
+  `<publish-info></publish-info>` and `<annotation></annotation>`. Valid against the
+  schema, but noise in the user's file. It existed only to pre-warm the dirty snapshot,
+  and `canonicalize` already treats empty values as absent, so it is deleted, with its
+  "must be mirrored" rule. The description forms still create those defaults when
+  mounted, so `doc.Normalize` (run on every `UpdateDocument`) now drops an empty
+  `Annotation` and `PublishInfo` too. A source file's own empty `<annotation/>` also
+  goes on save; that is accepted, as it carries no content.
+- **`document/dirty.ts`.** `canonicalize`, `stableStringify` and `descriptionSnapshot`
+  moved out of the component and got their first tests.
+- **`lib/path.ts`, `lib/math.ts`.** `basename` replaces eight inline splits, `dirname` a
+  slice expression, and `clamp` its two copies.
+- **`showStatus`.** Six `setTimeout(() => status = "")` calls did not cancel each other,
+  so an old timer could erase a newer message.
+- **`--font-mono`, `--font-ui`.** 27 literal font stacks became two tokens. The mono stack
+  had two spellings; it now has one.
+
+Verified in WebKit on a real book: a fresh open and a visit to Description are not dirty, a
+real edit is, undoing it by hand is not, and Save from Description works. 102 unit tests.
+
+### Files Modified
+
+- `internal/fb2/doc/normalize.go`, `normalize_test.go` (new test).
+- `frontend/src/document/dirty.ts`, `dirty.test.ts`, `lib/path.ts`, `lib/math.ts`, `lib/lib.test.ts` (new).
+- `frontend/src/App.svelte`, `validation/ValidationPanel.svelte`, `binary/BinaryManagerDialog.svelte`, font tokens across `*.svelte`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.7.0 → 3.8.0.
+
+---
+
 ## Rev 102 — 2026-10-30 — One gateway to Go; "Clear list" in Settings works again → v3.7.0 [dev]
 
 **Regression from Rev 99, fixed.** Settings → "Clear list" did `recentFiles = []` and

@@ -45,7 +45,7 @@
   }
   .iso {
     flex: 0 0 11rem;
-    font-family: "SF Mono", Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.88rem;
   }
 </style>

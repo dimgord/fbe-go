@@ -1,5 +1,6 @@
 <script lang="ts">
   import { backend } from "../runtime/backend";
+  import { basename } from "../lib/path";
   import { createEventDispatcher, onMount } from "svelte";
   import type { EditorView } from "prosemirror-view";
   import type { FictionBook, Binary } from "../fb2/types";
@@ -115,7 +116,7 @@
     // Stage the binary and prompt for an id via the in-component overlay.
     // Suggested id: sanitized filename stem, de-duplicated against existing ids.
     const existingIds = new Set((fb.Binaries ?? []).map(b => b.ID));
-    const filenameGuess = path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "image";
+    const filenameGuess = basename(path).replace(/\.[^.]+$/, "") || "image";
     let suggested = filenameGuess.replace(/[^A-Za-z0-9._-]/g, "_");
     if (/^[^A-Za-z_]/.test(suggested)) suggested = "_" + suggested;
     while (existingIds.has(suggested)) suggested += "_1";
@@ -278,7 +279,7 @@
                 {/if}
               </div>
               <div class="meta">
-                <div class="info">{uploadStaged.path.split(/[\\/]/).pop()}</div>
+                <div class="info">{basename(uploadStaged.path)}</div>
                 <div class="info muted">{uploadStaged.bin.ContentType} · {fmtBytes(base64Size(uploadStaged.bin.Data))}</div>
               </div>
             </div>
@@ -439,7 +440,7 @@
     object-fit: contain;
   }
   .thumb .placeholder {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--fg-secondary);
     text-transform: uppercase;
@@ -458,7 +459,7 @@
     min-width: 0;
   }
   .id {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -473,7 +474,7 @@
     color: var(--fg);
     border-radius: 3px;
     font: inherit;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .badge.cover {
     padding: 0.05rem 0.35rem;
@@ -615,10 +616,10 @@
     color: var(--fg);
     border-radius: 3px;
     font: inherit;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .sub-dialog code {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.9em;
     background: var(--bg-chrome);
     padding: 0.05em 0.3em;

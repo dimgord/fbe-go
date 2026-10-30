@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import XmlEditor from "./XmlEditor.svelte";
+  import { clamp } from "../lib/math";
 
   export let xmlSource: string = "";
   export let errors: { line: number; column: number; message: string }[] = [];
@@ -122,10 +123,6 @@
     setTimeout(() => {
       if (highlightedLine === n) highlightedLine = null;
     }, 2500);
-  }
-
-  function clamp(v: number, lo: number, hi: number) {
-    return Math.max(lo, Math.min(hi, v));
   }
 
   function panelBounds() {
@@ -314,7 +311,7 @@
     border-left: 1px solid var(--border);
     background: var(--bg-surface);
     color: var(--fg);
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
   }
 
@@ -325,7 +322,7 @@
     padding: 0 0.25rem 0 0.6rem;
     background: var(--bg-chrome);
     border-bottom: 1px solid var(--border);
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
     font-size: 0.8rem;
     font-weight: 600;
     color: var(--fg);
@@ -402,13 +399,13 @@
     border-bottom: 1px solid var(--danger-border);
     color: var(--danger);
     padding: 0.55rem 0.8rem;
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
     font-size: 0.82rem;
     flex: 0 0 auto;
   }
   .apply-error-msg {
     margin-top: 0.2rem;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.74rem;
     white-space: pre-wrap;
   }
@@ -421,7 +418,7 @@
     background: var(--bg-ok);
     border-bottom: 1px solid var(--border);
     color: var(--fg-secondary);
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
     font-size: 0.78rem;
     flex: 0 0 auto;
   }
@@ -525,7 +522,7 @@
     min-height: 60px;
     overflow: auto;
     background: var(--bg-errors);
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
     font-size: 0.8rem;
   }
   .errors-title {
@@ -580,7 +577,7 @@
   }
   .errors li .pos {
     color: var(--fg-muted);
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.72rem;
   }
   .errors li .msg {

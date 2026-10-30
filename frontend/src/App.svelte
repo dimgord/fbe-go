@@ -8,6 +8,9 @@
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
   import { backend } from "./runtime/backend";
+  import { descriptionSnapshot } from "./document/dirty";
+  import { clamp } from "./lib/math";
+  import { basename, dirname } from "./lib/path";
   import SearchBar from "./editor/search/SearchBar.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
   import type { BookPosition } from "./tree/position";
@@ -28,6 +31,14 @@
   let filename = "(untitled)";
   let currentPath = "";
   let status = "";
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** A transient message. A newer one cancels the older one's timer, so it is not cut short. */
+  function showStatus(message: string, ms: number): void {
+    clearTimeout(statusTimer);
+    status = message;
+    statusTimer = setTimeout(() => (status = ""), ms);
+  }
   let error = "";
 
   // Dirty-tracking is hybrid because the body editor and the description
@@ -42,132 +53,23 @@
   //     baseline captured at mount / save.
   //   - Description has no PM involvement; both clean and current
   //     readings come straight from `fb.Description`. The parser /
-  //     defaulters / mutations agree on the shape (after normalizeFb
-  //     pre-warm), so a canonicalized JSON snapshot of just the
-  //     Description sub-tree is reliable.
+  //     defaulters / mutations differ only in empty fields, which the
+  //     canonical snapshot ignores (see document/dirty.ts).
   //
-  // isDirty = bodyDirty (from PM) OR descSnapshot mismatch. Cleared on
+  // isDirty = bodyDirty (from PM) OR description snapshot mismatch. Cleared on
   // open / save / sample fallback.
   let bodyDirty = false;
   let cleanDescSnapshot: string | null = null;
 
-  /** Description form subforms (DescriptionPanel, TitleInfoForm,
-   *  AuthorField, CoverpageField, PublishInfoForm, DocumentInfoForm,
-   *  CustomInfoForm) carry `$: if (!info.X) info.X = …` initializers
-   *  that inject empty defaults the first time each is mounted.
-   *  Without this eager normalization, the clean snapshot captured on
-   *  the body view doesn't yet carry those defaults — so a single visit
-   *  to the description tab mutates `fb`, and the snapshot comparison
-   *  wrongly flags the doc as dirty even after the user undoes /
-   *  retypes their edits back to the original text.
-   *
-   *  Apply every defaulter here so the snapshot is taken in the same
-   *  shape that any future description-form mount will produce. New
-   *  defaults added to subforms must be mirrored here. */
-  function normalizeFb(target: FictionBook | null): void {
-    if (!target) return;
-    if (!target.Description.PublishInfo) target.Description.PublishInfo = {};
-    if (!target.Description.CustomInfo)  target.Description.CustomInfo  = [];
-
-    for (const info of [target.Description.TitleInfo, target.Description.SrcTitleInfo]) {
-      if (!info) continue;
-      if (!info.Translators) info.Translators = [];
-      if (!info.Sequences)   info.Sequences   = [];
-      if (!info.Annotation)  info.Annotation  = { Children: [] };
-      // NEVER inject an empty Coverpage here. FB2 XSD requires `coverpage`
-      // to have at least one `<image>` child — an empty `<coverpage></coverpage>`
-      // fails validation with the cryptic "Missing child element(s). Expected
-      // is ( image )." message that points at an unrelated line. Until Rev 89
-      // we injected `{ Images: [] }` to keep the dirty-snapshot baseline
-      // matching CoverpageField's mount-time defaulter, but CoverpageField has
-      // since been changed to materialize Coverpage only when the user clicks
-      // "+ add cover image" — so this defaulter is no longer needed AND it
-      // was actively breaking XSD validation on every blank/freshly-opened
-      // document. Same logic applies for any future field that's only XSD-
-      // valid when populated: prefer letting the form leave it absent.
-      normalizeAuthors(info.Authors);
-      normalizeAuthors(info.Translators);
-    }
-
-    if (target.Description.DocumentInfo) {
-      if (!target.Description.DocumentInfo.SrcURL) target.Description.DocumentInfo.SrcURL = [];
-      normalizeAuthors(target.Description.DocumentInfo.Authors);
-      normalizeAuthors(target.Description.DocumentInfo.Publishers);
-    }
-
-    if (target.Description.PublishInfo) {
-      if (!target.Description.PublishInfo.Sequences) target.Description.PublishInfo.Sequences = [];
-    }
-  }
-
-  /** AuthorField.svelte's `$: if (!author.Email) author.Email = []` and
-   *  matching HomePage init. Applied to every author / translator /
-   *  publisher slot. */
-  function normalizeAuthors(list: import("./fb2/types").Author[] | null | undefined): void {
-    if (!list) return;
-    for (const a of list) {
-      if (!a.Email)    a.Email    = [];
-      if (!a.HomePage) a.HomePage = [];
-    }
-  }
-
-  /** Canonical content-only stringification.
-   *
-   *  The Go parser and the TS PM-serializer build identically-shaped
-   *  FictionBook objects with two systematic differences:
-   *    1. Key insertion order differs (Go's encoding/json uses struct
-   *       declaration order; pmDocToFB2 builds fields in TS construction
-   *       order).
-   *    2. Go emits empty/null fields ("Lang":"", "Image":null,
-   *       "Epigraph":null) for every absent value because the FictionBook
-   *       struct's fields aren't all marked `omitempty`. The PM
-   *       serializer simply omits those keys.
-   *
-   *  Both differences would make plain JSON.stringify diverge byte-for-
-   *  byte even when the user hasn't touched anything. We canonicalize:
-   *  sort keys alphabetically, and treat null / empty string / empty
-   *  array as semantically absent (drop them). The result is purely
-   *  content-driven — independent of which serializer produced the
-   *  object. */
-  function canonicalize(v: unknown): unknown {
-    if (v === null || v === undefined) return undefined;
-    if (typeof v === "string") return v === "" ? undefined : v;
-    if (Array.isArray(v)) {
-      const out = v.map(canonicalize).filter((x) => x !== undefined);
-      return out.length === 0 ? undefined : out;
-    }
-    if (typeof v === "object") {
-      const src = v as Record<string, unknown>;
-      const out: Record<string, unknown> = {};
-      let kept = 0;
-      for (const k of Object.keys(src).sort()) {
-        const cv = canonicalize(src[k]);
-        if (cv !== undefined) { out[k] = cv; kept++; }
-      }
-      return kept === 0 ? undefined : out;
-    }
-    return v;
-  }
-  function stableStringify(value: unknown): string {
-    return JSON.stringify(canonicalize(value)) ?? "";
-  }
-  function descSnapshot(): string {
-    return stableStringify(fb?.Description);
-  }
   function isCurrentlyDirty(): boolean {
     if (bodyDirty) return true;
     if (xmlDirty) return true;
     if (cleanDescSnapshot === null) return false;
-    return descSnapshot() !== cleanDescSnapshot;
+    return descriptionSnapshot(fb) !== cleanDescSnapshot;
   }
-  /** Capture the current Description serialization as the clean baseline
-   *  and reset bodyDirty. Called after open / save. Eagerly applies the
-   *  description-form defaults via `normalizeFb` so the clean side
-   *  carries the same shape the form initializers will produce on first
-   *  mount. */
+  /** The current description becomes the clean baseline, and body edits count as saved. */
   function captureCleanSnapshot() {
-    normalizeFb(fb);
-    cleanDescSnapshot = descSnapshot();
+    cleanDescSnapshot = descriptionSnapshot(fb);
     bodyDirty = false;
   }
   function onEditorDirty(e: CustomEvent<boolean>) {
@@ -282,8 +184,7 @@
       // races with the panel's re-render, an explicit set here pins
       // the empty state once the success path is committed.
       xmlApplyError = "";
-      status = "XML applied — Undo Apply is available in the panel";
-      setTimeout(() => (status = ""), 5000);
+      showStatus("XML applied — Undo Apply is available in the panel", 5000);
     } catch (err) {
       xmlApplyError = (err as Error).message || String(err);
     }
@@ -303,8 +204,7 @@
       try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* ignore */ }
     }
     captureCleanSnapshot();
-    status = "Apply undone";
-    setTimeout(() => (status = ""), 3000);
+    showStatus("Apply undone", 3000);
   }
 
   let editor: Editor | undefined = undefined;
@@ -448,10 +348,6 @@
       if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
       s.panes.validationErrorsHeight = h;
     });
-  }
-
-  function clamp(v: number, lo: number, hi: number) {
-    return Math.max(lo, Math.min(hi, v));
   }
 
   // --- Outline sidebar resizer (left edge, drags right-ward) ---
@@ -610,7 +506,7 @@
       const path = preset ?? await App.PickFB2ToOpen();
       if (!path) return;
       console.log(`[fbe] opening ${path}`);
-      status = `Opening ${path.split(/[\\/]/).pop()}…`;
+      status = `Opening ${basename(path)}…`;
       const parsed: FictionBook = await App.OpenFile(path);
       console.log(
         `[fbe] parsed: ${parsed.Bodies?.length ?? 0} bodies, ` +
@@ -622,9 +518,8 @@
       await new Promise((r) => setTimeout(r, 0));
       fb = parsed;
       currentPath = path;
-      filename = path.split(/[\\/]/).pop() ?? path;
-      status = `Opened ${filename}`;
-      setTimeout(() => (status = ""), 3000);
+      filename = basename(path);
+      showStatus(`Opened ${filename}`, 3000);
       captureCleanSnapshot();
       void refreshRecent();
     } catch (e) {
@@ -670,7 +565,7 @@
       await App.UpdateDocument(current);
       await App.SaveFile(path);
       currentPath = path;
-      filename = path.split(/[\\/]/).pop() ?? path;
+      filename = basename(path);
       status = `Saved ${filename}`;
       captureCleanSnapshot();
       // Re-baseline PM's undo stack so subsequent undos that return to
@@ -696,8 +591,7 @@
       const path = await App.PickHTMLToSave(suggested);
       if (!path) return;
       await App.ExportHTML(path);
-      status = `Exported ${path.split(/[\\/]/).pop() ?? path}`;
-      setTimeout(() => (status = ""), 3000);
+      showStatus(`Exported ${basename(path)}`, 3000);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -726,10 +620,9 @@
       validationErrors = errs ?? [];
       showPanel = true;
 
-      status = errs && errs.length > 0
+      showStatus(errs && errs.length > 0
         ? `XSD: ${errs.length} error(s)`
-        : "XSD valid ✓";
-      setTimeout(() => (status = ""), 4000);
+        : "XSD valid ✓", 4000);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -983,8 +876,8 @@
                 on:click={() => openFile(path)}
                 title={path}
               >
-                <span class="basename">{path.split(/[\\/]/).pop() ?? path}</span>
-                <span class="dir">{path.slice(0, -((path.split(/[\\/]/).pop() ?? path).length))}</span>
+                <span class="basename">{basename(path)}</span>
+                <span class="dir">{dirname(path)}</span>
               </button>
             </li>
           {/each}
@@ -1168,6 +1061,8 @@
     color-scheme: light;
     --bg-app:          #fafaf7;
     --bg-surface:      #ffffff;   /* editor paper */
+    --font-mono: "SF Mono", Menlo, Consolas, monospace;
+    --font-ui: -apple-system, "Segoe UI", sans-serif;
     --bg-chrome:       #f1f1ec;   /* header, panel-title, toolbar */
     --bg-sidebar:      #f5f5f0;
     --bg-card:         #fffdf8;   /* dialogs, menus */
@@ -1266,7 +1161,7 @@
     display: grid;
     grid-template-rows: 2.5rem auto 1fr;
     height: 100vh;
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
   }
   header {
     display: flex;

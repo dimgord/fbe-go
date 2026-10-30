@@ -419,7 +419,7 @@
     border: 1px solid var(--border-input);
     border-radius: 3px;
     cursor: pointer;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
   }
   button.toggle.on {
