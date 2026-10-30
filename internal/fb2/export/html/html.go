@@ -10,12 +10,12 @@
 package html
 
 import (
-	"encoding/base64"
 	"fmt"
 	"html"
 	"io"
 	"strings"
 
+	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 )
 
@@ -371,15 +371,11 @@ func (e *exporter) resolveBinaryHref(href string) string {
 	if !ok {
 		return ""
 	}
-	ct := bin.ContentType
-	if ct == "" {
-		ct = "image/jpeg"
-	}
-	// Validate base64 cheaply; if it fails, skip the image.
-	if _, err := base64.StdEncoding.DecodeString(strings.TrimSpace(bin.Data)); err != nil {
+	// Validate the payload; if it is broken, skip the image.
+	if _, err := binary.Decode(bin); err != nil {
 		return ""
 	}
-	return "data:" + ct + ";base64," + strings.TrimSpace(bin.Data)
+	return binary.DataURL(bin)
 }
 
 func (e *exporter) writeInlines(items []doc.Inline) {

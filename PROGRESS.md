@@ -6,6 +6,37 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 109 — 2026-10-30 — `app.go` sheds fonts and the close flow; CLI becomes testable → v3.14.0 [dev]
+
+`app.go` is 573 lines now, against 1,224 at the review.
+
+- **`internal/sysfonts`.** About 230 lines of font discovery moved out of the Wails binding file.
+  `fc-list` parsing split into a pure `parseFontconfig`. New tests pinned down what the filename
+  heuristic really does: its doc comment promised "DejaVu Sans", it gives "Deja Vu Sans", so the
+  comment was corrected and the behaviour left alone.
+- **`close.go`.** A small `shell` interface (`FrontendDirty`, `AskSaveDiscardCancel`, `Emit`)
+  separates the close decision from Wails. `App.stayOpen` is the three-way decision with data-loss
+  consequences, previously impossible to run without a window, and it now has a table test,
+  including that a re-entrant close after Discard does not ask again. The Save/Discard/Cancel
+  dialog, which existed twice, is one `wailsShell` method.
+- **`binary.DataURL`.** Three hand-built `data:` strings differed in whether they trimmed the
+  payload and defaulted the content type. `ExtractThumbnail` decoded and re-encoded the bytes for
+  nothing; `thumb.Cover` returns the entry directly. `ExtractToReader` (unused) is gone.
+- **`cmd/fbe`.** `run(argv, stdout, stderr) int` replaces `os.Exit` inside commands, with a
+  sentinel `errInvalid`. Tests cover usage, unknown command, validate both ways, pack then info
+  through a zip, and a missing file.
+
+The real close dialog and the frontend round-trip are not exercised by tests, since `wailsShell`
+needs a window: quit with unsaved edits is worth trying by hand.
+
+### Files Modified
+
+- `internal/sysfonts/sysfonts.go`, `sysfonts_test.go`, `close.go`, `close_test.go`, `cmd/fbe/main_test.go`, `internal/fb2/binary/dataurl_test.go` (new).
+- `app.go`, `cmd/fbe/main.go`, `internal/fb2/binary/binary.go`, `internal/fb2/thumb/thumb.go`, `internal/fb2/export/html/html.go`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.13.0 → 3.14.0.
+
+---
+
 ## Rev 108 — 2026-10-30 — Mark table; Editor.svelte is view lifecycle only → v3.13.0 [dev]
 
 - **`editor/markCodec.ts`.** Mark name, FB2 field, nesting order and attributes were spelled out

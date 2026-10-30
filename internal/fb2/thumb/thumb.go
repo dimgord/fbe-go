@@ -6,24 +6,27 @@
 package thumb
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 )
 
-// Extract returns the raw bytes of the coverpage image, its content type, or an
-// error if no cover is present / referenced binary is missing.
-func Extract(fb *doc.FictionBook) (data []byte, contentType string, err error) {
+// Cover returns the binary entry of the first coverpage image.
+func Cover(fb *doc.FictionBook) (*doc.Binary, error) {
 	if fb.Description.TitleInfo == nil {
-		return nil, "", fmt.Errorf("thumb: no title-info")
+		return nil, fmt.Errorf("thumb: no title-info")
 	}
 	cp := fb.Description.TitleInfo.Coverpage
 	if cp == nil || len(cp.Images) == 0 {
-		return nil, "", fmt.Errorf("thumb: no coverpage")
+		return nil, fmt.Errorf("thumb: no coverpage")
 	}
-	bin, err := binary.FindByHref(fb, cp.Images[0].Href)
+	return binary.FindByHref(fb, cp.Images[0].Href)
+}
+
+// Extract returns the raw bytes of the coverpage image and its content type.
+func Extract(fb *doc.FictionBook) (data []byte, contentType string, err error) {
+	bin, err := Cover(fb)
 	if err != nil {
 		return nil, "", err
 	}
@@ -32,13 +35,4 @@ func Extract(fb *doc.FictionBook) (data []byte, contentType string, err error) {
 		return nil, "", fmt.Errorf("thumb: decode: %w", err)
 	}
 	return raw, bin.ContentType, nil
-}
-
-// ExtractToReader is a convenience for callers that want an io.Reader.
-func ExtractToReader(fb *doc.FictionBook) (*bytes.Reader, string, error) {
-	raw, ct, err := Extract(fb)
-	if err != nil {
-		return nil, "", err
-	}
-	return bytes.NewReader(raw), ct, nil
 }

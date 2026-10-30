@@ -8,23 +8,16 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"net/http"
 	"io"
 	"os"
 
-	"log"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/adrg/sysfont"
-	"github.com/adrg/xdg"
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
@@ -38,6 +31,7 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
 
+	"github.com/dimgord/fbe-go/internal/sysfonts"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -153,219 +147,12 @@ func launchArg(args []string) string {
 	return ""
 }
 
-// populateSystemFonts walks the OS font registry, dedupes by family, and
-// caches a sorted slice. Runs once per app launch — fonts rarely change
-// during a session, and the dialog can happily show a stale list if the
-// user installs a family mid-session (they can still type it in the
-// free-text fallback).
-//
-// Augments `xdg.FontDirs` with NixOS-typical locations (`/run/current-system/...`,
-// nix user profiles) and with every `$XDG_DATA_DIRS` entry's `/fonts`
-// subdir, so the Wails flake's reduced XDG_DATA_DIRS on NixOS doesn't
-// leave the finder staring at an empty /usr/share/fonts. No-op on systems
-// where those paths don't exist.
-//
-// For fonts sysfont's filename registry doesn't recognize — common on
-// NixOS because the store-path filenames carry hashes / versions not in
-// the registry — falls back to a filename-to-family heuristic so the
-// user still sees a reasonable label.
+// populateSystemFonts caches the installed font families for the Settings dialog.
 func (a *App) populateSystemFonts() {
-	// On Linux, fontconfig is the source of truth. `fc-list : family` returns
-	// every font the user has configured — system packages, home-manager,
-	// nix profiles, user ~/.fonts, the lot — indexed in a single pass, with
-	// proper family names (not filenames). Filesystem walkers like sysfont
-	// can't match fontconfig's visibility on NixOS: fonts live in dozens of
-	// nix-store paths joined by opaque symlink trees, and nixpkgs-packaged
-	// filenames carry hashes / versions that sysfont's registry doesn't
-	// recognize. Try fontconfig first; fall back to sysfont on macOS (where
-	// fc-list usually isn't installed) or if the command fails.
-	if runtime.GOOS == "linux" {
-		if families, err := listFontsViaFontconfig(); err == nil && len(families) > 0 {
-			log.Printf("[fbe] system fonts: %d families via fontconfig", len(families))
-			a.systemFontsMu.Lock()
-			a.systemFonts = families
-			a.systemFontsMu.Unlock()
-			return
-		}
-	}
-
-	extendFontDirsForNix()
-
-	finder := sysfont.NewFinder(nil)
-	all := finder.List()
-
-	seen := make(map[string]struct{}, len(all))
-	families := make([]string, 0, len(all))
-	recognized := 0
-	heuristic := 0
-	for _, f := range all {
-		if f == nil {
-			continue
-		}
-		family := f.Family
-		if family != "" {
-			recognized++
-		} else if f.Filename != "" {
-			family = familyFromFilename(f.Filename)
-			if family == "" {
-				continue
-			}
-			heuristic++
-		} else {
-			continue
-		}
-		if _, dup := seen[family]; dup {
-			continue
-		}
-		seen[family] = struct{}{}
-		families = append(families, family)
-	}
-	sort.Strings(families)
-
-	log.Printf("[fbe] system fonts: %d files scanned, %d recognized, %d via filename heuristic, %d unique families (sysfont)",
-		len(all), recognized, heuristic, len(families))
-
+	families := sysfonts.List()
 	a.systemFontsMu.Lock()
+	defer a.systemFontsMu.Unlock()
 	a.systemFonts = families
-	a.systemFontsMu.Unlock()
-}
-
-// listFontsViaFontconfig runs `fc-list : family` and parses the output. Each
-// line may be a comma-separated list of family aliases (fontconfig groups
-// equivalents like localized names); we take the first as the canonical
-// display name. Dedupes + sorts the result. Returns an error if the command
-// isn't installed or exits non-zero.
-func listFontsViaFontconfig() ([]string, error) {
-	path, err := exec.LookPath("fc-list")
-	if err != nil {
-		return nil, err
-	}
-	out, err := exec.Command(path, ":", "family").Output()
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]struct{})
-	families := make([]string, 0, 128)
-	for _, raw := range strings.Split(string(out), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		// "Noto Serif,Noto Serif Regular" → "Noto Serif"
-		first := strings.TrimSpace(strings.SplitN(line, ",", 2)[0])
-		if first == "" {
-			continue
-		}
-		if _, dup := seen[first]; dup {
-			continue
-		}
-		seen[first] = struct{}{}
-		families = append(families, first)
-	}
-	sort.Strings(families)
-	return families, nil
-}
-
-// familyFromFilename extracts a human-readable family name from a font
-// file path by stripping the extension, common weight / style suffixes,
-// and replacing separators with spaces. Best-effort heuristic; caller
-// dedupes against already-recognized names.
-//
-//	/nix/store/abc-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSans-Bold.ttf
-//	→ "DejaVu Sans"
-func familyFromFilename(path string) string {
-	base := filepath.Base(path)
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-
-	// Strip well-known style tokens. Order matters — longer first so
-	// "BoldItalic" matches before "Bold".
-	suffixes := []string{
-		"BoldItalic", "BoldOblique", "LightItalic", "LightOblique",
-		"MediumItalic", "MediumOblique", "ExtraBold", "SemiBold", "Thin",
-		"Light", "Medium", "Regular", "Bold", "Italic", "Oblique",
-	}
-	for _, s := range suffixes {
-		// Match `-Bold`, `_Bold`, or ` Bold` at the end.
-		for _, sep := range []string{"-", "_", " "} {
-			token := sep + s
-			if strings.HasSuffix(base, token) {
-				base = strings.TrimSuffix(base, token)
-				break
-			}
-		}
-	}
-
-	// Convert CamelCase / snake / kebab into space-separated words.
-	base = strings.ReplaceAll(base, "_", " ")
-	base = strings.ReplaceAll(base, "-", " ")
-	base = splitCamelCase(base)
-	base = strings.TrimSpace(strings.Join(strings.Fields(base), " "))
-	return base
-}
-
-// splitCamelCase inserts spaces before uppercase letters in camelCase
-// sequences: "DejaVuSans" → "DejaVu Sans". Preserves runs of uppercase
-// (e.g. "PTSans" stays "PTSans" rather than "P T Sans").
-func splitCamelCase(s string) string {
-	var b strings.Builder
-	runes := []rune(s)
-	for i, r := range runes {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			prev := runes[i-1]
-			next := rune(0)
-			if i+1 < len(runes) {
-				next = runes[i+1]
-			}
-			prevLower := prev >= 'a' && prev <= 'z'
-			nextLower := next >= 'a' && next <= 'z'
-			if prevLower || (prev >= 'A' && prev <= 'Z' && nextLower) {
-				b.WriteRune(' ')
-			}
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-// extendFontDirsForNix appends additional font directories to xdg.FontDirs
-// that sysfont would otherwise miss on NixOS and nix-darwin setups:
-//
-//   - `/run/current-system/sw/share/fonts` — system-wide NixOS packages.
-//   - `$HOME/.nix-profile/share/fonts`     — user-installed via nix profile.
-//   - `/etc/profiles/per-user/<user>/share/fonts` — home-manager style.
-//   - Each entry in `$XDG_DATA_DIRS` joined with `fonts` — this picks up
-//     any activation-script-managed paths a Nix dev shell might inject.
-//
-// Only existing directories are appended. Idempotent per process — the
-// package-level xdg.FontDirs can be mutated multiple times without harm
-// beyond extra duplicate checks inside sysfont's walker.
-func extendFontDirsForNix() {
-	seen := make(map[string]struct{}, len(xdg.FontDirs))
-	for _, p := range xdg.FontDirs {
-		seen[p] = struct{}{}
-	}
-	add := func(p string) {
-		if p == "" {
-			return
-		}
-		if _, dup := seen[p]; dup {
-			return
-		}
-		if info, err := os.Stat(p); err == nil && info.IsDir() {
-			seen[p] = struct{}{}
-			xdg.FontDirs = append(xdg.FontDirs, p)
-		}
-	}
-	add("/run/current-system/sw/share/fonts")
-	if home, err := os.UserHomeDir(); err == nil {
-		add(filepath.Join(home, ".nix-profile/share/fonts"))
-	}
-	if xdgDataDirs := os.Getenv("XDG_DATA_DIRS"); xdgDataDirs != "" {
-		for _, d := range strings.Split(xdgDataDirs, ":") {
-			add(filepath.Join(d, "fonts"))
-		}
-	}
-	log.Printf("[fbe] font dirs: %v", xdg.FontDirs)
 }
 
 // ListSystemFonts returns the sorted, deduped list of family names the
@@ -383,39 +170,6 @@ func (a *App) ListSystemFonts() []string {
 	return out
 }
 
-// askFrontendIsDirty asks the webview whether the in-memory document
-// differs from its last clean snapshot (the JSON-stringified merged
-// FictionBook captured at open / save). The frontend owns the source
-// of truth — body edits live in ProseMirror and only flow into `fb`
-// via `editor.currentFB()`, so a server-side flag would always be
-// stale or racy. Round-trip:
-//
-//   1. Subscribe once for "app:dirty-response".
-//   2. Emit "app:check-dirty" to the frontend.
-//   3. Wait up to 2s for the response.
-//
-// On timeout we conservatively return true so an unresponsive webview
-// can't silently drop user data on quit.
-func (a *App) askFrontendIsDirty(ctx context.Context) bool {
-	ch := make(chan bool, 1)
-	wailsrt.EventsOnce(ctx, "app:dirty-response", func(args ...any) {
-		if len(args) > 0 {
-			if d, ok := args[0].(bool); ok {
-				ch <- d
-				return
-			}
-		}
-		ch <- true
-	})
-	wailsrt.EventsEmit(ctx, "app:check-dirty")
-	select {
-	case d := <-ch:
-		return d
-	case <-time.After(2 * time.Second):
-		return true
-	}
-}
-
 // ConfirmUnsavedChanges shows a native 3-button "Save / Discard / Cancel"
 // dialog and returns "save", "discard", or "cancel". Used by the frontend
 // before File→Open / File→New flows replace the in-memory document.
@@ -424,25 +178,8 @@ func (a *App) askFrontendIsDirty(ctx context.Context) bool {
 // stays gated behind explicit user intent — unknown dialog state should
 // not silently advance the workflow.
 func (a *App) ConfirmUnsavedChanges() string {
-	resp, err := wailsrt.MessageDialog(a.ctx, wailsrt.MessageDialogOptions{
-		Type:          wailsrt.QuestionDialog,
-		Title:         "Unsaved changes",
-		Message:       "You have unsaved changes in the current document. What would you like to do?",
-		Buttons:       []string{"Save", "Discard", "Cancel"},
-		DefaultButton: "Save",
-		CancelButton:  "Cancel",
-	})
-	if err != nil {
-		return "cancel"
-	}
-	switch resp {
-	case "Save":
-		return "save"
-	case "Discard":
-		return "discard"
-	default:
-		return "cancel"
-	}
+	return wailsShell{a.ctx}.AskSaveDiscardCancel(
+		"You have unsaved changes in the current document. What would you like to do?")
 }
 
 // OnBeforeClose is called by Wails when the user attempts to close the
@@ -459,39 +196,7 @@ func (a *App) ConfirmUnsavedChanges() string {
 //     a frontend event (the document lives in the PM editor, not Go), then
 //     re-quits. "Discard" sets forceClose and re-quits. "Cancel" stays.
 func (a *App) OnBeforeClose(ctx context.Context) bool {
-	if a.forceClose.Load() {
-		return false
-	}
-	if !a.askFrontendIsDirty(ctx) {
-		return false
-	}
-	resp, err := wailsrt.MessageDialog(ctx, wailsrt.MessageDialogOptions{
-		Type:          wailsrt.QuestionDialog,
-		Title:         "Unsaved changes",
-		Message:       "You have unsaved changes. Save them before closing?",
-		Buttons:       []string{"Save", "Discard", "Cancel"},
-		DefaultButton: "Save",
-		CancelButton:  "Cancel",
-	})
-	if err != nil {
-		// On dialog error, stay open — losing user data on a corner-case
-		// runtime hiccup is the worse failure mode.
-		return true
-	}
-	switch resp {
-	case "Discard":
-		a.forceClose.Store(true)
-		return false
-	case "Save":
-		// The document lives in the PM editor. Hand off to the frontend
-		// to run its Save flow (which respects untitled vs. titled,
-		// triggers SaveAs picker if needed) and re-trigger Quit on
-		// success. ForceQuit() unblocks the next OnBeforeClose call.
-		wailsrt.EventsEmit(ctx, "app:save-and-quit")
-		return true
-	default:
-		return true
-	}
+	return a.stayOpen(wailsShell{ctx})
 }
 
 // ForceQuit lets the frontend bypass the unsaved-changes dialog after
@@ -691,7 +396,7 @@ func (a *App) GetBinaryDataURL(href string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "data:" + bin.ContentType + ";base64," + bin.Data, nil
+	return binary.DataURL(bin), nil
 }
 
 // AddBinaryFromDisk reads a file and adds it as a <binary> entry.
@@ -763,14 +468,11 @@ func (a *App) ExtractThumbnail(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, ct, err := thumb.Extract(fb)
+	cover, err := thumb.Cover(fb)
 	if err != nil {
 		return "", err
 	}
-	var buf bytes.Buffer
-	buf.WriteString("data:" + ct + ";base64,")
-	buf.WriteString(base64.StdEncoding.EncodeToString(data))
-	return buf.String(), nil
+	return binary.DataURL(cover), nil
 }
 
 // ExportHTML writes the currently-open document as a self-contained HTML file.

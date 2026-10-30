@@ -24,6 +24,16 @@ func Encode(id, contentType string, data []byte) *doc.Binary {
 	}
 }
 
+// DataURL returns the entry as a data: URL. A missing content type falls back to JPEG, the
+// common case in old FB2 files.
+func DataURL(b *doc.Binary) string {
+	ct := b.ContentType
+	if ct == "" {
+		ct = "image/jpeg"
+	}
+	return "data:" + ct + ";base64," + strings.TrimSpace(b.Data)
+}
+
 // FindByHref looks up a binary by href like "#cover.jpg" or "cover.jpg".
 func FindByHref(fb *doc.FictionBook, href string) (*doc.Binary, error) {
 	id := strings.TrimPrefix(href, "#")
