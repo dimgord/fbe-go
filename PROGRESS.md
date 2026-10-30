@@ -6,6 +6,28 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 104 — 2026-10-30 — `ui/Modal.svelte` replaces four copies of the dialog shell → v3.9.0 [dev]
+
+Settings, Table, Help and Binaries each carried the same backdrop, role/aria markup and
+`.backdrop`/`.dialog` CSS. `ui/Modal.svelte` owns all of it (about 90 lines removed); each
+dialog passes only its sizing as `style` and handles `on:close`. Their content, scoped CSS
+and key handling are unchanged. The dialogs' `on:click|stopPropagation` shell keeps its
+behaviour, and sub-overlays in Binaries stay local to that dialog.
+
+Also finishes `showStatus` for the Save message, which Rev 103's pass missed.
+
+Verified in WebKit: all four open, are labelled by their heading and close on Esc, and the
+backdrop closes Settings; Settings was compared by screenshot.
+
+### Files Modified
+
+- `frontend/src/ui/Modal.svelte` (new).
+- `frontend/src/settings/SettingsDialog.svelte`, `editor/TableDialog.svelte`, `help/HelpDialog.svelte`, `binary/BinaryManagerDialog.svelte`.
+- `frontend/src/App.svelte` — `showStatus`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.8.0 → 3.9.0.
+
+---
+
 ## Rev 103 — 2026-10-30 — Dirty logic extracted and tested; no empty placeholders in saved books → v3.8.0 [dev]
 
 First step of the `App.svelte` split, plus the last bug from the review.

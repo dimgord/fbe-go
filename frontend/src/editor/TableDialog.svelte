@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from "../ui/Modal.svelte";
   import { createEventDispatcher, onMount } from "svelte";
 
   export let open = false;
@@ -47,22 +48,7 @@
   });
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="button"
-    tabindex="-1"
-    aria-label="Dismiss dialog"
-    on:click={cancel}
-    on:keydown={(e) => e.key === "Escape" && cancel()}>
-    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="td-title"
-      on:click|stopPropagation
-      on:keydown|stopPropagation>
+<Modal {open} labelledBy="td-title" style="padding: 1.2rem 1.5rem; min-width: 20rem;" on:close={cancel}>
       <h3 id="td-title">Insert table</h3>
       <div class="row">
         <label for="td-rows">Rows</label>
@@ -86,29 +72,9 @@
         <button type="button" on:click={cancel}>Cancel</button>
         <button type="button" class="primary" on:click={submit}>Insert</button>
       </div>
-    </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--backdrop);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .dialog {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 1.2rem 1.5rem;
-    min-width: 20rem;
-    box-shadow: 0 8px 24px var(--shadow);
-    font-family: inherit;
-    color: var(--fg);
-  }
   h3 {
     margin: 0 0 0.8rem 0;
     font-size: 1rem;

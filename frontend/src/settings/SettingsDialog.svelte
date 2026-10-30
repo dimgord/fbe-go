@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from "../ui/Modal.svelte";
   import { createEventDispatcher, onMount } from "svelte";
   import { backend } from "../runtime/backend";
   import type { settings as SettingsNS } from "../../wailsjs/go/models";
@@ -281,22 +282,7 @@
   });
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="button"
-    tabindex="-1"
-    aria-label="Dismiss settings"
-    on:click={cancel}
-    on:keydown={(e) => e.key === "Escape" && cancel()}>
-    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sd-title"
-      on:click|stopPropagation
-      on:keydown|stopPropagation>
+<Modal {open} labelledBy="sd-title" style="padding: 1rem 1.4rem 1.2rem; min-width: 32rem; max-width: 40rem; max-height: 85vh; overflow: auto; font-family: var(--font-ui); font-size: 0.9rem;" on:close={cancel}>
       <header>
         <h3 id="sd-title">Settings</h3>
         <button type="button" class="close" on:click={cancel} title="Close without saving">×</button>
@@ -461,33 +447,9 @@
           <button type="button" class="primary" on:click={apply}>Apply</button>
         </div>
       {/if}
-    </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--backdrop);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .dialog {
-    background: var(--bg-card);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 1rem 1.4rem 1.2rem;
-    min-width: 32rem;
-    max-width: 40rem;
-    max-height: 85vh;
-    overflow: auto;
-    box-shadow: 0 8px 24px var(--shadow);
-    font-family: var(--font-ui);
-    font-size: 0.9rem;
-  }
   header {
     display: flex;
     align-items: center;

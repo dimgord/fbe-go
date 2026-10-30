@@ -566,12 +566,11 @@
       await App.SaveFile(path);
       currentPath = path;
       filename = basename(path);
-      status = `Saved ${filename}`;
+      showStatus(`Saved ${filename}`, 3000);
       captureCleanSnapshot();
       // Re-baseline PM's undo stack so subsequent undos that return to
       // this just-saved point are recognised as clean.
       editor?.markSaved();
-      setTimeout(() => (status = ""), 3000);
       void refreshRecent();
     } catch (e) {
       error = (e as Error).message;

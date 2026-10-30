@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from "../ui/Modal.svelte";
   import { backend } from "../runtime/backend";
   import { basename } from "../lib/path";
   import { createEventDispatcher, onMount } from "svelte";
@@ -185,23 +186,7 @@
   }
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div
-    class="backdrop"
-    role="button"
-    tabindex="-1"
-    aria-label="Dismiss dialog"
-    on:click={cancel}
-    on:keydown={(e) => e.key === "Escape" && cancel()}>
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="bm-title"
-      on:click|stopPropagation
-      on:keydown|stopPropagation>
+<Modal {open} labelledBy="bm-title" style="width: min(640px, 92vw); max-height: min(80vh, 720px); display: flex; flex-direction: column;" on:close={cancel}>
       <header>
         <h3 id="bm-title">Binaries</h3>
         <button type="button" class="close" title="Close (Esc)" on:click={cancel}>✕</button>
@@ -270,6 +255,7 @@
       <!-- Upload "name your binary" sub-overlay. -->
       {#if uploadStaged}
         <div class="sub-backdrop" on:click={cancelUpload} on:keydown={() => {}} role="button" tabindex="-1" aria-label="Cancel upload">
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
           <div class="sub-dialog" role="dialog" aria-modal="true" aria-labelledby="up-title" on:click|stopPropagation on:keydown|stopPropagation>
             <h4 id="up-title">Name this binary</h4>
             <div class="preview-row">
@@ -307,6 +293,7 @@
       <!-- Delete confirmation sub-overlay. -->
       {#if deleting}
         <div class="sub-backdrop" on:click={cancelDelete} on:keydown={() => {}} role="button" tabindex="-1" aria-label="Cancel delete">
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
           <div class="sub-dialog" role="alertdialog" aria-modal="true" aria-labelledby="del-title" on:click|stopPropagation on:keydown|stopPropagation>
             <h4 id="del-title">Delete binary?</h4>
             <p>
@@ -337,31 +324,9 @@
           </div>
         </div>
       {/if}
-    </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--backdrop);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .dialog {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0;
-    width: min(640px, 92vw);
-    max-height: min(80vh, 720px);
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 8px 24px var(--shadow);
-    color: var(--fg);
-  }
   header {
     display: flex;
     align-items: center;
@@ -564,7 +529,6 @@
     place-items: center;
     border-radius: 6px;
   }
-  .dialog { position: relative; }
   .sub-dialog {
     background: var(--bg-card);
     border: 1px solid var(--border);
