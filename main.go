@@ -11,7 +11,6 @@ import (
 	"embed"
 	"os"
 
-	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -37,7 +36,7 @@ func main() {
 	// options.App in Wails v2, so positioning is restored in app.OnStartup
 	// via runtime.WindowSetPosition.
 	w, h := defaultWidth, defaultHeight
-	if s, err := settings.Load(); err == nil && s != nil && s.Window.W > 0 && s.Window.H > 0 {
+	if s, err := app.settings.Load(); err == nil && s.Window.W > 0 && s.Window.H > 0 {
 		w, h = s.Window.W, s.Window.H
 	}
 

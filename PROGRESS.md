@@ -6,6 +6,43 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 99 — 2026-10-30 — Session and settings get owners; no more unsynchronized state in App → v3.4.0 [dev]
+
+Wails runs every bound method on its own goroutine, and `OnStartup` on another, but
+`App` read and wrote `current`, `path` and `forceClose` with no lock. `launchMu` looked
+as if it protected `ctx`, yet `OnStartup` wrote it outside the lock.
+
+- `internal/fb2/session.Session` owns the open document and path. A stored document is
+  never mutated: `AddBinary` swaps in a copy with a fresh slice. So readers take a
+  snapshot under the lock and serialize outside it, and a slow save never blocks the UI.
+  The six "no document open" guards became `Require()` / `ErrNoDocument`. A failed
+  Save As leaves the path alone. `Replace(nil)` is ignored, where `UpdateDocument(nil)`
+  used to drop the book silently.
+- `(*doc.FictionBook).Normalize` replaces `normalizeFictionBook` in `package main`.
+- `settings.Store` replaces the package-level `Load`/`Save` with a fixed path. `Update(fn)`
+  makes read-modify-write one locked step; recents, window geometry and the dialog used
+  to race and could overwrite each other. `Replace` keeps `RecentFiles` and `Window` from
+  disk, because the frontend's draft may be older and Go owns those fields. The MRU rules
+  moved beside their data as `(*Settings).AddRecent` / `RemoveRecent`. Tests now use
+  `t.TempDir()` instead of the real config.
+- `forceClose` is an `atomic.Bool`; `ctx` is set under `launchMu`.
+
+`app.go` is down from 1,224 to 846 lines; the bound API is unchanged, so no frontend
+edits were needed. `go test -race ./...` passes, including new concurrent tests for
+`Session` and `Store`. Search and annotation save re-checked in WebKit, which exercises
+the frontend only: the Go session path was not run in the real app in this revision.
+
+### Files Modified
+
+- `internal/fb2/session/session.go`, `session_test.go` (new).
+- `internal/fb2/doc/normalize.go` (new).
+- `internal/fb2/settings/settings.go` — `Store`, `AddRecent`, `RemoveRecent`; tests.
+- `app.go`, `main.go` — delegate to both.
+- `CLAUDE.md` — notes.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.3.0 → 3.4.0.
+
+---
+
 ## Rev 98 — 2026-10-30 — One loader for every entry point; Apply guard tested; structured validation errors → v3.3.0 [dev]
 
 Three items from the review, all in the Go layer.

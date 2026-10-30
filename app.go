@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"fmt"
 	"net/http"
 	"io"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/adrg/sysfont"
@@ -31,6 +31,7 @@ import (
 	"github.com/dimgord/fbe-go/internal/fb2/fsutil"
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/roundtrip"
+	"github.com/dimgord/fbe-go/internal/fb2/session"
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
 	"github.com/dimgord/fbe-go/internal/fb2/updates"
@@ -42,16 +43,16 @@ import (
 
 // App holds per-session state.
 type App struct {
-	ctx     context.Context
-	current *doc.FictionBook // currently-open document
-	path    string           // current file path, empty if untitled
+	ctx      context.Context
+	doc      session.Session
+	settings *settings.Store
 
 	// forceClose is set after the user has explicitly chosen "Discard" /
 	// "Save" via the unsaved-changes dialog. The next OnBeforeClose call
 	// (triggered by the wailsrt.Quit() that follows a Save) checks this
 	// flag and skips the dialog so the app actually exits instead of
 	// re-prompting forever.
-	forceClose bool
+	forceClose atomic.Bool
 
 	// systemFonts is populated asynchronously on startup by walking the
 	// OS font directories via `sysfont`. Cached as a sorted, deduped
@@ -68,15 +69,17 @@ type App struct {
 }
 
 // NewApp constructs the app.
-func NewApp() *App { return &App{} }
+func NewApp() *App { return &App{settings: settings.UserStore()} }
 
 // OnStartup is called by Wails once the webview is ready. It restores the
 // last-seen window position from settings.json (size is already applied via
 // options.App in main.go — position can't be, per Wails v2's API).
 func (a *App) OnStartup(ctx context.Context) {
+	a.launchMu.Lock()
 	a.ctx = ctx
+	a.launchMu.Unlock()
 
-	if s, err := settings.Load(); err == nil && s != nil {
+	if s, err := a.settings.Load(); err == nil {
 		// Only restore a non-zero, non-negative position. First-run (zeros)
 		// keeps the OS default.
 		if s.Window.X != 0 || s.Window.Y != 0 {
@@ -456,7 +459,7 @@ func (a *App) ConfirmUnsavedChanges() string {
 //     a frontend event (the document lives in the PM editor, not Go), then
 //     re-quits. "Discard" sets forceClose and re-quits. "Cancel" stays.
 func (a *App) OnBeforeClose(ctx context.Context) bool {
-	if a.forceClose {
+	if a.forceClose.Load() {
 		return false
 	}
 	if !a.askFrontendIsDirty(ctx) {
@@ -477,7 +480,7 @@ func (a *App) OnBeforeClose(ctx context.Context) bool {
 	}
 	switch resp {
 	case "Discard":
-		a.forceClose = true
+		a.forceClose.Store(true)
 		return false
 	case "Save":
 		// The document lives in the PM editor. Hand off to the frontend
@@ -496,7 +499,7 @@ func (a *App) OnBeforeClose(ctx context.Context) bool {
 // dialog dispatches "app:save-and-quit", the frontend completes the save,
 // then calls this to actually exit).
 func (a *App) ForceQuit() {
-	a.forceClose = true
+	a.forceClose.Store(true)
 	wailsrt.Quit(a.ctx)
 }
 
@@ -507,15 +510,9 @@ func (a *App) ForceQuit() {
 func (a *App) OnShutdown(ctx context.Context) {
 	x, y := wailsrt.WindowGetPosition(ctx)
 	w, h := wailsrt.WindowGetSize(ctx)
-	s, err := settings.Load()
-	if err != nil || s == nil {
-		return
-	}
-	s.Window.X = x
-	s.Window.Y = y
-	s.Window.W = w
-	s.Window.H = h
-	_ = settings.Save(s)
+	_ = a.settings.Update(func(s *settings.Settings) {
+		s.Window.X, s.Window.Y, s.Window.W, s.Window.H = x, y, w, h
+	})
 }
 
 // --- Native dialogs (Wails' runtime.OpenFileDialog / SaveFileDialog are Go-only;
@@ -590,74 +587,36 @@ func (a *App) PickImageToUpload() (string, error) {
 
 // OpenFile reads an FB2 (or FB2.zip) file and returns the parsed document as JSON.
 func (a *App) OpenFile(path string) (*doc.FictionBook, error) {
-	fb, err := parser.ParseFile(path)
+	fb, err := a.doc.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	a.current = fb
-	a.path = path
-	recordRecentFile(path)
+	a.recordRecent(path)
 	return fb, nil
 }
 
 // SaveFile serializes the current document back to disk.
 func (a *App) SaveFile(path string) error {
-	if a.current == nil {
-		return fmt.Errorf("no document open")
-	}
-	if path == "" {
-		path = a.path
-	}
-	fb := a.current
-	if err := fsutil.WriteAtomic(path, func(w io.Writer) error { return writer.Write(w, fb) }); err != nil {
+	saved, err := a.doc.Save(path)
+	if err != nil {
 		return err
 	}
-	a.path = path
-	recordRecentFile(path)
+	a.recordRecent(saved)
 	return nil
 }
 
-// recentFilesCap is the maximum length of the Most-Recently-Used list.
-// Chosen to match what the original FBE used (see Settings.h::recentFiles).
-const recentFilesCap = 10
-
-// recordRecentFile prepends `path` to settings.RecentFiles, dedupes earlier
-// occurrences, caps the list at recentFilesCap, and persists. Silent on
-// error — recent-files tracking is a convenience, not a correctness path;
-// we'd rather continue the primary flow than fail Open/Save because
-// settings.json couldn't be written.
-func recordRecentFile(path string) {
-	if path == "" {
-		return
-	}
-	s, err := settings.Load()
-	if err != nil || s == nil {
-		return
-	}
-	out := make([]string, 0, len(s.RecentFiles)+1)
-	out = append(out, path)
-	for _, p := range s.RecentFiles {
-		if p == path {
-			continue
-		}
-		out = append(out, p)
-		if len(out) == recentFilesCap {
-			break
-		}
-	}
-	s.RecentFiles = out
-	_ = settings.Save(s)
+// recordRecent notes path in the MRU list. Silent on failure: a file that opened fine
+// is not worth an error just because the settings could not be written.
+func (a *App) recordRecent(path string) {
+	_ = a.settings.Update(func(s *settings.Settings) { s.AddRecent(path) })
 }
 
 // RecentFiles returns the persisted most-recently-used file paths
 // (most-recent first). On read error returns an empty list rather than
 // propagating — the frontend just shows no history in that case.
 func (a *App) RecentFiles() []string {
-	s, err := settings.Load()
-	if err != nil || s == nil {
-		return []string{}
-	}
-	if s.RecentFiles == nil {
+	s, err := a.settings.Load()
+	if err != nil || s.RecentFiles == nil {
 		return []string{}
 	}
 	return s.RecentFiles
@@ -666,18 +625,7 @@ func (a *App) RecentFiles() []string {
 // RemoveFromRecent drops a path from the MRU list (e.g. when it no longer
 // exists on disk). No-op if absent.
 func (a *App) RemoveFromRecent(path string) error {
-	s, err := settings.Load()
-	if err != nil || s == nil {
-		return err
-	}
-	out := s.RecentFiles[:0]
-	for _, p := range s.RecentFiles {
-		if p != path {
-			out = append(out, p)
-		}
-	}
-	s.RecentFiles = out
-	return settings.Save(s)
+	return a.settings.Update(func(s *settings.Settings) { s.RemoveRecent(path) })
 }
 
 // ParseXMLString parses user-edited XML for the "Edit XML" panel, refusing any result that lost
@@ -701,39 +649,20 @@ func (a *App) ParseXMLString(xmlStr string) (*doc.FictionBook, error) {
 // `coverpage` to have at least one `<image>` child. Even though the Svelte
 // side has been fixed, this Go-side scrub ensures malformed data from any
 // future frontend regression still gets cleaned before reaching disk.
-func (a *App) UpdateDocument(fb *doc.FictionBook) {
-	if fb != nil {
-		normalizeFictionBook(fb)
-	}
-	a.current = fb
-}
-
-// normalizeFictionBook drops sub-elements that would round-trip as empty,
-// XSD-invalid placeholders. Currently only Coverpage{Images:nil}.
-func normalizeFictionBook(fb *doc.FictionBook) {
-	if fb.Description.TitleInfo != nil &&
-		fb.Description.TitleInfo.Coverpage != nil &&
-		len(fb.Description.TitleInfo.Coverpage.Images) == 0 {
-		fb.Description.TitleInfo.Coverpage = nil
-	}
-	if fb.Description.SrcTitleInfo != nil &&
-		fb.Description.SrcTitleInfo.Coverpage != nil &&
-		len(fb.Description.SrcTitleInfo.Coverpage.Images) == 0 {
-		fb.Description.SrcTitleInfo.Coverpage = nil
-	}
-}
+func (a *App) UpdateDocument(fb *doc.FictionBook) { a.doc.Replace(fb) }
 
 // CurrentDocument returns the in-memory document (useful after Open).
-func (a *App) CurrentDocument() *doc.FictionBook { return a.current }
+func (a *App) CurrentDocument() *doc.FictionBook { return a.doc.Document() }
 
 // --- Binary / image helpers ---
 
 // GetBinaryDataURL returns the binary payload as a data: URL for img src.
 func (a *App) GetBinaryDataURL(href string) (string, error) {
-	if a.current == nil {
-		return "", fmt.Errorf("no document open")
+	fb, err := a.doc.Require()
+	if err != nil {
+		return "", err
 	}
-	bin, err := binary.FindByHref(a.current, href)
+	bin, err := binary.FindByHref(fb, href)
 	if err != nil {
 		return "", err
 	}
@@ -742,15 +671,11 @@ func (a *App) GetBinaryDataURL(href string) (string, error) {
 
 // AddBinaryFromDisk reads a file and adds it as a <binary> entry.
 func (a *App) AddBinaryFromDisk(id, contentType, path string) error {
-	if a.current == nil {
-		return fmt.Errorf("no document open")
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	a.current.Binaries = append(a.current.Binaries, *binary.Encode(id, contentType, data))
-	return nil
+	return a.doc.AddBinary(*binary.Encode(id, contentType, data))
 }
 
 // ReadImageBinary reads an image file from disk and returns a *doc.Binary
@@ -825,10 +750,10 @@ func (a *App) ExtractThumbnail(path string) (string, error) {
 
 // ExportHTML writes the currently-open document as a self-contained HTML file.
 func (a *App) ExportHTML(path string) error {
-	if a.current == nil {
-		return fmt.Errorf("no document open")
+	fb, err := a.doc.Require()
+	if err != nil {
+		return err
 	}
-	fb := a.current
 	return fsutil.WriteAtomic(path, func(w io.Writer) error { return html.Export(w, fb) })
 }
 
@@ -846,11 +771,12 @@ func (a *App) Validate(path string) ([]xsd.ValidationError, error) {
 // a string. Frontend uses this for the read-only XML source panel — the
 // output reflects any unsaved edits that were pushed via UpdateDocument.
 func (a *App) SerializeCurrent() (string, error) {
-	if a.current == nil {
-		return "", fmt.Errorf("no document open")
+	fb, err := a.doc.Require()
+	if err != nil {
+		return "", err
 	}
 	var buf bytes.Buffer
-	if err := writer.Write(&buf, a.current); err != nil {
+	if err := writer.Write(&buf, fb); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
@@ -874,11 +800,12 @@ func (a *App) SerializeCurrent() (string, error) {
 // Dedup is handled in xsd.MergeXSDAndUnknown: if both sources cover the same
 // element at the same line, only the validator's richer entry is kept.
 func (a *App) ValidateCurrent() ([]xsd.ValidationError, error) {
-	if a.current == nil {
-		return nil, fmt.Errorf("no document open")
+	fb, err := a.doc.Require()
+	if err != nil {
+		return nil, err
 	}
 	var buf bytes.Buffer
-	if err := writer.Write(&buf, a.current); err != nil {
+	if err := writer.Write(&buf, fb); err != nil {
 		return nil, err
 	}
 	return xsd.ValidateAll(&buf)
@@ -888,12 +815,12 @@ func (a *App) ValidateCurrent() ([]xsd.ValidationError, error) {
 
 // LoadSettings returns the persisted settings (or defaults).
 func (a *App) LoadSettings() (*settings.Settings, error) {
-	return settings.Load()
+	return a.settings.Load()
 }
 
 // SaveSettings writes settings to disk.
 func (a *App) SaveSettings(s *settings.Settings) error {
-	return settings.Save(s)
+	return a.settings.Replace(s)
 }
 
 // --- Updates ---
