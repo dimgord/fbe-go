@@ -54,13 +54,13 @@ var knownFB2Elements = map[string]bool{
 var openTagRE = regexp.MustCompile(`<([a-zA-Z][\w-]*)`)
 
 // unknownMsgTagRE pulls the tag name back out of a message this file
-// produced. Used by mergeXSDAndUnknown to dedupe against libxml2's own
+// produced. Used by mergeXSDAndUnknown to dedupe against the validator's own
 // entries when both cover the same element at the same line.
 var unknownMsgTagRE = regexp.MustCompile(`Unknown FB2 element '([^']+)'`)
 
 // FindUnknownElements scans src for element names outside the bundled
 // FictionBook 2.0 vocabulary and returns one ValidationError per
-// occurrence. Supplements Validate (libxml2): libxml2's content-model
+// occurrence. Supplements Validate: the schema validator's content-model
 // recovery sometimes suppresses later unknown-element errors once the
 // first violation in a content group trips up the DFA — this scan is
 // structure-agnostic, so every unknown element shows up regardless.
@@ -84,12 +84,12 @@ func FindUnknownElements(src []byte) []ValidationError {
 }
 
 // MergeXSDAndUnknown returns a combined error list: all xsdErrs (from
-// libxml2), plus unknowns that aren't already reported by libxml2 on the
-// same line with the same element name. Keeps libxml2's richer messages
+// Validate), plus unknowns that aren't already reported by Validate on the
+// same line with the same element name. Keeps the validator's richer messages
 // when both cover the same issue.
 func MergeXSDAndUnknown(xsdErrs, unknowns []ValidationError) []ValidationError {
-	// Build a set of (line, tag) already covered by libxml2. Tag is extracted
-	// from libxml2 messages of the form "Element '{ns}name':".
+	// Build a set of (line, tag) already covered by Validate. Tag is extracted
+	// from its libxml2-style messages "Element '{ns}name':".
 	xsdTagRE := regexp.MustCompile(`Element '(?:\{[^}]*\})?([^']+)'`)
 	type key struct {
 		line int

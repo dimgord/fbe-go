@@ -52,9 +52,9 @@ unless noted.
   webview. Its own set of transitive MIT/BSD dependencies
   (`labstack/echo`, `samber/lo`, `go-webview2`, `go-ole`, etc.) ship inside
   the Wails v2 module tree.
-- **[lestrrat-go/libxml2](https://github.com/lestrrat-go/libxml2)** — MIT ·
-  © Daisuke Maki. Go CGo bindings to libxml2; used by `-tags xsd` for
-  real schema validation.
+- **[lestrrat-go/helium](https://github.com/lestrrat-go/helium)** — MIT ·
+  © lestrrat (Daisuke Maki). Pure-Go XML toolkit; its `xsd` package does
+  the FictionBook.xsd schema validation.
 - **[adrg/sysfont](https://github.com/adrg/sysfont)** — MIT · © Adrian
   Găină. Cross-platform system font enumeration; powers the
   Settings dialog's font-family picker on macOS and (as a fallback
@@ -71,10 +71,6 @@ unless noted.
 
 ## Native C libraries
 
-- **[libxml2](https://gitlab.gnome.org/GNOME/libxml2)** — MIT ·
-  © Daniel Veillard. Linked via `lestrrat-go/libxml2` when built with
-  `-tags xsd`. On Linux pinned to 2.13.x (see `flake.nix` / `CLAUDE.md`
-  for the binding-compatibility rationale).
 - **GTK 3** — LGPL-2.1+ · © The GTK team. Loaded at runtime by
   Wails on Linux via `webkit2gtk-4.1`.
 - **WebKitGTK** — LGPL-2 / BSD-style · © Apple + KDE + GNOME + others.
@@ -108,7 +104,7 @@ MIT unless noted.
 ## Nix / NixOS
 
 `flake.nix` at repo root pins `nixpkgs` via `flake.lock` (nixpkgs is
-MIT-licensed). Listed dependencies (`go_1_25`, `nodejs_22`, `gtk3`,
-`webkitgtk_4_1`, `libxml2_13`, `gsettings-desktop-schemas`,
+MIT-licensed). Listed dependencies (`go_1_26`, `nodejs_22`, `gtk3`,
+`webkitgtk_4_1`, `gsettings-desktop-schemas`,
 `pkg-config`) are the standard nixpkgs-packaged versions of upstream
 works already covered above.

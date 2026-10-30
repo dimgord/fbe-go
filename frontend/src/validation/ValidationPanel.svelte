@@ -366,14 +366,14 @@
     cursor: default;
   }
   .title-actions .action.apply {
-    background: var(--bg-active, #fce6a0);
+    background: var(--bg-active);
     color: var(--fg-strong);
   }
   .title-actions .action.apply:hover:not(:disabled) {
-    background: var(--bg-active-hover, #f5da7c);
+    background: var(--bg-active-hover);
   }
   .dirty-mark {
-    color: var(--warn-fg, #c97a00);
+    color: var(--warn-fg);
     margin-left: 0.35rem;
     font-size: 0.7rem;
     vertical-align: middle;
@@ -398,9 +398,9 @@
     flex-direction: column;
   }
   .apply-error {
-    background: var(--bg-errors, #fff5f5);
-    border-bottom: 1px solid var(--err-border, #f3c5c5);
-    color: var(--err-fg, #a13030);
+    background: var(--bg-errors);
+    border-bottom: 1px solid var(--danger-border);
+    color: var(--danger);
     padding: 0.55rem 0.8rem;
     font-family: -apple-system, "Segoe UI", sans-serif;
     font-size: 0.82rem;
@@ -418,7 +418,7 @@
     justify-content: space-between;
     gap: 0.5rem;
     padding: 0.35rem 0.7rem;
-    background: var(--bg-ok, #f2faf4);
+    background: var(--bg-ok);
     border-bottom: 1px solid var(--border);
     color: var(--fg-secondary);
     font-family: -apple-system, "Segoe UI", sans-serif;

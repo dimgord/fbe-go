@@ -6,6 +6,92 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 93 — 2026-10-30 — XSD validation on pure-Go helium; libxml2 and `-tags xsd` removed → v2.0.0 [dev]
+
+The v1.0.6 release (Rev 92) never published: both Linux jobs failed to compile.
+GitHub's `ubuntu-latest` moved to 26.04 with libxml2 2.15, whose
+`xmlParseInNodeContext` prototype changed, and `lestrrat-go/libxml2` (the CGo
+binding behind `-tags xsd`) no longer builds:
+
+```
+clib.go:1889: cannot use _cgo4 (*_Ctype_xmlNodePtr) as **_Ctype_struct__xmlNode
+```
+
+The Nix flake had already pinned `libxml2_13` for the same reason. Upstream will
+not fix it — the binding's last commits only edit its README, which points to the
+same author's pure-Go successor, `lestrrat-go/helium` (XSD 1.0 at 99.85% of the
+W3C suite). Pinning `ubuntu-24.04` was the one-line alternative; it was rejected
+because the pin would only postpone the same break, and a CGo dependency on a
+dead binding is the actual problem.
+
+The macOS release job failed separately — notarization returned
+`HTTP 403: A required agreement is missing or has expired`, an Apple Developer
+account action, not a code issue.
+
+### What changed
+
+- `internal/fb2/xsd/xsd_helium.go` (was `xsd_libxml2.go`) — the only backend now,
+  no build tag. Compiles the embedded `FictionBook.xsd` once, resolving its three
+  `xs:import`s through `Compiler.FS(SchemaFiles)` (no temp-dir extraction any
+  more). Collects every error through a synchronous `helium.ErrorHandler`.
+  helium gives a real line and the element name per error (libxml2's binding
+  dropped both, so the old code regex-searched the whole file for the first
+  `<name` — often the wrong occurrence); `positionOf` only finds the column on
+  that line. Messages keep the libxml2 shape `Element '{ns}name': …` so
+  `MergeXSDAndUnknown`'s dedup keeps working.
+- `xsd_stub.go` and `ErrNotImplemented` deleted — validation is always built in,
+  `go build ./...` gives the real validator.
+- Tests: `xsd_helium_test.go` — blank/rich validate clean, an injected
+  `<bogus-tag/>` is reported at its own line and column, `TestPositionOf`.
+- Go 1.25 → 1.26.1 (helium's minimum, every helium release needs it): `go.mod`,
+  CI and release `setup-go` `1.26.x`, flake `go_1_26` (1.26.1 in the locked
+  nixpkgs).
+- CI / release: `libxml2-dev` and `-tags xsd` removed; the separate
+  "go test -tags xsd" step folded into the plain `go test`.
+- `flake.nix`: `libxml2_13` and its pin comment removed. An uncommitted local edit
+  that had extended that pin to macOS is superseded.
+- Docs: README (deps, build line, credits), NOTICE (helium MIT replaces the
+  libxml2 + binding entries), CLAUDE.md (backend description, commands, platform
+  notes), ARCHITECTURE.md note, Help dialog credits.
+
+### Verification
+
+Compared against `xmllint --schema` (libxml2) on 25 real FB2 books in
+`~/Downloads`: valid/invalid verdict and error count identical on all 25, error
+lines identical on 24. The odd one (`296861.fb2`) is the same violation described
+from the other side: libxml2 says "`<text-author>` is not expected" (line 39),
+helium says "`<poem>` is missing `<stanza>`" (line 38, the poem's line).
+Speed is fine: 8–160 ms per book.
+
+`go test ./...`, `svelte-check` (0), `vitest` (80/80), `wails build` (macOS)
+pass locally; Linux is verified by this push's CI.
+
+### Files Modified
+
+- `internal/fb2/xsd/xsd_helium.go` (renamed from `xsd_libxml2.go`, rewritten),
+  `xsd_helium_test.go` (renamed from `xsd_libxml2_test.go`, rewritten),
+  `xsd_stub.go` (deleted), `xsd.go` (package doc, `ErrNotImplemented` removed),
+  `unknown.go` (comments).
+- `go.mod`, `go.sum` — helium v0.11.0 in, `lestrrat-go/libxml2` out, go 1.26.1.
+- `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `flake.nix`.
+- `app.go` (comments), `frontend/src/help/HelpDialog.svelte` (credits).
+- `README.md`, `NOTICE.md`, `CLAUDE.md`, `docs/ARCHITECTURE.md`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 1.0.6 → 2.0.0.
+  A major bump: the validator backend, the build (no `-tags xsd`, no libxml2) and the Go
+  toolchain floor (1.26) all changed; first committed as 1.0.7, raised to 2.0.0 in a follow-up.
+- Second follow-up: `frontend/package-lock.json` restored from Rev 92 (only the version bumped).
+  The local `wails build` used for verification runs `npm install` with npm 11, which pruned
+  514 lines of optional `@esbuild/*@0.28` entries (vite 7's peer range) from the lock; CI's
+  `npm ci` (Node 22 / npm 10) then refused the out-of-sync lock. Restore the lock after any
+  local `wails build` before committing.
+- Third follow-up: with the build fixed, CI's `check:theme` lint reached seven hardcoded colour
+  fallbacks added in Rev 91 (`ValidationPanel.svelte`, `XmlEditor.svelte`), e.g.
+  `var(--bg-errors, #fff5f5)`. Fallbacks dropped; the Apply-error banner's undefined
+  `--err-border` / `--err-fg` now use the palette's `--danger-border` / `--danger`, so it also
+  follows dark mode instead of always rendering the light fallback.
+
+---
+
 ## Rev 92 — 2026-10-29 — Open the double-clicked file; Find lands on the hit → v1.0.6 [dev]
 
 Two user-reported bugs on macOS.

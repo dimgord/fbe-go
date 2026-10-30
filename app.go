@@ -1040,8 +1040,6 @@ func (a *App) ExportHTML(path string) error {
 }
 
 // Validate runs XSD validation on a file path and returns per-error messages.
-// Requires the app to be built with `-tags xsd`; otherwise returns a single
-// error "validator not compiled in".
 func (a *App) Validate(path string) ([]xsd.ValidationError, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -1066,22 +1064,22 @@ func (a *App) SerializeCurrent() (string, error) {
 }
 
 // ValidateCurrent validates the in-memory document against the bundled XSD
-// and supplements libxml2's findings with a structure-agnostic unknown-
+// and supplements the schema validator's findings with a structure-agnostic unknown-
 // element scan. Unlike Validate(path), this reflects unsaved edits.
 //
 // Two error sources are merged:
 //
-//   - libxml2 schema validation (xsd.Validate) — reports XSD content-model
-//     violations with rich "Expected is one of (...)" messages. Subject to
-//     libxml2's recovery quirks, which can drop later unknown-element
-//     errors after the first in a content group.
+//   - XSD schema validation (xsd.Validate, helium) — reports content-model
+//     violations with rich "Expected is one of (...)" messages. Like libxml2
+//     before it, it can stop reporting later unknown elements after the
+//     first violation in a content group.
 //   - Our own unknown-element scanner (xsd.FindUnknownElements) — regexes
 //     through the serialized source and flags any tag outside the
 //     FictionBook 2.0 vocabulary. Structure-agnostic, so every occurrence
-//     shows up regardless of libxml2's DFA recovery.
+//     shows up regardless of the validator's recovery.
 //
 // Dedup is handled in xsd.MergeXSDAndUnknown: if both sources cover the same
-// element at the same line, only libxml2's richer entry is kept.
+// element at the same line, only the validator's richer entry is kept.
 func (a *App) ValidateCurrent() ([]xsd.ValidationError, error) {
 	if a.current == nil {
 		return nil, fmt.Errorf("no document open")

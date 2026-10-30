@@ -155,11 +155,11 @@
           classic Windows FictionBook Editor, targeting macOS and Linux.
           Edits FB2 (FictionBook 2.x) documents in a ProseMirror-backed
           WYSIWYG editor; full round-trip fidelity including unknown
-          elements, XSD validation (libxml2), and HTML export.
+          elements, XSD validation (helium), and HTML export.
         </p>
         <p class="credits">
           Independent rewrite — thanks to Dmitry Gribov (FB2 spec + XSD),
-          the classic FBE team, and the Wails / ProseMirror / libxml2
+          the classic FBE team, and the Wails / ProseMirror / helium
           maintainers. Full credits in NOTICE.
         </p>
       </section>

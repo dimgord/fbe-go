@@ -38,7 +38,7 @@ Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project r
   Releases; one-click opens the Release page in the OS browser.
 - **HTML export:** Go text/template renderer (`internal/fb2/export/html`).
 - **XSD validation:** read-only XML-source panel with clickable
-  line-highlighted errors; libxml2 via `-tags xsd`.
+  line-highlighted errors; pure-Go (helium), always built in.
 
 Not shipping in 1.0 — each documented with rationale in
 `docs/PHASES.md`:
@@ -82,21 +82,20 @@ trade-off Tauri and most GTK-WebKit AppImages make.
 
 ## Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Node 20+ (for the frontend)
 - [Wails v2 CLI](https://wails.io/docs/gettingstarted/installation): `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`)
 - **Linux:** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`
-- For XSD validation (`-tags xsd`): `libxml2` (macOS: bundled in CLT; Linux: `libxml2-dev`)
 - For spellcheck: `hunspell` + dictionaries (CGo path, future)
 
 ### Nix / NixOS
 
-A `flake.nix` provides a cross-platform dev shell (Linux + macOS) with Go 1.25, Node 22, and all native deps wired up. Wails CLI is auto-installed into `$GOPATH/bin` on first entry:
+A `flake.nix` provides a cross-platform dev shell (Linux + macOS) with Go 1.26, Node 22, and all native deps wired up. Wails CLI is auto-installed into `$GOPATH/bin` on first entry:
 
 ```sh
 nix develop                          # enter shell
-wails build -tags 'xsd webkit2_41'   # or: wails dev -tags webkit2_41
+wails build -tags webkit2_41   # or: wails dev -tags webkit2_41
 ```
 
 `webkit2_41` selects the `webkit2gtk-4.1` ABI (default is still `4.0`, not in modern nixpkgs). The tag is a no-op on macOS.
@@ -145,7 +144,7 @@ own licenses and attribution notices in [NOTICE.md](NOTICE.md).
 
 fbe-go is an **independent rewrite**, not a code-level port. The editor
 surface moved from MSHTML `contentEditable` to a ProseMirror view, the
-XML layer from MSXML to Go's `encoding/xml` + libxml2 for validation,
+XML layer from MSXML to Go's `encoding/xml` + helium for validation,
 and the host from C++/WTL to Go + Wails. No source from the original
 project was reused.
 
@@ -166,7 +165,7 @@ Thanks to:
 - **[ProseMirror](https://prosemirror.net/)** (Marijn Haverbeke et al.)
   — the editor framework; FB2's mixed-content model fits its schema
   system almost perfectly.
-- **[libxml2](https://gitlab.gnome.org/GNOME/libxml2)** (Daniel Veillard)
-  and **[lestrrat-go/libxml2](https://github.com/lestrrat-go/libxml2)**
-  (Daisuke Maki) — XSD validation we rely on in `-tags xsd` builds.
+- **[lestrrat-go/helium](https://github.com/lestrrat-go/helium)**
+  (Daisuke Maki) — the pure-Go XML toolkit behind XSD validation
+  (earlier releases used **libxml2** through his `lestrrat-go/libxml2`).
 - Every upstream listed in [NOTICE.md](NOTICE.md).

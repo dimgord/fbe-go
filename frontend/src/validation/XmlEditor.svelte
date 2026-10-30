@@ -153,10 +153,10 @@
     color: var(--fg-muted-soft);
   }
   .xml-editor :global(.cm-activeLine) {
-    background: var(--highlight, rgba(255, 230, 120, 0.18));
+    background: var(--highlight);
   }
   .xml-editor :global(.cm-activeLineGutter) {
-    background: var(--highlight, rgba(255, 230, 120, 0.18));
+    background: var(--highlight);
     color: var(--warn-fg, var(--fg));
   }
 </style>
