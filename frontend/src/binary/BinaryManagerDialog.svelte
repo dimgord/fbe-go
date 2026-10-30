@@ -316,6 +316,7 @@
       <!-- Generic error toast — used by rename validation + wails import. -->
       {#if errorMessage}
         <div class="sub-backdrop" on:click={() => (errorMessage = "")} on:keydown={() => {}} role="button" tabindex="-1" aria-label="Dismiss error">
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
           <div class="sub-dialog error" role="alertdialog" aria-modal="true" on:click|stopPropagation on:keydown|stopPropagation>
             <p>{errorMessage}</p>
             <div class="sub-actions">

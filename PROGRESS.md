@@ -6,6 +6,30 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 105 — 2026-10-30 — `ui/Resizer.svelte` replaces three copies of the divider logic → v3.10.0 [dev]
+
+The outline divider, the validation-panel divider and the errors-pane divider each had their
+own pointer start/move/end handlers, keyboard handling and CSS; the panel divider's markup also
+appeared twice, for body and description views. `ui/Resizer.svelte` owns pointer capture, the
+body cursor, clamping, arrow keys (Shift = large step) and both orientations. Callers give it
+`current`, `bounds` and `fromPointer`, and it emits `change` while moving and `commit` when
+final. `persistPane` replaces five copies of the "default `panes`, then set one field" block.
+`App.svelte` drops from about 1,240 to 1,100 lines, and the CSS moved with the component.
+The arrow directions are unchanged, as is the 70% cap on the panel.
+
+Verified in WebKit: drag, arrow keys, Shift step and the max clamp on the outline; drag on the
+panel in both views; drag and ArrowUp on the errors pane; all sizes reach `SaveSettings`, and
+`body.resizing` clears after a drag. Layout checked by screenshot.
+
+### Files Modified
+
+- `frontend/src/ui/Resizer.svelte` (new).
+- `frontend/src/App.svelte`, `validation/ValidationPanel.svelte` — use it; handlers and CSS removed.
+- `frontend/src/binary/BinaryManagerDialog.svelte` — a11y ignore on the last sub-dialog.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.9.0 → 3.10.0.
+
+---
+
 ## Rev 104 — 2026-10-30 — `ui/Modal.svelte` replaces four copies of the dialog shell → v3.9.0 [dev]
 
 Settings, Table, Help and Binaries each carried the same backdrop, role/aria markup and

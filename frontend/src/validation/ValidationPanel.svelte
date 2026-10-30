@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import XmlEditor from "./XmlEditor.svelte";
-  import { clamp } from "../lib/math";
+  import Resizer from "../ui/Resizer.svelte";
 
   export let xmlSource: string = "";
   export let errors: { line: number; column: number; message: string }[] = [];
@@ -132,53 +132,11 @@
     return { top: r.top, bottom: r.bottom, min: 60, max: r.height - 32 - 60 };
   }
 
-  function startDrag(e: PointerEvent) {
-    e.preventDefault();
-    dragging = true;
-    const target = e.currentTarget as HTMLElement;
-    target.setPointerCapture(e.pointerId);
-    document.body.style.cursor = "ns-resize";
-    document.body.style.userSelect = "none";
-  }
-
-  function onDrag(e: PointerEvent) {
-    if (!dragging) return;
-    const b = panelBounds();
-    if (!b) return;
-    errorsHeight = clamp(b.bottom - e.clientY, b.min, b.max);
-  }
-
-  function endDrag(e: PointerEvent) {
-    if (!dragging) return;
-    dragging = false;
-    const target = e.currentTarget as HTMLElement;
-    if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    if (errorsHeight !== null) {
-      dispatch("resize", { height: errorsHeight });
-    }
-  }
-
-  function onResizerKey(e: KeyboardEvent) {
-    const b = panelBounds();
-    if (!b) return;
-    const current = errorsHeight ?? Math.round(panelEl!.getBoundingClientRect().height * 0.45);
-    const step = e.shiftKey ? 40 : 10;
-    let changed = false;
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      errorsHeight = clamp(current + step, b.min, b.max);
-      changed = true;
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      errorsHeight = clamp(current - step, b.min, b.max);
-      changed = true;
-    }
-    if (changed && errorsHeight !== null) {
-      dispatch("resize", { height: errorsHeight });
-    }
-  }
+  const errorsResizer = {
+    current: () => errorsHeight ?? Math.round((panelEl?.getBoundingClientRect().height ?? 0) * 0.45),
+    bounds: () => panelBounds() ?? { min: 0, max: 0 },
+    fromPointer: (e: PointerEvent) => (panelBounds()?.bottom ?? 0) - e.clientY,
+  };
 
   onDestroy(() => {
     document.body.style.cursor = "";
@@ -256,21 +214,14 @@
   {/if}
 
   {#if errors.length > 0}
-    <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-    <div
-      class="resizer"
-      class:dragging
-      role="separator"
-      aria-orientation="horizontal"
-      aria-label="Resize errors pane (drag, or arrow keys when focused; Shift = larger step)"
-      tabindex="0"
-      on:pointerdown={startDrag}
-      on:pointermove={onDrag}
-      on:pointerup={endDrag}
-      on:pointercancel={endDrag}
-      on:keydown={onResizerKey}
-    ></div>
+    <Resizer
+      orientation="horizontal"
+      label="Resize errors pane (drag, or arrow keys when focused; Shift = larger step)"
+      {...errorsResizer}
+      bind:dragging
+      on:change={(e) => (errorsHeight = e.detail)}
+      on:commit={(e) => dispatch("resize", { height: e.detail })}
+    />
 
     <div
       class="errors"
@@ -475,38 +426,6 @@
   .xml-line.hl .ln {
     color: var(--warn-fg);
     font-weight: 600;
-  }
-
-  .resizer {
-    position: relative;
-    height: 6px;
-    background: var(--border);
-    cursor: ns-resize;
-    border-top: 1px solid var(--border-strong);
-    border-bottom: 1px solid var(--border-strong);
-    touch-action: none;
-  }
-  .resizer::before {
-    content: "";
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 32px;
-    height: 2px;
-    background: var(--fg-muted);
-    border-radius: 1px;
-    box-shadow: 0 3px 0 var(--fg-muted);
-  }
-  .resizer:hover,
-  .resizer.dragging,
-  .resizer:focus-visible {
-    background: var(--border-strong);
-    outline: none;
-  }
-  .resizer:focus-visible::before {
-    background: var(--fg-secondary);
-    box-shadow: 0 3px 0 var(--fg-secondary);
   }
 
   .errors {

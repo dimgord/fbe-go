@@ -9,9 +9,9 @@
   import SettingsDialog from "./settings/SettingsDialog.svelte";
   import { backend } from "./runtime/backend";
   import { descriptionSnapshot } from "./document/dirty";
-  import { clamp } from "./lib/math";
   import { basename, dirname } from "./lib/path";
   import SearchBar from "./editor/search/SearchBar.svelte";
+  import Resizer from "./ui/Resizer.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
   import type { BookPosition } from "./tree/position";
   import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
@@ -99,7 +99,7 @@
   // same size; only an internal grid-column width changes — so the
   // onWindowResize debounce path below never catches these. This reactive
   // mirror catches them at the source: draggingOutline/draggingPanel are
-  // set in startDrag* and cleared in endDrag* on actual pointerdown/up,
+  // bound to the Resizers, which set them on actual pointerdown/up,
   // which is as close to "while mouse is held" as the browser can give us.
   $: if (typeof document !== "undefined") {
     const dragging = draggingOutline || draggingPanel;
@@ -342,129 +342,29 @@
     void patchSettings((s) => { s.lastView = v; });
   }
 
-  function onPanelResize(e: CustomEvent<{ height: number }>) {
-    const h = Math.max(0, Math.round(e.detail.height));
+  // --- Pane resizers. The validation panel's parent depends on the view. ---
+  const DEFAULT_OUTLINE_WIDTH = 260;
+  const panelParentWidth = () =>
+    (view === "body" ? mainEl : descWrapEl)?.getBoundingClientRect().width ?? 0;
+
+  const outlineResizer = {
+    current: () => outlineWidth ?? DEFAULT_OUTLINE_WIDTH,
+    bounds: () => ({ min: OUTLINE_MIN, max: OUTLINE_MAX }),
+    fromPointer: (e: PointerEvent) => e.clientX - (mainEl?.getBoundingClientRect().left ?? 0),
+  };
+  const panelResizer = {
+    current: () => panelWidth ?? Math.round(panelParentWidth() * 0.3),
+    // Capped so the editor surface cannot collapse to nothing.
+    bounds: () => ({ min: PANEL_MIN, max: panelParentWidth() * 0.7 }),
+    fromPointer: (e: PointerEvent) =>
+      ((view === "body" ? mainEl : descWrapEl)?.getBoundingClientRect().right ?? 0) - e.clientX,
+  };
+
+  function persistPane(key: "outlineWidth" | "validationWidth" | "validationErrorsHeight", size: number) {
     void patchSettings((s) => {
       if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-      s.panes.validationErrorsHeight = h;
+      s.panes[key] = Math.round(size);
     });
-  }
-
-  // --- Outline sidebar resizer (left edge, drags right-ward) ---
-  function startDragOutline(e: PointerEvent) {
-    e.preventDefault();
-    draggingOutline = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-  }
-  function onDragOutline(e: PointerEvent) {
-    if (!draggingOutline || !mainEl) return;
-    const rect = mainEl.getBoundingClientRect();
-    outlineWidth = clamp(e.clientX - rect.left, OUTLINE_MIN, OUTLINE_MAX);
-  }
-  function endDragOutline(e: PointerEvent) {
-    if (!draggingOutline) return;
-    draggingOutline = false;
-    const el = e.currentTarget as HTMLElement;
-    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    if (outlineWidth !== null) {
-      const w = Math.round(outlineWidth);
-      void patchSettings((s) => {
-        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-        s.panes.outlineWidth = w;
-      });
-    }
-  }
-
-  // --- Validation-panel resizer (drags toward left = panel wider,
-  //     toward right = panel narrower) ---
-  function startDragPanel(e: PointerEvent) {
-    e.preventDefault();
-    draggingPanel = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-  }
-  function onDragPanel(e: PointerEvent) {
-    if (!draggingPanel) return;
-    // In body view mainEl is the parent; in description view descWrapEl is.
-    const parent = (view === "body" ? mainEl : descWrapEl) ?? undefined;
-    if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    // Cap max at 70% of parent so the editor surface can't collapse to
-    // zero. Min keeps the errors list legible.
-    panelWidth = clamp(rect.right - e.clientX, PANEL_MIN, rect.width * 0.7);
-  }
-  function endDragPanel(e: PointerEvent) {
-    if (!draggingPanel) return;
-    draggingPanel = false;
-    const el = e.currentTarget as HTMLElement;
-    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    if (panelWidth !== null) {
-      const w = Math.round(panelWidth);
-      void patchSettings((s) => {
-        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-        s.panes.validationWidth = w;
-      });
-    }
-  }
-
-  function onResizerKeyH(
-    e: KeyboardEvent,
-    get: () => number,
-    set: (v: number) => void,
-    min: number,
-    max: number,
-    persist: (w: number) => void,
-  ) {
-    const step = e.shiftKey ? 40 : 10;
-    let changed = false;
-    if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      set(clamp(get() - step, min, max));
-      changed = true;
-    } else if (e.key === "ArrowRight") {
-      e.preventDefault();
-      set(clamp(get() + step, min, max));
-      changed = true;
-    }
-    if (changed) persist(Math.round(get()));
-  }
-
-  function onOutlineResizerKey(e: KeyboardEvent) {
-    onResizerKeyH(
-      e,
-      () => outlineWidth ?? 260,
-      (v) => (outlineWidth = v),
-      OUTLINE_MIN,
-      OUTLINE_MAX,
-      (w) => patchSettings((s) => {
-        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-        s.panes.outlineWidth = w;
-      }),
-    );
-  }
-
-  function onPanelResizerKey(e: KeyboardEvent) {
-    const parent = view === "body" ? mainEl : descWrapEl;
-    if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    onResizerKeyH(
-      e,
-      () => panelWidth ?? Math.round(rect.width * 0.3),
-      (v) => (panelWidth = v),
-      PANEL_MIN,
-      rect.width * 0.7,
-      (w) => patchSettings((s) => {
-        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-        s.panes.validationWidth = w;
-      }),
-    );
   }
 
   function themeIcon(t: Theme): string {
@@ -929,41 +829,25 @@
       <aside>
         <DocumentTree {fb} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
-      <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-      <div
-        class="v-resizer"
-        class:dragging={draggingOutline}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize outline sidebar"
-        tabindex="0"
-        on:pointerdown={startDragOutline}
-        on:pointermove={onDragOutline}
-        on:pointerup={endDragOutline}
-        on:pointercancel={endDragOutline}
-        on:keydown={onOutlineResizerKey}
-      ></div>
+      <Resizer
+        label="Resize outline sidebar"
+        {...outlineResizer}
+        bind:dragging={draggingOutline}
+        on:change={(e) => (outlineWidth = e.detail)}
+        on:commit={(e) => persistPane("outlineWidth", e.detail)}
+      />
       <section>
         <Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} on:position={(e) => (position = e.detail)} />
         <PositionBar {position} />
       </section>
       {#if showPanel}
-        <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <div
-          class="v-resizer"
-          class:dragging={draggingPanel}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize validation panel"
-          tabindex="0"
-          on:pointerdown={startDragPanel}
-          on:pointermove={onDragPanel}
-          on:pointerup={endDragPanel}
-          on:pointercancel={endDragPanel}
-          on:keydown={onPanelResizerKey}
-        ></div>
+        <Resizer
+          label="Resize validation panel"
+          {...panelResizer}
+          bind:dragging={draggingPanel}
+          on:change={(e) => (panelWidth = e.detail)}
+          on:commit={(e) => persistPane("validationWidth", e.detail)}
+        />
         <ValidationPanel
           {xmlSource}
           errors={validationErrors}
@@ -973,7 +857,7 @@
           canUndoApply={xmlUndoFb !== null}
           bind:editMode={xmlEditMode}
           on:close={onPanelClose}
-          on:resize={onPanelResize}
+          on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
           on:apply={onApplyXml}
           on:undo-apply={onUndoApplyXml}
           on:xml-dirty={onXmlDirty}
@@ -990,21 +874,13 @@
     >
       <DescriptionPanel bind:fb />
       {#if showPanel}
-        <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <div
-          class="v-resizer"
-          class:dragging={draggingPanel}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize validation panel"
-          tabindex="0"
-          on:pointerdown={startDragPanel}
-          on:pointermove={onDragPanel}
-          on:pointerup={endDragPanel}
-          on:pointercancel={endDragPanel}
-          on:keydown={onPanelResizerKey}
-        ></div>
+        <Resizer
+          label="Resize validation panel"
+          {...panelResizer}
+          bind:dragging={draggingPanel}
+          on:change={(e) => (panelWidth = e.detail)}
+          on:commit={(e) => persistPane("validationWidth", e.detail)}
+        />
         <ValidationPanel
           {xmlSource}
           errors={validationErrors}
@@ -1014,7 +890,7 @@
           canUndoApply={xmlUndoFb !== null}
           bind:editMode={xmlEditMode}
           on:close={onPanelClose}
-          on:resize={onPanelResize}
+          on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
           on:apply={onApplyXml}
           on:undo-apply={onUndoApplyXml}
           on:xml-dirty={onXmlDirty}
@@ -1299,39 +1175,5 @@
   .description-wrap.with-panel-maybe.with-panel {
     display: grid;
     grid-template-columns: 1fr 6px var(--panel-w, minmax(320px, 30%));
-  }
-
-  /* Vertical drag handle (separator between two columns). Shares its
-     styling approach with ValidationPanel's horizontal resizer but lives
-     here because these two handles are App.svelte's responsibility. */
-  .v-resizer {
-    background: var(--border);
-    cursor: ew-resize;
-    border-left: 1px solid var(--border-strong);
-    border-right: 1px solid var(--border-strong);
-    touch-action: none;
-    position: relative;
-  }
-  .v-resizer::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 2px;
-    height: 32px;
-    background: var(--fg-muted);
-    border-radius: 1px;
-    box-shadow: 3px 0 0 var(--fg-muted);
-  }
-  .v-resizer:hover,
-  .v-resizer.dragging,
-  .v-resizer:focus-visible {
-    background: var(--border-strong);
-    outline: none;
-  }
-  .v-resizer:focus-visible::before {
-    background: var(--fg-secondary);
-    box-shadow: 3px 0 0 var(--fg-secondary);
   }
 </style>
