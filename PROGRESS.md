@@ -6,6 +6,43 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 94 — 2026-10-30 — Taskfile with local deploy for macOS and Linux → v2.0.1 [dev]
+
+The repo had no `Taskfile.yml`. Added one with `run`, `frontend`, `build`,
+`build-cli`, `test`, `fmt`, `lint`, `check`, `deploy`, `clean`.
+
+`task deploy` picks the platform through task's `platforms:`:
+
+- **macOS** (`INSTALL_DIR`, default `/Applications`) — refuses while the app runs
+  from there, because it may hold unsaved edits. Copies to `fbe-go.app.new` first
+  and swaps, so a failed copy leaves the installed app intact. Refreshes the
+  `.fb2` association with `lsregister -f`.
+- **Linux** (`PREFIX`, default `~/.local`) — installs the binary, 512 px icon, MIME
+  type and a `.desktop` file with an absolute `Exec`, because `~/.local/bin` is
+  often not on a desktop session's PATH. Refreshes the MIME and desktop databases
+  and makes the app the `.fb2` default; those three steps tolerate missing tools.
+
+Two build details are deliberate:
+
+- `build` runs `npm ci` + `wails build -s`, not plain `wails build`, whose
+  `npm install` under npm 11 pruned `package-lock.json` in Rev 93.
+- `frontend` creates `frontend/dist/.keep` first: `wails generate module` compiles
+  the Go code, and `go:embed all:frontend/dist` fails on a fresh clone with no
+  files there. Found on a clean clone; the Mac tree hid it with old build output.
+
+Verified: `task check`, `build-cli` and `lint` on the Mac; `task deploy` into a
+temporary `INSTALL_DIR` on the Mac and a temporary `PREFIX` on a clean NixOS clone
+inside `nix develop`. The Linux binary was built and installed, not launched
+(headless host). `fmt` was only dry-run, since it would reformat ~12 unrelated files.
+
+### Files Modified
+
+- `Taskfile.yml` (new).
+- `CLAUDE.md` — Taskfile note under the build commands.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 2.0.0 → 2.0.1.
+
+---
+
 ## Rev 93 — 2026-10-30 — XSD validation on pure-Go helium; libxml2 and `-tags xsd` removed → v2.0.0 [dev]
 
 The v1.0.6 release (Rev 92) never published: both Linux jobs failed to compile.

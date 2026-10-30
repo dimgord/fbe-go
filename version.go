@@ -8,4 +8,4 @@ package main
 // `frontend/package.json::version` — the three values must stay in sync.
 // CI does not currently enforce the triple-sync; see CLAUDE.md for the
 // revision-bump checklist.
-const Version = "2.0.0"
+const Version = "2.0.1"

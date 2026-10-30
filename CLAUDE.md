@@ -18,6 +18,9 @@ go build -o build/fbe ./cmd/fbe
 wails dev   -tags webkit2_41          # hot-reload dev mode   (webkit2_41 is Linux-only; no-op on macOS)
 wails build -tags webkit2_41          # production bundle → build/bin/
 
+# Taskfile: `task check` before a commit; `task deploy` installs locally (macOS /Applications, Linux ~/.local).
+# It builds with npm ci + `wails build -s`, so it leaves package-lock.json alone; plain `wails build` does not.
+
 # Go tests (hermetic)
 go test ./...
 
