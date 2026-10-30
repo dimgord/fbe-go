@@ -323,7 +323,7 @@
   .query {
     min-width: 180px;
     padding: 0.25rem 0.5rem;
-    background: var(--bg);
+    background: var(--bg-surface);
     color: var(--fg);
     border: 1px solid var(--border-input);
     border-radius: 3px;
@@ -364,7 +364,7 @@
     padding: 0.2rem 0;
     overflow-y: auto;
     list-style: none;
-    background: var(--bg);
+    background: var(--bg-surface);
     border: 1px solid var(--border-input);
     border-radius: 3px;
   }
@@ -418,7 +418,7 @@
     min-width: 1.8rem;
     height: 1.7rem;
     padding: 0 0.4rem;
-    background: var(--bg);
+    background: var(--bg-surface);
     color: var(--fg-secondary);
     border: 1px solid var(--border-input);
     border-radius: 3px;
@@ -428,14 +428,14 @@
   }
   button.toggle.on {
     background: var(--fg-link);
-    color: var(--bg);
+    color: var(--bg-surface);
     border-color: var(--fg-link);
   }
   .nav button,
   .close {
     height: 1.7rem;
     padding: 0 0.6rem;
-    background: var(--bg);
+    background: var(--bg-surface);
     color: var(--fg);
     border: 1px solid var(--border-input);
     border-radius: 3px;

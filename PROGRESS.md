@@ -6,6 +6,34 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 101 — 2026-10-30 — Undefined `--bg` fixed everywhere; theme lint catches undefined variables → v3.6.0 [dev]
+
+The recent-searches dropdown had a see-through background, so the outline showed
+through it. The cause was not stacking: `--bg` is not in the palette. An undefined
+variable fails silently, the property just goes transparent. Rev 100 copied it from
+the neighbouring find-bar styles, and it was an old bug there too, in seven places:
+
+- find box, toggles and nav buttons had no background of their own;
+- the active toggle and two `BinaryManagerDialog` controls used it as `color` on a
+  coloured button, so their label inherited instead of contrasting.
+
+All are `--bg-surface` now. `check-theme-hygiene.sh` gained a step that fails on any
+`var(--x)` with no definition, including those set through `setProperty`. It was
+tested with a throwaway undefined variable. Rev 91's `--err-border` / `--err-fg` were
+the same class of bug.
+
+Rev 100 missed this because the WebKit test only asserted behaviour. Playwright
+screenshots can be inspected directly, so visual changes are now checked by eye too;
+this fix was.
+
+### Files Modified
+
+- `frontend/src/editor/search/SearchBar.svelte`, `frontend/src/binary/BinaryManagerDialog.svelte` — `--bg-surface`.
+- `scripts/check-theme-hygiene.sh` — undefined-variable check.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.5.0 → 3.6.0.
+
+---
+
 ## Rev 100 — 2026-10-30 — Recent searches and a position indicator → v3.5.0 [dev]
 
 **Recent searches.** The find box keeps a history of 20 queries between sessions. ↓ or the

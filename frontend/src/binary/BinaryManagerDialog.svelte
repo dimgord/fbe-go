@@ -483,7 +483,7 @@
     font-size: 0.65rem;
     letter-spacing: 0.04em;
     font-weight: 700;
-    color: var(--bg);
+    color: var(--bg-surface);
     background: var(--warn);
     border-radius: 3px;
   }
@@ -658,7 +658,7 @@
   .sub-actions button:hover { background: var(--bg-hover); }
   .sub-actions button.danger {
     background: var(--danger);
-    color: var(--bg);
+    color: var(--bg-surface);
     border-color: var(--danger-border);
   }
   .sub-actions button.danger:hover { opacity: 0.9; }

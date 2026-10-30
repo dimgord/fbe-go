@@ -42,6 +42,21 @@ EXCLUDES=(
 
 fail=0
 
+# --- 0. var(--x) with no definition anywhere --------------------------------
+# An undefined variable fails silently: the property goes transparent or falls back to inherited.
+defined=$(grep -rhoE "(^|[^A-Za-z0-9_-])--[A-Za-z][A-Za-z0-9_-]*[[:space:]]*:" "${EXCLUDES[@]}" "$SRC" \
+  | grep -oE -- "--[A-Za-z][A-Za-z0-9_-]*"; \
+  grep -rhoE "setProperty\([\"'][^\"']+" "${EXCLUDES[@]}" "$SRC" | grep -oE -- "--[A-Za-z0-9_-]+")
+used=$(grep -rhoE "var\(--[A-Za-z][A-Za-z0-9_-]*" "${EXCLUDES[@]}" "$SRC" | sed 's/var(//' | sort -u)
+undefined_vars=""
+for v in $used; do
+  grep -qxF -- "$v" <<<"$defined" || undefined_vars="$undefined_vars $v"
+done
+if [ -n "$undefined_vars" ]; then
+  echo "theme-hygiene: CSS variables used but never defined:$undefined_vars"
+  fail=1
+fi
+
 # --- 1. Hex literals outside the palette file --------------------------------
 # Match #RGB / #RRGGBB / #RRGGBBAA; strip false-positive {#each / {#if etc.
 if hex_hits=$(grep -rnE '#[0-9a-fA-F]{3,8}\b' "${EXCLUDES[@]}" "$SRC" 2>/dev/null \
