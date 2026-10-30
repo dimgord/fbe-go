@@ -8,10 +8,13 @@
 package parser
 
 import (
+	"archive/zip"
 	"bufio"
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"golang.org/x/text/encoding"
@@ -20,7 +23,76 @@ import (
 	"golang.org/x/text/encoding/unicode"
 
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
+	"github.com/dimgord/fbe-go/internal/fb2/zipfb2"
 )
+
+// zipMagic opens every zip local file header; a .fb2 may be a renamed .fb2.zip, so content decides.
+var zipMagic = []byte("PK\x03\x04")
+
+// Open returns the FB2 XML stream of a file on disk, unwrapping a zip archive when the
+// content is one. The caller closes it.
+func Open(path string) (io.ReadCloser, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	magic := make([]byte, len(zipMagic))
+	n, _ := io.ReadFull(f, magic)
+	if !bytes.Equal(magic[:n], zipMagic) {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			f.Close()
+			return nil, err
+		}
+		return f, nil
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	zr, err := zip.NewReader(f, st.Size())
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("fb2 open zip: %w", err)
+	}
+	rc, err := zipfb2.Unpack(zr)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return zipEntry{rc, f}, nil
+}
+
+// zipEntry closes the archive file along with the entry read from it.
+type zipEntry struct {
+	io.ReadCloser
+	file *os.File
+}
+
+func (z zipEntry) Close() error {
+	err := z.ReadCloser.Close()
+	if ferr := z.file.Close(); err == nil {
+		err = ferr
+	}
+	return err
+}
+
+// ParseFile reads a .fb2 or .fb2.zip from disk. A panic in the parser on a broken
+// document comes back as an error, so one bad file cannot take the host down.
+func ParseFile(path string) (fb *doc.FictionBook, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fb = nil
+			err = fmt.Errorf("parse %s: panic: %v", path, r)
+		}
+	}()
+	rc, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return Parse(rc)
+}
 
 // Parse reads an FB2 XML stream into a doc.FictionBook. The input may be in
 // any encoding supported by charsetReader (utf-8, utf-16, windows-1251, koi8-r,

@@ -77,14 +77,15 @@ func TestMergeXSDAndUnknown_dedupsOverlap(t *testing.T) {
 		{
 			Line:    5,
 			Column:  3,
+			Element: "empty-lune",
 			Message: "Element '{http://www.gribuser.ru/xml/fictionbook/2.0}empty-lune': This element is not expected.",
 		},
 	}
 	unknowns := []ValidationError{
 		// Same line + tag as above → should be dropped.
-		{Line: 5, Column: 3, Message: "Unknown FB2 element 'empty-lune' — not in the FictionBook 2.0 schema. Preserved verbatim on save."},
+		{Line: 5, Column: 3, Element: "empty-lune", Message: "Unknown FB2 element 'empty-lune' — not in the FictionBook 2.0 schema. Preserved verbatim on save."},
 		// Different line → kept.
-		{Line: 9, Column: 3, Message: "Unknown FB2 element 'empty-lyne' — not in the FictionBook 2.0 schema. Preserved verbatim on save."},
+		{Line: 9, Column: 3, Element: "empty-lyne", Message: "Unknown FB2 element 'empty-lyne' — not in the FictionBook 2.0 schema. Preserved verbatim on save."},
 	}
 	merged := MergeXSDAndUnknown(xsdErrs, unknowns)
 	if len(merged) != 2 {
@@ -103,10 +104,7 @@ func TestMergeXSDAndUnknown_dedupsOverlap(t *testing.T) {
 func tagsFromUnknownErrs(errs []ValidationError) []string {
 	out := make([]string, 0, len(errs))
 	for _, e := range errs {
-		m := unknownMsgTagRE.FindStringSubmatch(e.Message)
-		if len(m) >= 2 {
-			out = append(out, m[1])
-		}
+		out = append(out, e.Element)
 	}
 	return out
 }

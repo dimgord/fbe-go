@@ -2,11 +2,13 @@
 package xsd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/lestrrat-go/helium"
@@ -38,6 +40,20 @@ func bootstrapSchema() {
 		return
 	}
 	schema = s
+}
+
+// ValidateAll is the full check: the schema, plus the unknown-element scan that still
+// reports every occurrence after the schema validator has stopped at the first.
+func ValidateAll(r io.Reader) ([]ValidationError, error) {
+	src, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	xsdErrs, err := Validate(bytes.NewReader(src))
+	if err != nil {
+		return nil, err
+	}
+	return MergeXSDAndUnknown(xsdErrs, FindUnknownElements(src)), nil
 }
 
 // collector gathers every validation error helium reports (it calls Handle synchronously).
@@ -79,7 +95,7 @@ func Validate(r io.Reader) ([]ValidationError, error) {
 			msg = fmt.Sprintf("Element '%s', attribute '%s': %s", ve.Element, ve.AttributeName, ve.Message)
 		}
 		line, col := positionOf(data, ve.Line, ve.Element)
-		out = append(out, ValidationError{Line: line, Column: col, Message: msg})
+		out = append(out, ValidationError{Line: line, Column: col, Element: localName(ve.Element), Message: msg})
 	}
 	if len(out) == 0 {
 		out = append(out, ValidationError{Message: verr.Error()})
@@ -105,11 +121,7 @@ func positionOf(src []byte, line int, element string) (int, int) {
 	if end < 0 {
 		end = len(src)
 	}
-	name := element
-	if m := localNameRE.FindStringSubmatch(element); m != nil {
-		name = m[1]
-	}
-	pat := regexp.MustCompile(`<(?:[\w.-]+:)?` + regexp.QuoteMeta(name) + `[\s/>]`)
+	pat := regexp.MustCompile(`<(?:[\w.-]+:)?` + regexp.QuoteMeta(localName(element)) + `[\s/>]`)
 	loc := pat.FindIndex(src[start:end])
 	if loc == nil {
 		return line, 1
@@ -117,8 +129,13 @@ func positionOf(src []byte, line int, element string) (int, int) {
 	return line, loc[0] + 1
 }
 
-// localNameRE strips a Clark-notation namespace: "{ns}book-title" → "book-title".
-var localNameRE = regexp.MustCompile(`^(?:\{[^}]*\})?(.+)$`)
+// localName strips a Clark-notation namespace: "{ns}book-title" → "book-title".
+func localName(element string) string {
+	if i := strings.IndexByte(element, '}'); i >= 0 {
+		return element[i+1:]
+	}
+	return element
+}
 
 func indexByteFrom(b []byte, from int, c byte) int {
 	for i := from; i < len(b); i++ {

@@ -78,13 +78,13 @@ func cmdValidate(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: fbe validate FILE.fb2")
 	}
-	in, err := os.Open(args[0])
+	in, err := parser.Open(args[0])
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	errs, err := xsd.Validate(in)
+	errs, err := xsd.ValidateAll(in)
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func cmdValidate(args []string) error {
 	}
 	fmt.Printf("INVALID: %d error(s)\n", len(errs))
 	for _, e := range errs {
-		fmt.Printf("  %s\n", e.Message)
+		fmt.Printf("  %d:%d %s\n", e.Line, e.Column, e.Message)
 	}
 	os.Exit(1)
 	return nil
@@ -104,13 +104,7 @@ func cmdThumb(args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: fbe thumb FILE.fb2 OUT.jpg")
 	}
-	in, err := os.Open(args[0])
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	fb, err := parser.Parse(in)
+	fb, err := parser.ParseFile(args[0])
 	if err != nil {
 		return err
 	}
@@ -168,12 +162,7 @@ func cmdInfo(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: fbe info FILE.fb2")
 	}
-	in, err := os.Open(args[0])
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	fb, err := parser.Parse(in)
+	fb, err := parser.ParseFile(args[0])
 	if err != nil {
 		return err
 	}
@@ -186,12 +175,7 @@ func cmdExport(args []string) error {
 	if len(args) < 3 || args[0] != "html" {
 		return fmt.Errorf("usage: fbe export html FILE.fb2 OUT.html")
 	}
-	in, err := os.Open(args[1])
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	fb, err := parser.Parse(in)
+	fb, err := parser.ParseFile(args[1])
 	if err != nil {
 		return err
 	}

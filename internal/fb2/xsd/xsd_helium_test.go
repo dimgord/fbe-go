@@ -67,6 +67,28 @@ func TestValidateReportsLineAndColumn(t *testing.T) {
 	}
 }
 
+// ValidateAll reports an unknown element once, carrying its name, not once per checker.
+func TestValidateAllDedupes(t *testing.T) {
+	src, err := os.ReadFile("../../../testdata/blank.fb2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := strings.Replace(string(src), "<book-title>", "<bogus-tag/><book-title>", 1)
+	errs, err := ValidateAll(strings.NewReader(bad))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range errs {
+		if e.Element == "bogus-tag" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d entries for bogus-tag, want 1: %+v", n, errs)
+	}
+}
+
 func TestPositionOf(t *testing.T) {
 	const src = "<a>\n  <poem>\n    <x:text-author>t</x:text-author>\n  </poem>\n</a>\n"
 	cases := []struct {

@@ -6,6 +6,40 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 98 — 2026-10-30 — One loader for every entry point; Apply guard tested; structured validation errors → v3.3.0 [dev]
+
+Three items from the review, all in the Go layer.
+
+1. **`parser.Open` / `parser.ParseFile`.** Only `App.OpenFile` handled `.fb2.zip`, so
+   `fbe info`, `thumb`, `export`, `validate` and `ExtractThumbnail` rejected an archive,
+   while CLAUDE.md and ARCHITECTURE.md said the parser unwraps zips. The magic check,
+   zip unwrap and panic recovery now live in the parser, and every path-based entry
+   point uses them, so those docs are finally true.
+2. **`internal/fb2/roundtrip`.** The Apply data-loss guard (`ParseXMLString`,
+   `dataLossMessage`, `countOpen`), the most safety-critical logic in the app, sat in
+   `package main` with no tests. `roundtrip.ParseVerified` owns it now, and `App` just
+   delegates. Tests cover typos in tags, a typo that eats the rest of the document, a
+   mismatched close tag, an unclosed root, the "topmost lost element" rule and `countOpen`.
+3. **`ValidationError.Element`.** The element name was recovered from message text by
+   three regexes, which made the wording an API. Both producers set the field now,
+   `MergeXSDAndUnknown` compares it, and the regexes are gone. `xsd.ValidateAll` is the
+   full check (schema + unknown-element scan); `ValidateCurrent`, `Validate(path)` and
+   `fbe validate` all use it, so the CLI no longer reports less than the app, and it
+   prints line:column.
+
+### Files Modified
+
+- `internal/fb2/parser/parser.go` — `Open`, `ParseFile`, `zipEntry`; `open_test.go` (new).
+- `internal/fb2/roundtrip/roundtrip.go`, `roundtrip_test.go` (new).
+- `internal/fb2/xsd/xsd.go` — `Element`; `xsd_helium.go` — `ValidateAll`, `localName`;
+  `unknown.go` — regex removed; tests updated.
+- `app.go` — `OpenFile`, `ParseXMLString`, `ExtractThumbnail`, `Validate`, `ValidateCurrent` delegate.
+- `cmd/fbe/main.go` — `ParseFile`, `ValidateAll`, line numbers in `validate`.
+- `CLAUDE.md` — roundtrip note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.2.0 → 3.3.0.
+
+---
+
 ## Rev 97 — 2026-10-30 — Hotkey changes no longer reset editor plugins; PM's public `isDestroyed` → v3.2.0 [dev]
 
 The plugin list existed twice in `Editor.svelte`, once in `mount` and once in a
