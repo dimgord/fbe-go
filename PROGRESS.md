@@ -6,6 +6,37 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 106 — 2026-10-30 — Insert commands ask the schema instead of repeating it → v3.11.0 [dev]
+
+`insertCite`, `insertPoem` and `insertTableCmd` carried hand-written parent lists, a second
+copy of the content model that had drifted from `schema.ts`:
+
+- `history` was listed, but the schema has no such node.
+- `insertTableCmd` allowed `epigraph`, whose content has no `table`, so it built an
+  invalid document.
+- `insertCite` refused `epigraph`, which does allow `cite`.
+
+All three now use `parent.canReplaceWith(...)` on the block range, so the rules cannot
+drift. A caret table checks the insertion point after its block, a selection the range it
+replaces. New tests run each command in nine contexts, compare availability with the content
+model, and run `doc.check()` on every result.
+
+`insertCite` used to be offered for a range directly inside `poem`; the schema has no `cite`
+there, so that is gone with the list.
+
+Small cleanups in the same file: `findAncestor(...names)` replaces two near-identical
+helpers, `hasChild` and `unwrapTitleInto` replace repeated loops, and the local two-argument
+`Command` type gives way to ProseMirror's, which `Editor.svelte` already imported.
+
+Also corrects the `App.svelte` line count in the Rev 105 entry.
+
+### Files Modified
+
+- `frontend/src/editor/commands.ts`, `commands.test.ts`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.10.0 → 3.11.0.
+
+---
+
 ## Rev 105 — 2026-10-30 — `ui/Resizer.svelte` replaces three copies of the divider logic → v3.10.0 [dev]
 
 The outline divider, the validation-panel divider and the errors-pane divider each had their
@@ -14,7 +45,7 @@ appeared twice, for body and description views. `ui/Resizer.svelte` owns pointer
 body cursor, clamping, arrow keys (Shift = large step) and both orientations. Callers give it
 `current`, `bounds` and `fromPointer`, and it emits `change` while moving and `commit` when
 final. `persistPane` replaces five copies of the "default `panes`, then set one field" block.
-`App.svelte` drops from about 1,240 to 1,100 lines, and the CSS moved with the component.
+`App.svelte` is now 1,179 lines (1,442 at the review), and the CSS moved with the component.
 The arrow directions are unchanged, as is the 70% cap on the panel.
 
 Verified in WebKit: drag, arrow keys, Shift step and the max clamp on the outline; drag on the
