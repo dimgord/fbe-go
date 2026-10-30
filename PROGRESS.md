@@ -84,6 +84,11 @@ pass locally; Linux is verified by this push's CI.
   514 lines of optional `@esbuild/*@0.28` entries (vite 7's peer range) from the lock; CI's
   `npm ci` (Node 22 / npm 10) then refused the out-of-sync lock. Restore the lock after any
   local `wails build` before committing.
+- Third follow-up: with the build fixed, CI's `check:theme` lint reached seven hardcoded colour
+  fallbacks added in Rev 91 (`ValidationPanel.svelte`, `XmlEditor.svelte`), e.g.
+  `var(--bg-errors, #fff5f5)`. Fallbacks dropped; the Apply-error banner's undefined
+  `--err-border` / `--err-fg` now use the palette's `--danger-border` / `--danger`, so it also
+  follows dark mode instead of always rendering the light fallback.
 
 ---
 
