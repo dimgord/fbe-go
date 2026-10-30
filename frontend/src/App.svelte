@@ -816,10 +816,14 @@
     //   - "app:save-and-quit" — Go's "Save" dialog branch dispatched a
     //     save request. Run the save, then ForceQuit if it succeeded.
     let detachListeners: Array<() => void> = [];
+    // Resolves with the file the OS launched us with ("" if none) once the listeners below are
+    // registered, so a later Finder "Open With" event is never emitted into the void.
+    let launchReady: (p: string) => void = () => {};
+    const launchFile = new Promise<string>((r) => (launchReady = r));
     void (async () => {
       const rt = await import("../wailsjs/runtime/runtime").catch(() => null);
       const App = await wailsApp();
-      if (!rt || !App) return;
+      if (!rt || !App) { launchReady(""); return; }
       const offCheck = rt.EventsOn("app:check-dirty", () => {
         rt.EventsEmit("app:dirty-response", isCurrentlyDirty());
       });
@@ -844,7 +848,15 @@
       });
       if (typeof offCheck === "function") detachListeners.push(offCheck);
       if (typeof offSave === "function") detachListeners.push(offSave);
+      // OS "open this file" (double-click / Open With) while the app is already running.
+      const offOpen = rt.EventsOn("app:open-file", (path: string) => {
+        if (typeof path === "string" && path) void openFile(path);
+      });
       if (typeof offDrop === "function") detachListeners.push(offDrop);
+      if (typeof offOpen === "function") detachListeners.push(offOpen);
+      let p = "";
+      try { p = (await App.TakeLaunchFile()) ?? ""; } catch { /* older backend */ }
+      launchReady(p);
     })();
 
     // Live-follow OS color-scheme changes while theme === "system".
@@ -915,6 +927,12 @@
     // the dev-tab should land in Save-As to avoid two contexts racing on
     // the same path.
     void (async () => {
+      const launched = await launchFile;
+      if (launched) {
+        await openFile(launched);
+        if (fb) return;
+        // open failed (error is shown) — fall through to the sample
+      }
       const App = await wailsApp();
       if (App) {
         try {

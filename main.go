@@ -9,6 +9,7 @@ package main
 
 import (
 	"embed"
+	"os"
 
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/wailsapp/wails/v2"
@@ -29,6 +30,7 @@ const (
 
 func main() {
 	app := NewApp()
+	app.RequestOpen(launchArg(os.Args[1:]))
 
 	// Read persisted window geometry. Ignored on any read error — the app
 	// still launches at the default size. Initial X/Y can't be set via
@@ -55,7 +57,8 @@ func main() {
 		// `setEnabled:NO` (see lines 199-202). With a non-nil Mac block,
 		// `zoomable = !Mac.DisableZoom` evaluates to true and the
 		// fullscreen/zoom button works as the user expects on macOS.
-		Mac: &mac.Options{},
+		// OnFileOpen: a Finder double-click / "Open With" arrives as an Apple event, not in argv.
+		Mac: &mac.Options{OnFileOpen: app.RequestOpen},
 		// File drop: without this block, dragging a .fb2 onto the window
 		// hits the default WebKit drop handler — which navigates the
 		// webview to the dropped file's URI and renders the XML as a

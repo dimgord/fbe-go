@@ -59,6 +59,12 @@ type App struct {
 	// Reads are thread-safe behind systemFontsMu.
 	systemFonts   []string
 	systemFontsMu sync.RWMutex
+
+	// A file the OS asked us to open (argv on Linux/Windows, the macOS open-document event on a
+	// Finder double-click / "Open With"). Held until the frontend's listeners are up, see TakeLaunchFile.
+	launchMu      sync.Mutex
+	launchPath    string
+	frontendReady bool
 }
 
 // NewApp constructs the app.
@@ -98,6 +104,50 @@ func (a *App) OnStartup(ctx context.Context) {
 		}
 		wailsrt.EventsEmit(ctx, "app:file-drop", paths[0])
 	})
+}
+
+// RequestOpen hands an OS-requested file to the frontend: queued before it is ready, as an
+// "app:open-file" event after. On macOS the open-document event can arrive before OnStartup.
+func (a *App) RequestOpen(path string) {
+	if path == "" {
+		return
+	}
+	a.launchMu.Lock()
+	if !a.frontendReady || a.ctx == nil {
+		a.launchPath = path
+		a.launchMu.Unlock()
+		return
+	}
+	ctx := a.ctx
+	a.launchMu.Unlock()
+	wailsrt.EventsEmit(ctx, "app:open-file", path)
+}
+
+// TakeLaunchFile is called once by the frontend after its event listeners are registered. It
+// returns (and clears) the file queued at launch, or "", and from then on RequestOpen emits events.
+func (a *App) TakeLaunchFile() string {
+	a.launchMu.Lock()
+	defer a.launchMu.Unlock()
+	a.frontendReady = true
+	p := a.launchPath
+	a.launchPath = ""
+	return p
+}
+
+// launchArg returns the first command-line argument naming an existing regular file.
+func launchArg(args []string) string {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if st, err := os.Stat(arg); err == nil && st.Mode().IsRegular() {
+			if abs, err := filepath.Abs(arg); err == nil {
+				return abs
+			}
+			return arg
+		}
+	}
+	return ""
 }
 
 // populateSystemFonts walks the OS font registry, dedupes by family, and

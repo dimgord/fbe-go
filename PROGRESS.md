@@ -6,6 +6,75 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 92 — 2026-10-29 — Open the double-clicked file; Find lands on the hit → v1.0.6 [dev]
+
+Two user-reported bugs on macOS.
+
+### 1. Double-click / "Open With" on an .fb2 opened the sample book
+
+The OS-supplied path never reached the app. Finder delivers it as an Apple
+open-document event, not in argv, and `main.go` set an empty `mac.Options{}`
+with no `OnFileOpen`; Linux/Windows pass it in argv, which nothing read. The
+frontend therefore always fell through to `SAMPLE_BOOK` at startup.
+
+- `main.go` — `Mac: &mac.Options{OnFileOpen: app.RequestOpen}` (the non-nil
+  block is still what keeps the zoom button enabled), plus
+  `app.RequestOpen(launchArg(os.Args[1:]))` for argv launches.
+- `app.go` — `RequestOpen` queues the path until the frontend is ready (the
+  macOS event can fire before `OnStartup`), afterwards emits `app:open-file`.
+  `TakeLaunchFile` is the handshake: the frontend calls it once, after its
+  event listeners are registered, so a later "Open With" on the running app is
+  never emitted into the void. `launchArg` takes the first argument naming an
+  existing regular file (skips flags such as the old `-psn_…`).
+- `App.svelte` — the listener IIFE registers `app:open-file`, then resolves a
+  `launchFile` promise with `TakeLaunchFile()`. The initial-load IIFE awaits it
+  and runs the normal `openFile(path)` flow (status, recent files); the sample
+  is shown only when there is no launch file or opening it failed.
+
+Verified on a built `.app`: `open -a fbe-go.app rich.fb2` opened that file,
+and a second `open -a … blank.fb2` into the running instance replaced it
+(both landed at the top of Recent files).
+
+### 2. Ctrl-F found every hit but Next/Prev did not travel to them
+
+Sections carry `content-visibility: auto` with a 600px
+`contain-intrinsic-size` placeholder (the window-resize speedup). The search
+scrolled once to `coordsAtPos(hit)`; as it passed sections, they rendered at
+their real height and shifted the text, so the hit ended up off-screen —
+further off the further away it was. Separately, the first Enter after typing
+went to `active + 1`, skipping the hit already highlighted.
+
+- `frontend/src/editor/scroll.ts` (new) — `scrollContainer` (the existing
+  "first overflowing ancestor" idiom, now in one place) and
+  `scrollPosIntoView(view, pos, "top" | "nearest", margin)`, which scrolls and
+  then re-measures for up to 8 animation frames until the position stays put.
+- `search/plugin.ts` — `scrollActiveIntoView` uses it; `findNext`/`findPrev`
+  first visit the active hit when the selection is not on it yet (`onActive`).
+- Same one-shot-scroll defect fixed at the sibling sites: outline navigation
+  (`Editor.scrollToPath`) and Cmd-click note links (`noteLinks.jump`, which
+  used DOM `scrollIntoView` and missed the same way for notes at the end of
+  the book). The XML pane's `content-visibility` lines were left alone — their
+  placeholder (1.35em) equals the real line height, so nothing shifts.
+
+### Files Modified
+
+- `main.go` — `OnFileOpen`, argv launch path, `os` import.
+- `app.go` — `launchMu`/`launchPath`/`frontendReady` fields; `RequestOpen`,
+  `TakeLaunchFile`, `launchArg`.
+- `app_launch_test.go` (new) — `TestLaunchArg`, `TestRequestOpenQueuesUntilFrontendReady`.
+- `frontend/src/App.svelte` — `app:open-file` listener, `launchFile` handshake,
+  launch file before sample in the initial load.
+- `frontend/src/editor/scroll.ts` (new) — `scrollContainer`, `scrollPosIntoView`.
+- `frontend/src/editor/search/plugin.ts` — `onActive`; scroll via helper.
+- `frontend/src/editor/Editor.svelte` — `scrollToPath` via helper.
+- `frontend/src/editor/noteLinks.ts` — `jump` via helper.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 1.0.5 → 1.0.6.
+
+Checks: `go test ./...`, `svelte-check` (0 errors), `vitest` (80/80), `wails build`.
+Find was not verified by eye in this session (no screen capture available).
+
+---
+
 ## Rev 91 — 2026-06-07 — Edit XML feature (CodeMirror 6 + safe Apply + Undo) → v1.0.5 [dev]
 
 The XML source pane was read-only since the panel's introduction. Rev 91 turns
