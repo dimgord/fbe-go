@@ -79,6 +79,11 @@ pass locally; Linux is verified by this push's CI.
 - `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 1.0.6 → 2.0.0.
   A major bump: the validator backend, the build (no `-tags xsd`, no libxml2) and the Go
   toolchain floor (1.26) all changed; first committed as 1.0.7, raised to 2.0.0 in a follow-up.
+- Second follow-up: `frontend/package-lock.json` restored from Rev 92 (only the version bumped).
+  The local `wails build` used for verification runs `npm install` with npm 11, which pruned
+  514 lines of optional `@esbuild/*@0.28` entries (vite 7's peer range) from the lock; CI's
+  `npm ci` (Node 22 / npm 10) then refused the out-of-sync lock. Restore the lock after any
+  local `wails build` before committing.
 
 ---
 
