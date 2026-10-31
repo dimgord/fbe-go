@@ -6,6 +6,29 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 111 — 2026-10-30 — Wails 2.12.0 → 2.16.0 → v3.16.0 [dev]
+
+`task build` warned that `go.mod` was behind the CLI, and CI installs `wails@latest`, so the
+library and the tool had drifted. `go.mod` is on 2.16.0; `golang.org/x/{crypto,net,sys}` moved
+with it.
+
+Code that depends on Wails internals was re-read in the new source:
+
+- `mac.Options.OnFileOpen` is unchanged.
+- A non-nil `Mac` block still sets `zoomable`, so the green button keeps working.
+- `WailsContext.m` still adds an unguarded `UTType`, so `*.fb2.zip` in a file filter would still
+  crash on a nil. The `*.fb2`-only rule stands; CLAUDE.md is updated.
+
+Verified: `task check`, `task build` with the warning gone, and the built `.app` launched with a
+file under a throwaway `$HOME`.
+
+### Files Modified
+
+- `go.mod`, `go.sum`, `CLAUDE.md`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.15.0 → 3.16.0.
+
+---
+
 ## Rev 110 — 2026-10-30 — DRY in `doc.go` and the HTML exporter → v3.15.0 [dev]
 
 Mechanical cleanups, checked for byte-identical output.
