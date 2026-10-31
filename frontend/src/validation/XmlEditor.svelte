@@ -97,7 +97,8 @@
   const SCROLL_LEAD_MS = 400;
   let followingUntil = 0;
   let leadingUntil = 0;
-  let scrollFrame = 0;
+  const SCROLL_SETTLE_MS = 120;
+  let scrollSettle: ReturnType<typeof setTimeout> | undefined;
 
   /** Bring a 1-based line to the top without moving the caret or taking focus. */
   export function scrollToLine(n: number) {
@@ -108,15 +109,17 @@
     });
   }
 
+  // The text follows once the scroll stops: moving it costs far more than moving this pane, and
+  // doing it every frame starves CM6's own rendering, so the scrolled lines stayed blank for seconds.
   function onScroll() {
     if (performance.now() < followingUntil) return;
     leadingUntil = performance.now() + SCROLL_LEAD_MS;
-    scrollFrame ||= requestAnimationFrame(() => {
-      scrollFrame = 0;
+    clearTimeout(scrollSettle);
+    scrollSettle = setTimeout(() => {
       if (!view) return;
       const top = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
       dispatch("scrollline", view.state.doc.lineAt(top.from).number);
-    });
+    }, SCROLL_SETTLE_MS);
   }
 
   export function hasFocus(): boolean {
@@ -161,7 +164,7 @@
   }
 
   onDestroy(() => {
-    cancelAnimationFrame(scrollFrame);
+    clearTimeout(scrollSettle);
     view?.scrollDOM.removeEventListener("scroll", onScroll);
     view?.destroy();
     view = undefined;

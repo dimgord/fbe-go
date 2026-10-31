@@ -6,6 +6,30 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 118 — 2026-10-31 — Panes can no longer squeeze the text away; the text follows XML once it stops → v3.23.0 [dev]
+
+User report: while scrolling the XML, the lower part of the pane stays blank for a few seconds; the
+screenshot also showed no text column at all and Apply/Done cut off.
+
+**Layout, reproduced and fixed.** A saved `validationWidth` of 1039 plus an outline of 500 did not fit a
+1484px window. Columns were fixed widths, so the text went to zero and the page slid sideways; the
+`.layout` grid also grew with its content. Saved widths are now upper limits (`minmax`), the text keeps
+240px, `.layout` cannot exceed the window, and the panel's drag limit accounts for the other columns.
+
+**Scroll delay, not reproduced.** Rev 115 moved the text on every frame of an XML scroll, rendering
+sections and images. It now moves once scrolling stops (120 ms), which is the cheaper behaviour in any
+case. But a frame-by-frame probe in the real app found no problem even before that: about 20 ms a frame
+and no undrawn lines at 120-1200px steps. That probe scrolls from JS, while a trackpad scrolls in
+WebKit's UI process, so it may not see the report. This fix is a reasoned change, not a confirmed cure.
+
+### Files Modified
+
+- `frontend/src/App.svelte` — grid columns, `.layout`, panel bounds.
+- `frontend/src/validation/XmlEditor.svelte` — settle timer.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.22.0 → 3.23.0.
+
+---
+
 ## Rev 117 — 2026-10-31 — `document/session.ts` owns the document → v3.22.0 [dev]
 
 The review's central finding: no object owned the document. `fb`, the path, dirty state, XML state and

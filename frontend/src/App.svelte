@@ -177,6 +177,8 @@
 
   // --- Pane resizers. ---
   const DEFAULT_OUTLINE_WIDTH = 260;
+  const RESIZER_PX = 6;
+  const TEXT_MIN = 240;
   const mainBox = () => mainEl?.getBoundingClientRect();
 
   const outlineResizer = {
@@ -186,8 +188,11 @@
   };
   const panelResizer = {
     current: () => panelWidth ?? Math.round((mainBox()?.width ?? 0) * 0.3),
-    // Capped so the editor surface cannot collapse to nothing.
-    bounds: () => ({ min: PANEL_MIN, max: (mainBox()?.width ?? 0) * 0.7 }),
+    // Stops where the grid would start taking width from the text.
+    bounds: () => {
+      const outline = view === "body" ? (outlineWidth ?? DEFAULT_OUTLINE_WIDTH) + RESIZER_PX : 0;
+      return { min: PANEL_MIN, max: Math.max(PANEL_MIN, (mainBox()?.width ?? 0) - outline - RESIZER_PX - TEXT_MIN) };
+    },
     fromPointer: (e: PointerEvent) => (mainBox()?.right ?? 0) - e.clientX,
   };
 
@@ -489,25 +494,25 @@
   .layout {
     display: grid;
     grid-template-rows: 2.5rem auto 1fr;
+    grid-template-columns: minmax(0, 1fr); /* never wider than the window, whatever the content */
     height: 100vh;
     font-family: var(--font-ui);
   }
   .spacer { height: 0; }
+  /* Saved widths are upper limits: if they no longer fit the window these columns give way
+     (the 1fr text column keeps its minimum), so a wide panel cannot squeeze the text to nothing. */
   main {
     display: grid;
-    /* outline | resizer | editor. Resizer is a 6px track so the cursor
-       target is big enough to grab comfortably. */
-    grid-template-columns: var(--outline-w, 260px) 6px 1fr;
+    grid-template-columns: minmax(150px, var(--outline-w, 260px)) 6px minmax(240px, 1fr);
     overflow: hidden;
   }
   main.with-panel {
-    /* outline | resizer | editor | resizer | validation-panel. */
     grid-template-columns:
-      var(--outline-w, 260px)
+      minmax(150px, var(--outline-w, 260px))
       6px
-      1fr
+      minmax(240px, 1fr)
       6px
-      var(--panel-w, minmax(320px, 30%));
+      minmax(260px, var(--panel-w, 30%));
   }
   aside {
     overflow: auto;
@@ -522,6 +527,6 @@
     grid-template-columns: 1fr;
   }
   main.description.with-panel {
-    grid-template-columns: 1fr 6px var(--panel-w, minmax(320px, 30%));
+    grid-template-columns: minmax(240px, 1fr) 6px minmax(260px, var(--panel-w, 30%));
   }
 </style>
