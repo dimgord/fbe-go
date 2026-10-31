@@ -6,6 +6,36 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 117 — 2026-10-31 — `document/session.ts` owns the document → v3.22.0 [dev]
+
+The review's central finding: no object owned the document. `fb`, the path, dirty state, XML state and
+every flow (open, save, export, validate, Apply, Undo Apply) lived in `App.svelte`, needing a browser to
+run and with no tests at all.
+
+`createDocumentSession({ liveBody, onSaved })` now holds them, as stores plus functions, with no DOM.
+`liveBody` is the one rule for the two-copies problem: the current text is the editor's if one is
+mounted, otherwise `doc`. `App.svelte` keeps layout and wiring. 16 tests run the flows against a fake
+`Backend`: unsaved-edit prompts (Save, Discard, Cancel, and a cancelled save), a recent file that no
+longer opens, the sample fallback, saving with and without an editor, Save As, a failed write staying
+dirty, description and XML dirtiness, validate, Apply and its refusal, Undo Apply, export naming, and the
+launch order.
+
+`App.svelte` is 527 lines against 1,442 at the review. This closes the OOP/DRY review's frontend
+items, with these left on purpose: `parse.ts`/`serialize.ts` stay explicit, as the review advised, and
+`FontCombobox` and the settings dialog's internals were not worth the churn.
+
+Verified: 140 unit tests; in WebKit Apply, Undo Apply, Done, closing the panel, search, annotation save,
+dirty tracking, resizers, dialogs, both-way XML following; the built `.app` opening a file.
+
+### Files Modified
+
+- `frontend/src/document/session.ts`, `session.test.ts` (new).
+- `frontend/src/App.svelte` — uses the session.
+- `CLAUDE.md` — architecture note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.21.0 → 3.22.0.
+
+---
+
 ## Rev 116 — 2026-10-31 — App.svelte split, part 1: palette, theme, settings, header, one main → v3.21.0 [dev]
 
 - `styles/theme.css` holds the palette and base rules, imported from `main.ts`; `check-theme-hygiene.sh`

@@ -78,6 +78,8 @@ speller/  Hunspell (CGo, future)
 
 **Large lists:** never render a book-sized list as DOM; real WKWebView took 78 s for 13,681 lines where Playwright WebKit took 0.7 s, so measure performance inside the real `.app`. The XML pane is CodeMirror in both modes for this reason.
 
+**Frontend document:** `document/session.ts` owns the open document and every flow on it; `App.svelte` is layout and wiring. It has no DOM, so test new flows there against a fake `Backend` (`setBackend`). `doc` is a snapshot: the live body is in the editor, reached through `liveBody`.
+
 **Go gateway:** frontend code reaches Go only through `runtime/backend.ts` (`backend()`, null without the bridge); never import `wailsjs` elsewhere.
 
 **Session:** `internal/fb2/session.Session` owns the open document; every Wails call runs on its own goroutine, so never add unguarded mutable state to `App`. A stored document is immutable: replace it, never edit it in place. Settings go through `settings.Store.Update`, which is one locked read-modify-write.

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import DocumentTree from "./tree/DocumentTree.svelte";
   import Editor from "./editor/Editor.svelte";
   import Toolbar from "./editor/Toolbar.svelte";
@@ -10,8 +10,7 @@
   import { backend } from "./runtime/backend";
   import { applyEditorFont, effectiveTheme, isTheme, nextTheme, theme, type Theme } from "./ui/theme";
   import { patchSettings, persistPane } from "./settings/store";
-  import { descriptionSnapshot } from "./document/dirty";
-  import { basename } from "./lib/path";
+  import { createDocumentSession } from "./document/session";
   import AppHeader from "./ui/AppHeader.svelte";
   import SearchBar from "./editor/search/SearchBar.svelte";
   import Resizer from "./ui/Resizer.svelte";
@@ -22,8 +21,6 @@
   import type { updates as UpdatesNS } from "../wailsjs/go/models";
   import { installExternalLinkHandler } from "./runtime/externalLink";
   import { configurePaste } from "./editor/paste";
-  import { SAMPLE_BOOK } from "./fb2/sample";
-  import type { FictionBook } from "./fb2/types";
   import { HOTKEY_ACTIONS, matchesEvent } from "./settings/hotkeys";
 
   type View = "body" | "description";
@@ -32,54 +29,19 @@
   /** XML line per text block, for the panel to follow the reader. */
   let blockLines: number[] = [];
 
-  let fb: FictionBook | null = null;
-  let filename = "(untitled)";
-  let currentPath = "";
-  let status = "";
-  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+  let editor: Editor | undefined = undefined;
+  /** Bound to Editor.view so SearchBar (and any other sibling) gets a
+      reactive reference to the live PM EditorView. */
+  let editorView: import("prosemirror-view").EditorView | undefined = undefined;
 
-  /** A transient message. A newer one cancels the older one's timer, so it is not cut short. */
-  function showStatus(message: string, ms: number): void {
-    clearTimeout(statusTimer);
-    status = message;
-    statusTimer = setTimeout(() => (status = ""), ms);
-  }
-  let error = "";
-
-  // Dirty-tracking is hybrid because the body editor and the description
-  // form have fundamentally different shapes:
-  //   - Body lives in ProseMirror; the parser and PM serializer build
-  //     STRUCTURALLY DIFFERENT FictionBook.Bodies trees for the same
-  //     content (Section.Image vs inline image inside Section.Body[],
-  //     Body.Title field vs no-Title-field, etc.). Stringifying both
-  //     and comparing diverges even with no edits, so we can't snapshot
-  //     the body. Track via PM's undo stack instead — Editor's
-  //     dirtyPlugin emits `dirty: true|false` based on undo depth vs a
-  //     baseline captured at mount / save.
-  //   - Description has no PM involvement; both clean and current
-  //     readings come straight from `fb.Description`. The parser /
-  //     defaulters / mutations differ only in empty fields, which the
-  //     canonical snapshot ignores (see document/dirty.ts).
-  //
-  // isDirty = bodyDirty (from PM) OR description snapshot mismatch. Cleared on
-  // open / save / sample fallback.
-  let bodyDirty = false;
-  let cleanDescSnapshot: string | null = null;
-
-  function isCurrentlyDirty(): boolean {
-    if (bodyDirty) return true;
-    if (xmlDirty) return true;
-    if (cleanDescSnapshot === null) return false;
-    return descriptionSnapshot(fb) !== cleanDescSnapshot;
-  }
-  /** The current description becomes the clean baseline, and body edits count as saved. */
-  function captureCleanSnapshot() {
-    cleanDescSnapshot = descriptionSnapshot(fb);
-    bodyDirty = false;
-  }
-  function onEditorDirty(e: CustomEvent<boolean>) {
-    bodyDirty = e.detail;
-  }
+  const session = createDocumentSession({
+    liveBody: () => (view === "body" && editor ? editor.currentFB() : null),
+    onSaved: () => editor?.markSaved(),
+  });
+  const {
+    doc, filename, status, error, recentFiles,
+    panelOpen, xmlSource, xmlErrors, applyError, canUndoApply,
+  } = session;
 
   /** When the user leaves the "body" view (tab-switch to description, or
    *  any other reason `view` changes), serialize the live PM doc back
@@ -92,7 +54,7 @@
   $: {
     if (prevView === "body" && view !== "body" && editor) {
       const synced = editor.currentFB();
-      if (synced) fb = synced;
+      if (synced) $doc = synced;
     }
     prevView = view;
   }
@@ -116,117 +78,24 @@
     if (!on) editor?.releasePosition();
   }
 
-  $: blockLines = editorView && xmlSource ? xmlBlockLines(editorView.state.doc, xmlSource) : [];
+  $: blockLines = editorView && $xmlSource ? xmlBlockLines(editorView.state.doc, $xmlSource) : [];
 
-  // --- XML editing (raw FB2 source pane) ---
-  // editMode is shared between the body-view and description-view
-  // ValidationPanel instances (only one is mounted at a time).
-  // xmlDirty is true while the CM6 editor has unsaved edits — feeds
-  // into isCurrentlyDirty() so Save / Cmd-Q honour it.
+  // XML panel. editMode lives here so that a Done in the panel and closing it agree.
   let xmlEditMode = false;
-  let xmlDirty = false;
-  let xmlApplyError = "";
-  // One-deep Apply undo. Captured pre-Apply so the user can roll back
-  // a single commit if it turns out the parsed FB lost content despite
-  // the data-loss guard. Cleared on next Apply or on panel close.
-  let xmlUndoFb: FictionBook | null = null;
-  let xmlUndoXml = "";
   function onXmlDirty(e: CustomEvent<{ dirty: boolean }>) {
-    xmlDirty = e.detail.dirty;
-    // Note: NOT clearing xmlApplyError on every keystroke — the user
-    // is actively fixing the typo and needs the error as context.
-    // It clears at the start of the next Apply attempt (success or
-    // failure both reset the message) and on editMode transitions.
+    session.setXmlDirty(e.detail.dirty);
   }
-
-  // editMode-transition mirror. Clears any stale Apply error whenever
-  // the editor opens or closes — covers "Done → Edit XML" re-entry
-  // (where the banner would otherwise show the previous attempt's
-  // error) and Edit XML → Done → ... cycles.
+  // A stale Apply error must not greet the user on the next edit session.
   let prevXmlEditMode = false;
-  $: if (xmlEditMode !== prevXmlEditMode) {
-    xmlApplyError = "";
+  $: {
+    if (xmlEditMode !== prevXmlEditMode) $applyError = "";
     prevXmlEditMode = xmlEditMode;
   }
-  /** Close handler for ValidationPanel. Unconditional close — Wails
-   *  WKWebView silently swallows `window.confirm()` returns under
-   *  some configurations, so a prompt-guarded close ended up never
-   *  actually closing (bug-reported as "× doesn't exit"). The
-   *  document state isn't touched by closing the panel — only the
-   *  CM6 working buffer is discarded, which the user can re-open via
-   *  Validate. The global Cmd-Q unsaved-changes guard still catches
-   *  any genuine in-memory FB changes via isCurrentlyDirty(). */
   function onPanelClose() {
-    showPanel = false;
     xmlEditMode = false;
-    xmlDirty = false;
-    xmlApplyError = "";
-    xmlUndoFb = null;
-    xmlUndoXml = "";
-  }
-  async function onApplyXml(e: CustomEvent<{ xml: string }>) {
-    xmlApplyError = "";
-    const App = backend();
-    if (!App) {
-      xmlApplyError = "Wails bindings unavailable";
-      return;
-    }
-    try {
-      // Go-side ParseXMLString now parses + round-trips + checks for
-      // structurally significant element loss. A typo like `<autho>`
-      // instead of `<author>` would have wiped the body silently under
-      // the original parser.Parse; now it throws back here with a
-      // descriptive error and the user's CM6 text is preserved.
-      const parsed = await App.ParseXMLString(e.detail.xml);
-      if (!parsed) throw new Error("parser returned null");
-      // SNAPSHOT for one-deep Apply-undo — captured BEFORE we touch fb
-      // so we can roll back even if the data-loss guard missed
-      // something subtler than a structural drop.
-      xmlUndoFb = fb ? structuredClone(fb) : null;
-      xmlUndoXml = xmlSource;
-      // Wails generates doc.FictionBook structurally identical to our FB.
-      fb = parsed;
-      await App.UpdateDocument(fb);
-      try { xmlSource = await App.SerializeCurrent(); } catch { /* leave as-is */ }
-      try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* leave as-is */ }
-      captureCleanSnapshot();
-      // Explicit re-clear post-success. The clear at the top of this
-      // function happens BEFORE the await chain; if Svelte reactivity
-      // races with the panel's re-render, an explicit set here pins
-      // the empty state once the success path is committed.
-      xmlApplyError = "";
-      showStatus("XML applied — Undo Apply is available in the panel", 5000);
-    } catch (err) {
-      xmlApplyError = (err as Error).message || String(err);
-    }
-  }
-  /** One-deep Apply undo. Restores fb + xmlSource to the snapshot
-   *  taken right before the last successful Apply. Snapshot is cleared
-   *  after Undo so a stale double-undo isn't possible. */
-  async function onUndoApplyXml() {
-    if (!xmlUndoFb) return;
-    fb = xmlUndoFb;
-    xmlSource = xmlUndoXml;
-    xmlUndoFb = null;
-    xmlUndoXml = "";
-    const App = backend();
-    if (App) {
-      try { await App.UpdateDocument(fb); } catch { /* ignore */ }
-      try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* ignore */ }
-    }
-    captureCleanSnapshot();
-    showStatus("Apply undone", 3000);
+    session.closePanel();
   }
 
-  let editor: Editor | undefined = undefined;
-  /** Bound to Editor.view so SearchBar (and any other sibling) gets a
-      reactive reference to the live PM EditorView. */
-  let editorView: import("prosemirror-view").EditorView | undefined = undefined;
-
-  // Validation / XML-source panel state.
-  let showPanel = false;
-  let xmlSource = "";
-  let validationErrors: { line: number; column: number; message: string }[] = [];
   // Initial errors-pane height in px (null = CSS default 45%). Populated
   // from settings.panes.validationErrorsHeight on mount; updated when
   // ValidationPanel dispatches `resize`.
@@ -287,11 +156,9 @@
       hotkeys = { ...e.detail.settings.hotkeys };
     }
     // Refresh recent-files list in case the dialog cleared it.
-    void refreshRecent();
+    void session.refreshRecent();
   }
 
-  // Most-recently-used files, fed from settings.json on the Go side.
-  let recentFiles: string[] = [];
 
   $: if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", $effectiveTheme);
@@ -324,165 +191,14 @@
     fromPointer: (e: PointerEvent) => (mainBox()?.right ?? 0) - e.clientX,
   };
 
-  async function refreshRecent() {
-    const App = backend();
-    if (!App) return;
-    try { recentFiles = (await App.RecentFiles()) ?? []; } catch { /* ignore */ }
-  }
-
-  // `preset` lets the Recent-files menu call openFile with a specific path
-  // (skipping the native file-picker). When omitted we fall back to
-  // `App.PickFB2ToOpen()` as before.
-  async function openFile(preset?: string) {
-    error = ""; status = "";
-    try {
-      const App = backend();
-      if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
-      // Guard the in-memory replacement: if the current document has
-      // unsaved edits, prompt before discarding them. The native Save /
-      // Discard / Cancel dialog lives on the Go side
-      // (App.ConfirmUnsavedChanges) so it matches the OS look exactly.
-      if (isCurrentlyDirty()) {
-        const choice = await App.ConfirmUnsavedChanges();
-        if (choice === "cancel") return;
-        if (choice === "save") {
-          await save(false);
-          if (isCurrentlyDirty()) return; // save failed or was cancelled at file picker
-        }
-        // discard: fall through, the next fb assignment overwrites the doc
-      }
-      const path = preset ?? await App.PickFB2ToOpen();
-      if (!path) return;
-      console.log(`[fbe] opening ${path}`);
-      status = `Opening ${basename(path)}…`;
-      const parsed: FictionBook = await App.OpenFile(path);
-      console.log(
-        `[fbe] parsed: ${parsed.Bodies?.length ?? 0} bodies, ` +
-        `${parsed.Binaries?.length ?? 0} binaries, ` +
-        `title "${parsed.Description?.TitleInfo?.BookTitle ?? ""}"`,
-      );
-      // Defer to next tick so the status update renders before we potentially
-      // block the UI thread converting a huge doc into ProseMirror nodes.
-      await new Promise((r) => setTimeout(r, 0));
-      fb = parsed;
-      currentPath = path;
-      filename = basename(path);
-      showStatus(`Opened ${filename}`, 3000);
-      captureCleanSnapshot();
-      void refreshRecent();
-    } catch (e) {
-      const msg = (e as Error).message || String(e);
-      console.error("[fbe] openFile failed:", e);
-      error = `Open failed: ${msg}`;
-      if (preset) {
-        // Recent-file pointed at something that no longer exists (or is
-        // unreadable) — purge it so the menu doesn't keep offering a dead
-        // entry.
-        const App = backend();
-        try { await App?.RemoveFromRecent(preset); } catch { /* ignore */ }
-        void refreshRecent();
-      } else {
-        fb = SAMPLE_BOOK;
-        currentPath = "";
-        filename = "blank.fb2 (sample)";
-        captureCleanSnapshot();
-      }
-    }
-  }
-
-  /** The document as it stands now: the live editor in body view, `fb` otherwise (the switch away
-   *  from body flushed into it, and the description forms edit it directly). */
-  function liveDoc(): FictionBook | null {
-    return (view === "body" && editor) ? editor.currentFB() : fb;
-  }
-
-  async function save(saveAs: boolean) {
-    error = ""; status = "";
-    try {
-      const App = backend();
-      if (!App) throw new Error("Wails bindings not available — save works only in the desktop app.");
-      const current = liveDoc();
-      if (!current) throw new Error("No document loaded.");
-
-      let path = currentPath;
-      if (saveAs || !path) {
-        const suggested = filename.endsWith(".fb2") ? filename : "untitled.fb2";
-        path = await App.PickFB2ToSave(suggested);
-        if (!path) return;
-      }
-      await App.UpdateDocument(current);
-      await App.SaveFile(path);
-      currentPath = path;
-      filename = basename(path);
-      showStatus(`Saved ${filename}`, 3000);
-      captureCleanSnapshot();
-      // Re-baseline PM's undo stack so subsequent undos that return to
-      // this just-saved point are recognised as clean.
-      editor?.markSaved();
-      void refreshRecent();
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
-  async function exportHTML() {
-    error = ""; status = "";
-    try {
-      const App = backend();
-      if (!App) throw new Error("Wails bindings not available.");
-      const current = liveDoc();
-      if (current) {
-        await App.UpdateDocument(current);
-      }
-      const suggested = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
-      const path = await App.PickHTMLToSave(suggested);
-      if (!path) return;
-      await App.ExportHTML(path);
-      showStatus(`Exported ${basename(path)}`, 3000);
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
-  async function validate() {
-    error = ""; status = "";
-    try {
-      const App = backend();
-      if (!App) throw new Error("Wails bindings not available.");
-      if (!fb) throw new Error("No document loaded.");
-
-      // Push the latest editor state to Go (if we're in body view) so the
-      // serialized XML and the validation result reflect unsaved edits.
-      const current = liveDoc();
-      if (current) {
-        await App.UpdateDocument(current);
-      }
-
-      const [xml, errs] = await Promise.all([
-        App.SerializeCurrent(),
-        App.ValidateCurrent(),
-      ]);
-
-      xmlSource = xml ?? "";
-      validationErrors = errs ?? [];
-      showPanel = true;
-
-      showStatus(errs && errs.length > 0
-        ? `XSD: ${errs.length} error(s)`
-        : "XSD valid ✓", 4000);
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
   // Table of app-level actions that need a window-level keyboard listener:
   // either they sit outside the editor DOM (SearchBar, dialogs) or they
   // must run in both views (Save). Editor-internal commands (Bold, etc.)
   // are handled by ProseMirror's keymap inside Editor.svelte, built from
   // the same hotkeys map — see Editor.svelte::buildKeymap.
   const APP_ACTIONS: Record<string, () => void> = {
-    Save:         () => save(false),
-    SaveAs:       () => save(true),
+    Save:         () => session.save(false),
+    SaveAs:       () => session.save(true),
     Find:         () => { if (view === "body") openSearch("find"); },
     Replace:      () => { if (view === "body") openSearch("replace"); },
     InsertTable:  () => { if (view === "body") editor?.openTableDialog(); },
@@ -544,7 +260,7 @@
     // Route every external <a href> click (editor content, Help, …) through
     // Wails runtime so the webview doesn't navigate away from the editor.
     const detachExternalLinks = installExternalLinkHandler();
-    void refreshRecent();
+    void session.refreshRecent();
 
     // Wire the unsaved-changes plumbing:
     //   - "app:check-dirty" — Go OnBeforeClose asks whether the live doc
@@ -561,32 +277,32 @@
       const App = backend();
       if (!App) { launchReady(""); return; }
       const offCheck = App.on("app:check-dirty", () => {
-        App.emit("app:dirty-response", isCurrentlyDirty());
+        App.emit("app:dirty-response", session.isDirty());
       });
       const offSave = App.on("app:save-and-quit", async () => {
         try {
-          await save(false);
+          await session.save(false);
         } catch (e) {
           console.error("[fbe] save-and-quit: save failed", e);
           return;
         }
-        if (!isCurrentlyDirty()) {
+        if (!session.isDirty()) {
           try { await App.ForceQuit(); } catch { /* app is exiting */ }
         }
       });
       // File drop: Go's OnFileDrop forwards the first dropped path; we
-      // reuse the existing openFile() flow so the unsaved-changes guard,
+      // reuse the normal open flow so the unsaved-changes guard,
       // status text, and recent-files update all behave identically to
       // a regular File→Open. Without this listener the drop would be
       // silently swallowed (WebView drop is disabled in main.go).
       const offDrop = App.on("app:file-drop", (path: string) => {
-        if (typeof path === "string" && path) void openFile(path);
+        if (typeof path === "string" && path) void session.open(path);
       });
       if (typeof offCheck === "function") detachListeners.push(offCheck);
       if (typeof offSave === "function") detachListeners.push(offSave);
       // OS "open this file" (double-click / Open With) while the app is already running.
       const offOpen = App.on("app:open-file", (path: string) => {
-        if (typeof path === "string" && path) void openFile(path);
+        if (typeof path === "string" && path) void session.open(path);
       });
       if (typeof offDrop === "function") detachListeners.push(offDrop);
       if (typeof offOpen === "function") detachListeners.push(offOpen);
@@ -649,34 +365,7 @@
         console.info("[fbe] update check failed:", e);
       }
     }, 800);
-    // Pick up whatever Go already has open (so opening :34115 in a browser
-    // tab while a file is loaded in the native window shows that file
-    // instead of the sample). Path is intentionally NOT synced — Save in
-    // the dev-tab should land in Save-As to avoid two contexts racing on
-    // the same path.
-    void (async () => {
-      const launched = await launchFile;
-      if (launched) {
-        await openFile(launched);
-        if (fb) return;
-        // open failed (error is shown) — fall through to the sample
-      }
-      const App = backend();
-      if (App) {
-        try {
-          const current = await App.CurrentDocument();
-          if (current && current.Bodies && current.Bodies.length > 0) {
-            fb = current as FictionBook;
-            filename = "(opened in native window)";
-            captureCleanSnapshot();
-            return;
-          }
-        } catch { /* fall through to sample */ }
-      }
-      fb = SAMPLE_BOOK;
-      filename = "blank.fb2 (sample)";
-      captureCleanSnapshot();
-    })();
+    void launchFile.then(session.loadInitial);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("resize", onWindowResize);
@@ -691,16 +380,16 @@
 <div class="layout">
   <UpdateBanner info={updateInfo} on:dismiss={() => (updateInfo = null)} />
   <AppHeader
-    hasDocument={!!fb}
-    {filename}
-    {status}
-    {error}
-    {recentFiles}
+    hasDocument={!!$doc}
+    filename={$filename}
+    status={$status}
+    error={$error}
+    recentFiles={$recentFiles}
     {view}
-    on:open={(e) => openFile(e.detail)}
-    on:save={(e) => save(e.detail)}
-    on:validate={validate}
-    on:export={exportHTML}
+    on:open={(e) => session.open(e.detail)}
+    on:save={(e) => session.save(e.detail)}
+    on:validate={session.validate}
+    on:export={session.exportHtml}
     on:settings={() => (showSettings = true)}
     on:help={() => (showHelp = true)}
     on:theme={cycleTheme}
@@ -722,12 +411,12 @@
   <main
     bind:this={mainEl}
     class:description={view !== "body"}
-    class:with-panel={showPanel}
-    style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}`}
+    class:with-panel={$panelOpen}
+    style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && $panelOpen ? `--panel-w: ${panelWidth}px;` : ""}`}
   >
     {#if view === "body"}
       <aside>
-        <DocumentTree {fb} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
+        <DocumentTree fb={$doc} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
       <Resizer
         label="Resize outline sidebar"
@@ -737,13 +426,13 @@
         on:commit={(e) => persistPane("outlineWidth", e.detail)}
       />
       <section>
-        <Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} on:position={(e) => (position = e.detail)} />
+        <Editor bind:this={editor} bind:view={editorView} fb={$doc} {hotkeys} on:dirty={(e) => session.setBodyDirty(e.detail)} on:position={(e) => (position = e.detail)} />
         <PositionBar {position} />
       </section>
-    {:else if fb}
-      <DescriptionPanel bind:fb />
+    {:else if $doc}
+      <DescriptionPanel bind:fb={$doc} />
     {/if}
-    {#if showPanel}
+    {#if $panelOpen}
       <Resizer
         label="Resize validation panel"
         {...panelResizer}
@@ -752,18 +441,18 @@
         on:commit={(e) => persistPane("validationWidth", e.detail)}
       />
       <ValidationPanel
-        {xmlSource}
+        xmlSource={$xmlSource}
         followLine={view === "body" && position ? blockLines[position.block] ?? null : null}
-        errors={validationErrors}
+        errors={$xmlErrors}
         {initialErrorsHeight}
         theme={$effectiveTheme}
-        applyError={xmlApplyError}
-        canUndoApply={xmlUndoFb !== null}
+        applyError={$applyError}
+        canUndoApply={$canUndoApply}
         bind:editMode={xmlEditMode}
         on:close={onPanelClose}
         on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
-        on:apply={onApplyXml}
-        on:undo-apply={onUndoApplyXml}
+        on:apply={(e) => session.applyXml(e.detail.xml)}
+        on:undo-apply={session.undoApply}
         on:xml-dirty={onXmlDirty}
         on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
       />
@@ -773,7 +462,7 @@
 
 <HelpDialog bind:open={showHelp} />
 <SettingsDialog bind:open={showSettings} on:apply={onSettingsApplied} />
-<BinaryManagerDialog bind:open={showBinaries} bind:fb view={editorView} />
+<BinaryManagerDialog bind:open={showBinaries} bind:fb={$doc} view={editorView} />
 
 <style>
   /* Resize-burst damping (see onWindowResize + the dragging reactive
