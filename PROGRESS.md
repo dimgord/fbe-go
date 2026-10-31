@@ -6,6 +6,35 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 113 — 2026-10-31 — Resizing no longer throws the reader back to the start → v3.18.0 [dev]
+
+User report: after dragging the sidebar divider, the bar kept 29% and Chapter 10 while the screen
+showed the beginning of the book.
+
+`body.resizing` sets `display: none` on `.ProseMirror` and `.xml` to keep a resize fast. Hidden, the
+scroller has no content, so `scrollTop` falls to 0 and stays there when the content returns. The
+position bar could keep the old value because it could not measure a hidden editor. It affected
+the outline and panel dividers and window resizing, and it dates from the resize speedup, not from
+Rev 112, which only made it easier to see. Two earlier guesses about painting and
+`scrollIntoView` were tried and reverted, without being committed, once the report named the trigger.
+
+`setResizing` in `App.svelte` is now the single switch for the class. Before hiding it calls
+`Editor.holdPosition`, which keeps a document position; a pixel offset would be wrong, since a new
+column width reflows the text. After showing, `releasePosition` returns there through
+`scrollPosIntoView`. The position bar does not report while held. The XML pane has uniform lines,
+so its `scrollTop` is simply saved and restored.
+
+Verified in WebKit: divider at 30% and at 62%, window resize, and the validation-panel divider with
+the XML pane scrolled; the place and the bar stay, and earlier resizer and dirty flows still pass.
+
+### Files Modified
+
+- `frontend/src/editor/Editor.svelte` — `topPos`, `holdPosition`, `releasePosition`.
+- `frontend/src/App.svelte` — `setResizing`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.17.0 → 3.18.0.
+
+---
+
 ## Rev 112 — 2026-10-30 — The scrollbar tells the truth; the position bar shows the chapter → v3.17.0 [dev]
 
 User report with screenshots: the scrollbar thumb sat mid-track while the bar said 9%.

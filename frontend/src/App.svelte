@@ -101,9 +101,23 @@
   // mirror catches them at the source: draggingOutline/draggingPanel are
   // bound to the Resizers, which set them on actual pointerdown/up,
   // which is as close to "while mouse is held" as the browser can give us.
-  $: if (typeof document !== "undefined") {
-    const dragging = draggingOutline || draggingPanel;
-    document.body.classList.toggle("resizing", dragging);
+  $: if (typeof document !== "undefined") setResizing(draggingOutline || draggingPanel);
+
+  let heldXmlScroll = 0;
+
+  /** Hide the heavy panes for a resize. Hiding empties their scrollers, so places are kept. */
+  function setResizing(on: boolean): void {
+    if (on === document.body.classList.contains("resizing")) return;
+    const xmlPane = document.querySelector<HTMLElement>(".xml");
+    if (on) {
+      editor?.holdPosition();
+      heldXmlScroll = xmlPane?.scrollTop ?? 0;
+    }
+    document.body.classList.toggle("resizing", on);
+    if (!on) {
+      editor?.releasePosition();
+      if (xmlPane) xmlPane.scrollTop = heldXmlScroll;
+    }
   }
 
 
@@ -581,12 +595,10 @@
   // so debounced silence is the next best proxy.
   let resizeTimer: number | undefined;
   function onWindowResize() {
-    if (!document.body.classList.contains("resizing")) {
-      document.body.classList.add("resizing");
-    }
+    setResizing(true);
     if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(() => {
-      document.body.classList.remove("resizing");
+      setResizing(false);
       resizeTimer = undefined;
     }, 150);
   }

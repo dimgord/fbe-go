@@ -49,13 +49,35 @@
     if (!positionFrame) positionFrame = requestAnimationFrame(reportPosition);
   }
 
+  /** The document position at the top of the visible text. */
+  function topPos(): number | null {
+    if (!view || view.isDestroyed) return null;
+    const box = (scrollContainer(view) ?? (view.dom as HTMLElement)).getBoundingClientRect();
+    return view.posAtCoords({ left: box.left + box.width / 2, top: box.top + POSITION_PROBE_Y })?.pos ?? null;
+  }
+
+  // Where the reader was while body.resizing hides the editor. Hiding collapses the scroller to
+  // zero, and a width change reflows the text, so the place is kept as a document position.
+  let heldPos: number | null = null;
+
+  export function holdPosition(): void {
+    heldPos ??= topPos();
+  }
+
+  export function releasePosition(): void {
+    const pos = heldPos;
+    heldPos = null;
+    if (pos === null || !view) return;
+    scrollPosIntoView(view, pos, "top", POSITION_PROBE_Y);
+    schedulePosition();
+  }
+
   function reportPosition(): void {
     positionFrame = 0;
-    if (!view || view.isDestroyed) return;
-    const box = (scrollContainer(view) ?? (view.dom as HTMLElement)).getBoundingClientRect();
-    const hit = view.posAtCoords({ left: box.left + box.width / 2, top: box.top + POSITION_PROBE_Y });
-    if (!hit) return;
-    const next = positionAt(view.state.doc, hit.pos);
+    if (!view || view.isDestroyed || heldPos !== null) return;
+    const pos = topPos();
+    if (pos === null) return;
+    const next = positionAt(view.state.doc, pos);
     const key = `${next.path.join(".")}@${next.percent}`;
     if (key !== lastPosition) {
       lastPosition = key;
