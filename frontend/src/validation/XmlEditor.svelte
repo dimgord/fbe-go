@@ -134,6 +134,9 @@
       initial = next;
       return;
     }
+    // Replacing the text moves the scroller; that is not the user scrolling.
+    followingUntil = performance.now() + SCROLL_LEAD_MS;
+    leadingUntil = 0;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: next },
     });

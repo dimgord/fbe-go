@@ -61,6 +61,7 @@
     shownXml = xmlSource;
     lastBaselineXml = xmlSource;
     xmlEditor?.setDoc(xmlSource);
+    if (followLine) xmlEditor?.scrollToLine(followLine);
   }
   let prevEditMode = false;
   $: {

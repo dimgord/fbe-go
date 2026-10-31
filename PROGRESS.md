@@ -6,6 +6,38 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 120 — 2026-10-31 — The outline and the XML pane follow the live document → v3.25.0 [dev]
+
+User report with a screenshot: after Clone, reading Chapter 1 highlighted Chapter 5. Rev 119 listed
+this as a known limit; it was a bug. The outline was built from the `doc` snapshot while positions came
+from the live editor, so one cloned part shifted every path after it, and clicks went to the wrong
+place too.
+
+- `buildOutline` now takes the PM doc, so it has one source and cannot disagree with positions.
+  `Editor` rebuilds it in the same update as a document change and emits it only if it differs, so
+  typing in a paragraph costs a comparison. Clone reaches the tree in 33 ms, and a retyped title
+  updates live. The mapping from FictionBook (`plainText`, `titleText`) is gone.
+- The XML pane no longer goes stale: 800 ms after the last edit, `session.refreshXml` re-serializes
+  and re-validates while the panel is open. It waits while the user edits the XML, whose buffer is
+  theirs until Apply or Done, and catches up on Done. `setDoc` marks itself as following, so
+  replacing the text is not taken for a user scroll and the text does not jump.
+
+Verified in WebKit: Clone, then both CHAPTER 1 entries in the tree, highlight on the right one, a click on
+CHAPTER 5 landing on it; XML refreshed within about a second of typing, not at all in edit mode, and
+again after Done; earlier flows unchanged. New session test.
+
+### Files Modified
+
+- `frontend/src/tree/outline.ts`, `DocumentTree.svelte`, `outline.test.ts`, `position.test.ts`.
+- `frontend/src/editor/Editor.svelte` — `outline` and `docchange` events.
+- `frontend/src/editor/markCodec.ts` — `plainText` removed.
+- `frontend/src/document/session.ts`, `session.test.ts` — `refreshXml`.
+- `frontend/src/validation/XmlEditor.svelte`, `ValidationPanel.svelte`, `frontend/src/App.svelte`.
+- `CLAUDE.md` — note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.24.0 → 3.25.0.
+
+---
+
 ## Rev 119 — 2026-10-31 — Clone shows what it did → v3.24.0 [dev]
 
 User report: clicking Clone several times, in both views, changed nothing visible. It had worked each

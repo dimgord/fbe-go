@@ -16,6 +16,8 @@
   import Resizer from "./ui/Resizer.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
   import { blockAtLine, xmlBlockLines, type BookPosition } from "./tree/position";
+  import type { OutlineNode } from "./tree/outline";
+  import type { Node as PMNode } from "prosemirror-model";
   import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
   import UpdateBanner from "./updates/UpdateBanner.svelte";
   import type { updates as UpdatesNS } from "../wailsjs/go/models";
@@ -78,7 +80,15 @@
     if (!on) editor?.releasePosition();
   }
 
-  $: blockLines = editorView && $xmlSource ? xmlBlockLines(editorView.state.doc, $xmlSource) : [];
+  // The XML pane keeps up with the document while it is open, except while the user edits the XML
+  // itself: that buffer is theirs until Apply or Done.
+  let outline: OutlineNode[] = [];
+  let settledDoc: PMNode | null = null;
+  function onDocChange(e: CustomEvent<PMNode>) {
+    settledDoc = e.detail;
+    if (!xmlEditMode) void session.refreshXml();
+  }
+  $: blockLines = settledDoc && $xmlSource ? xmlBlockLines(settledDoc, $xmlSource) : [];
 
   // XML panel. editMode lives here so that a Done in the panel and closing it agree.
   let xmlEditMode = false;
@@ -88,7 +98,10 @@
   // A stale Apply error must not greet the user on the next edit session.
   let prevXmlEditMode = false;
   $: {
-    if (xmlEditMode !== prevXmlEditMode) $applyError = "";
+    if (xmlEditMode !== prevXmlEditMode) {
+      $applyError = "";
+      if (!xmlEditMode) void session.refreshXml();
+    }
     prevXmlEditMode = xmlEditMode;
   }
   function onPanelClose() {
@@ -421,7 +434,7 @@
   >
     {#if view === "body"}
       <aside>
-        <DocumentTree fb={$doc} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
+        <DocumentTree tree={outline} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
       <Resizer
         label="Resize outline sidebar"
@@ -431,7 +444,7 @@
         on:commit={(e) => persistPane("outlineWidth", e.detail)}
       />
       <section>
-        <Editor bind:this={editor} bind:view={editorView} fb={$doc} {hotkeys} on:dirty={(e) => session.setBodyDirty(e.detail)} on:position={(e) => (position = e.detail)} on:notice={(e) => session.showStatus(e.detail, 6000)} />
+        <Editor bind:this={editor} bind:view={editorView} fb={$doc} {hotkeys} on:dirty={(e) => session.setBodyDirty(e.detail)} on:position={(e) => (position = e.detail)} on:notice={(e) => session.showStatus(e.detail, 6000)} on:outline={(e) => (outline = e.detail)} on:docchange={onDocChange} />
         <PositionBar {position} />
       </section>
     {:else if $doc}

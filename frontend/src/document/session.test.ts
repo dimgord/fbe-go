@@ -195,6 +195,19 @@ describe("xml", () => {
     expect(get(s.status)).toContain("1 error");
   });
 
+  it("refreshXml follows the document only while the panel is open", async () => {
+    let xml = "<one/>";
+    fake({ SerializeCurrent: async () => xml });
+    const s = session();
+    await s.open("/books/a.fb2");
+    await s.refreshXml();
+    expect(get(s.xmlSource)).toBe("");
+    await s.validate();
+    xml = "<two/>";
+    await s.refreshXml();
+    expect(get(s.xmlSource)).toBe("<two/>");
+  });
+
   it("applies, then undoes once", async () => {
     fake();
     const s = session();

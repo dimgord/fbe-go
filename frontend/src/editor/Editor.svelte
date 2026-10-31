@@ -14,7 +14,7 @@
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
   import { scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
   import { blockPos, positionAt, type BookPosition } from "../tree/position";
-  import { findNodePos } from "../tree/outline";
+  import { buildOutline, findNodePos, type OutlineNode } from "../tree/outline";
   import { dirtyPlugin, markClean } from "./dirtyTracker";
   import { createImageViews } from "./imageView";
   import { NOTICE, toggleLink, insertTableCmd } from "./commands";
@@ -37,7 +37,14 @@
   /** Inferred from the document's title-info <lang> for native spellcheck routing. */
   $: lang = fb?.Description?.TitleInfo?.Lang || "en";
 
-  const dispatch = createEventDispatcher<{ dirty: boolean; position: BookPosition; notice: string }>();
+  const dispatch = createEventDispatcher<{
+    dirty: boolean;
+    position: BookPosition;
+    notice: string;
+    outline: OutlineNode[];
+    /** The document, after a pause in editing. */
+    docchange: PMNode;
+  }>();
   // What sits at the top of the visible text, reported once per frame at most.
   const POSITION_PROBE_Y = 40;
   let positionFrame = 0;
@@ -47,6 +54,26 @@
 
   function schedulePosition(): void {
     if (!positionFrame) positionFrame = requestAnimationFrame(reportPosition);
+  }
+
+  // The outline changes with the document, in the same update; only a real change reaches the
+  // tree, so typing in a paragraph costs a comparison and no re-render.
+  let lastOutline = "";
+  function reportOutline(doc: PMNode): void {
+    const outline = buildOutline(doc);
+    const key = JSON.stringify(outline);
+    if (key !== lastOutline) {
+      lastOutline = key;
+      dispatch("outline", outline);
+    }
+  }
+
+  // Serializing the book is too slow for every keystroke, so this waits for a pause.
+  const DOC_CHANGE_PAUSE_MS = 800;
+  let docChangeTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleDocChange(doc: PMNode): void {
+    clearTimeout(docChangeTimer);
+    docChangeTimer = setTimeout(() => dispatch("docchange", doc), DOC_CHANGE_PAUSE_MS);
   }
 
   /** The document position at the top of the visible text. */
@@ -105,6 +132,7 @@
       window.removeEventListener("scroll", onAnyScroll, true);
       cancelAnimationFrame(positionFrame);
       clearTimeout(positionSettle);
+      clearTimeout(docChangeTimer);
     };
   });
 
@@ -188,7 +216,10 @@
         new Plugin({
           view: () => ({
             update(v, prev) {
-              if (v.state.doc !== prev.doc) schedulePosition();
+              if (v.state.doc === prev.doc) return;
+              schedulePosition();
+              reportOutline(v.state.doc);
+              scheduleDocChange(v.state.doc);
             },
           }),
         }),
@@ -207,6 +238,9 @@
       nodeViews: images.nodeViews,
     });
     schedulePosition();
+    lastOutline = "";
+    reportOutline(view.state.doc);
+    dispatch("docchange", view.state.doc);
   }
 
   /** Settings → Apply swaps the bindings here. Never `reconfigure` for this: PM destroys every

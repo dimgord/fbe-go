@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { buildOutline } from "./outline";
+import { fb2ToPMDoc } from "../editor/parse";
 import { SAMPLE_BOOK } from "../fb2/sample";
 
 describe("buildOutline(SAMPLE_BOOK)", () => {
-  const tree = buildOutline(SAMPLE_BOOK);
+  const tree = buildOutline(fb2ToPMDoc(SAMPLE_BOOK));
 
   it("has one body", () => {
     expect(tree).toHaveLength(1);

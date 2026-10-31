@@ -60,13 +60,3 @@ export function textToInline(text: string, marks: readonly Mark[]): Inline {
   }
   return inner;
 }
-
-/** Plain text of inlines, through every mark. */
-export function plainText(items: Inline[]): string {
-  let out = "";
-  for (const i of items) {
-    if (i.Text) out += i.Text;
-    for (const { wrapper } of wrappersOf(i)) out += plainText(wrapper.Children ?? []);
-  }
-  return out;
-}

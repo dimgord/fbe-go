@@ -195,6 +195,21 @@ export function createDocumentSession(hooks: SessionHooks) {
     }
   }
 
+  /** Bring an open XML panel up to date with the document, quietly. */
+  async function refreshXml(): Promise<void> {
+    const App = backend();
+    const current = live();
+    if (!App || !current || !get(panelOpen)) return;
+    try {
+      await App.UpdateDocument(current);
+      const [xml, errs] = await Promise.all([App.SerializeCurrent(), App.ValidateCurrent()]);
+      xmlSource.set(xml ?? "");
+      xmlErrors.set(errs ?? []);
+    } catch (e) {
+      console.warn("[fbe] XML refresh failed:", e);
+    }
+  }
+
   /** Replace the document from edited XML. On failure the error is shown and the text is kept. */
   async function applyXml(xml: string): Promise<void> {
     applyError.set("");
@@ -278,7 +293,7 @@ export function createDocumentSession(hooks: SessionHooks) {
     isDirty, showStatus,
     setBodyDirty: (dirty: boolean) => { bodyDirty = dirty; },
     setXmlDirty: (dirty: boolean) => { xmlDirty = dirty; },
-    open, save, exportHtml, validate, applyXml, undoApply, closePanel,
+    open, save, exportHtml, validate, refreshXml, applyXml, undoApply, closePanel,
     refreshRecent, loadInitial,
   };
 }

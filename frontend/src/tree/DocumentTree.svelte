@@ -1,16 +1,14 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import OutlineItem from "./OutlineItem.svelte";
-  import { buildOutline } from "./outline";
-  import type { FictionBook } from "../fb2/types";
+  import type { OutlineNode } from "./outline";
 
-  export let fb: FictionBook | null = null;
+  export let tree: OutlineNode[] = [];
   /** Outline path of the section being read; highlighted in the tree. */
   export let activePath: number[] | null = null;
 
   const dispatch = createEventDispatcher<{ navigate: { path: number[] } }>();
 
-  $: tree = buildOutline(fb);
   $: activeKey = activePath?.join(".") ?? "";
 
   function onNavigate(e: CustomEvent<{ path: number[] }>) {
