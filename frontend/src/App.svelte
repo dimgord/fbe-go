@@ -431,7 +431,7 @@
         on:commit={(e) => persistPane("outlineWidth", e.detail)}
       />
       <section>
-        <Editor bind:this={editor} bind:view={editorView} fb={$doc} {hotkeys} on:dirty={(e) => session.setBodyDirty(e.detail)} on:position={(e) => (position = e.detail)} />
+        <Editor bind:this={editor} bind:view={editorView} fb={$doc} {hotkeys} on:dirty={(e) => session.setBodyDirty(e.detail)} on:position={(e) => (position = e.detail)} on:notice={(e) => session.showStatus(e.detail, 6000)} />
         <PositionBar {position} />
       </section>
     {:else if $doc}

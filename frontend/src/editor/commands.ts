@@ -7,7 +7,7 @@
  *
  * See docs/OPERATIONS.md for the FBE → command mapping.
  */
-import type { Command, EditorState } from "prosemirror-state";
+import { Selection, type Command, type EditorState } from "prosemirror-state";
 import type { NodeType, Attrs } from "prosemirror-model";
 import {
   toggleMark as pmToggleMark,
@@ -18,6 +18,9 @@ import { fb2Schema } from "./schema";
 // ── Inline mark toggles ─────────────────────────────────────────────────────
 
 const M = fb2Schema.marks;
+
+/** Transaction meta: a message for the user about what a command did. */
+export const NOTICE = "fbe-notice";
 
 /** Toggle <strong> on the selection. Keyboard: Mod-b. */
 export const toggleStrong: Command        = pmToggleMark(M.strong);
@@ -137,9 +140,21 @@ export const cloneContainer: Command = (state, dispatch) => {
   // Deep copy via JSON round-trip so marks/attrs/content all duplicate cleanly.
   const clone = fb2Schema.nodeFromJSON(target.node.toJSON());
   const tr = state.tr.insert(target.after, clone);
+  // The copy lands off-screen and looks like the original, so go to it and say what happened.
+  tr.setSelection(Selection.near(tr.doc.resolve(target.after + 1)));
+  tr.setMeta(NOTICE, `Cloned ${target.node.type.name}: ${countBlocks(clone)} paragraphs. Undo removes it.`);
   dispatch(tr.scrollIntoView());
   return true;
 };
+
+function countBlocks(node: PMNode): number {
+  let n = 0;
+  node.descendants((child) => {
+    if (child.isTextblock) n++;
+    return !child.isTextblock;
+  });
+  return n;
+}
 
 /**
  * Remove the surrounding section, moving its child sections (if any) up to the

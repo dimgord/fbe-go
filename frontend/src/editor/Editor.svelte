@@ -17,7 +17,7 @@
   import { findNodePos } from "../tree/outline";
   import { dirtyPlugin, markClean } from "./dirtyTracker";
   import { createImageViews } from "./imageView";
-  import { toggleLink, insertTableCmd } from "./commands";
+  import { NOTICE, toggleLink, insertTableCmd } from "./commands";
   import { EDITOR_COMMANDS, type CommandId } from "./commandRegistry";
   import { HOTKEY_ACTIONS, toPMKey } from "../settings/hotkeys";
   import type { Command } from "prosemirror-state";
@@ -37,7 +37,7 @@
   /** Inferred from the document's title-info <lang> for native spellcheck routing. */
   $: lang = fb?.Description?.TitleInfo?.Lang || "en";
 
-  const dispatch = createEventDispatcher<{ dirty: boolean; position: BookPosition }>();
+  const dispatch = createEventDispatcher<{ dirty: boolean; position: BookPosition; notice: string }>();
   // What sits at the top of the visible text, reported once per frame at most.
   const POSITION_PROBE_Y = 40;
   let positionFrame = 0;
@@ -162,7 +162,7 @@
       const raw = hk[action.id];
       if (!raw) continue;
       const pmKey = toPMKey(raw);
-      if (pmKey) bindings[pmKey] = EDITOR_COMMANDS[action.id];
+      if (pmKey) bindings[pmKey] = revealing(EDITOR_COMMANDS[action.id]);
     }
     // F3 / Shift-F3 stay hardcoded as Windows-convention aliases — users can
     // still rebind FindNext to something else without losing these.
@@ -196,6 +196,11 @@
     });
     view = new EditorView(container, {
       state,
+      dispatchTransaction(this: EditorView, tr) {
+        this.updateState(this.state.apply(tr));
+        const notice = tr.getMeta(NOTICE);
+        if (notice) dispatch("notice", notice);
+      },
       attributes: { spellcheck: "true", lang },
       transformPastedHTML: cleanPastedHTML,
       transformPastedText: cleanPastedText,
@@ -253,10 +258,20 @@
     lastMountedFB = null;
   });
 
+  /** A command, followed to wherever it moved the selection (see scrollPosIntoView for why PM's
+      own scrollIntoView is not enough). */
+  const revealing = (cmd: Command): Command => (state, dispatch, v) => {
+    const handled = cmd(state, dispatch, v);
+    if (handled && dispatch && v && v.state.selection.from !== state.selection.from) {
+      scrollPosIntoView(v, v.state.selection.from, "nearest");
+    }
+    return handled;
+  };
+
   /** Run a command from outside the editor, such as a toolbar button. */
   export function run(id: CommandId): void {
     if (!view) return;
-    EDITOR_COMMANDS[id](view.state, view.dispatch, view);
+    revealing(EDITOR_COMMANDS[id])(view.state, view.dispatch, view);
     view.focus();
   }
 

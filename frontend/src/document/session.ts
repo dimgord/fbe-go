@@ -275,7 +275,7 @@ export function createDocumentSession(hooks: SessionHooks) {
   return {
     doc, filename, status, error, recentFiles,
     panelOpen, xmlSource, xmlErrors, applyError, canUndoApply,
-    isDirty,
+    isDirty, showStatus,
     setBodyDirty: (dirty: boolean) => { bodyDirty = dirty; },
     setXmlDirty: (dirty: boolean) => { xmlDirty = dirty; },
     open, save, exportHtml, validate, applyXml, undoApply, closePanel,

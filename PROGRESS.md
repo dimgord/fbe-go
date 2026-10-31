@@ -6,6 +6,33 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 119 — 2026-10-31 — Clone shows what it did → v3.24.0 [dev]
+
+User report: clicking Clone several times, in both views, changed nothing visible. It had worked each
+time: every click appended a full copy of the chapter right after the original, off-screen, with the
+caret and the screen staying put. 3 clicks added 687 paragraphs to the book silently, which is a
+real risk of saving a bloated file, and may have fed the sluggishness reported in Rev 118. The zero-width
+text column reported alongside it was the Rev 118 layout bug: width stayed 1218px across clones.
+
+Clone now moves the caret to the copy and says what happened: "Cloned section: 224 paragraphs. Undo
+removes it." A command reports through a `NOTICE` transaction meta, surfaced by `dispatchTransaction`.
+`revealing()` wraps toolbar and hotkey commands so that the screen follows the selection whenever a
+command moves it, because PM's `tr.scrollIntoView()` picks the wrong container here.
+
+Known and left: the outline is built from the `doc` snapshot, so a clone appears there only after a view
+switch; the XML pane stays a snapshot until the next Validate.
+
+Verified in WebKit: three clones and Undo; toolbar, hotkeys and F3 as before. New unit test.
+
+### Files Modified
+
+- `frontend/src/editor/commands.ts`, `commands.test.ts` — `NOTICE`, selection, `countBlocks`.
+- `frontend/src/editor/Editor.svelte` — `revealing`, `dispatchTransaction`.
+- `frontend/src/App.svelte`, `document/session.ts` — shows the notice.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.23.0 → 3.24.0.
+
+---
+
 ## Rev 118 — 2026-10-31 — Panes can no longer squeeze the text away; the text follows XML once it stops → v3.23.0 [dev]
 
 User report: while scrolling the XML, the lower part of the pane stays blank for a few seconds; the
