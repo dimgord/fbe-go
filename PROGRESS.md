@@ -6,6 +6,28 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 115 — 2026-10-31 — Scrolling the XML moves the text → v3.20.0 [dev]
+
+The other half of Rev 114. Scrolling the XML pane brings the matching block to the reading line.
+It does nothing while the XML holds unapplied edits, since the line map is then out of date.
+
+Two panes that follow each other can chase forever, so `XmlEditor` tracks who leads: a scroll it
+caused itself (`scrollToLine`) marks it as following, and a user's scroll marks it as leading.
+Each lasts 400 ms and the other direction is ignored meanwhile. `blockAtLine` inverts the line
+map with a binary search, and `blockPos` gives the position to scroll to.
+
+Verified in WebKit: wheel and a far jump in the XML move the text to the same paragraph, as the
+screenshot confirms; both positions then stay put, with no chasing; the text can take the lead back.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `scrollline` event, lead/follow.
+- `frontend/src/validation/ValidationPanel.svelte`, `frontend/src/App.svelte`, `frontend/src/editor/Editor.svelte` — wiring, `scrollToBlock`.
+- `frontend/src/tree/position.ts`, `position.test.ts` — `blockAtLine`, `blockPos`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.19.0 → 3.20.0.
+
+---
+
 ## Rev 114 — 2026-10-31 — XML pane: 78 s to 50 ms, and it follows the text → v3.19.0 [dev]
 
 User report: Validate took "ridiculously" long on an M5 Pro, and the XML pane and the text showed

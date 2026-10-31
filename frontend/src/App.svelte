@@ -13,7 +13,7 @@
   import SearchBar from "./editor/search/SearchBar.svelte";
   import Resizer from "./ui/Resizer.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
-  import { xmlBlockLines, type BookPosition } from "./tree/position";
+  import { blockAtLine, xmlBlockLines, type BookPosition } from "./tree/position";
   import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
   import UpdateBanner from "./updates/UpdateBanner.svelte";
   import type { updates as UpdatesNS } from "../wailsjs/go/models";
@@ -868,6 +868,7 @@
           on:apply={onApplyXml}
           on:undo-apply={onUndoApplyXml}
           on:xml-dirty={onXmlDirty}
+          on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
         />
       {/if}
     </main>
@@ -902,6 +903,7 @@
           on:apply={onApplyXml}
           on:undo-apply={onUndoApplyXml}
           on:xml-dirty={onXmlDirty}
+          on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
         />
       {/if}
     </div>

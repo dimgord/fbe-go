@@ -43,6 +43,8 @@
     /** Fired on every edit; payload is the current full document.
      *  Parent uses this to track dirty state without polling. */
     change: string;
+    /** The user scrolled; payload is the 1-based line at the top. */
+    scrollline: number;
   }>();
 
   let host: HTMLDivElement | undefined;
@@ -90,11 +92,30 @@
     view.focus();
   }
 
+  // Text and XML follow each other, so each side must tell a user's scroll from its own, or they
+  // would chase one another. Whichever scrolled last leads for SCROLL_LEAD_MS.
+  const SCROLL_LEAD_MS = 400;
+  let followingUntil = 0;
+  let leadingUntil = 0;
+  let scrollFrame = 0;
+
   /** Bring a 1-based line to the top without moving the caret or taking focus. */
   export function scrollToLine(n: number) {
-    if (!view || n < 1 || n > view.state.doc.lines) return;
+    if (!view || n < 1 || n > view.state.doc.lines || performance.now() < leadingUntil) return;
+    followingUntil = performance.now() + SCROLL_LEAD_MS;
     view.dispatch({
       effects: EditorView.scrollIntoView(view.state.doc.line(n).from, { y: "start" }),
+    });
+  }
+
+  function onScroll() {
+    if (performance.now() < followingUntil) return;
+    leadingUntil = performance.now() + SCROLL_LEAD_MS;
+    scrollFrame ||= requestAnimationFrame(() => {
+      scrollFrame = 0;
+      if (!view) return;
+      const top = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
+      dispatch("scrollline", view.state.doc.lineAt(top.from).number);
     });
   }
 
@@ -124,6 +145,7 @@
       }),
       parent: host,
     });
+    view.scrollDOM.addEventListener("scroll", onScroll, { passive: true });
   });
 
   // Re-apply theme without rebuilding the whole editor — keeps the
@@ -139,6 +161,8 @@
   }
 
   onDestroy(() => {
+    cancelAnimationFrame(scrollFrame);
+    view?.scrollDOM.removeEventListener("scroll", onScroll);
     view?.destroy();
     view = undefined;
   });

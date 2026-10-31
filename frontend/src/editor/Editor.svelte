@@ -13,7 +13,7 @@
   import { searchPlugin } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
   import { scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
-  import { positionAt, type BookPosition } from "../tree/position";
+  import { blockPos, positionAt, type BookPosition } from "../tree/position";
   import { findNodePos } from "../tree/outline";
   import { dirtyPlugin, markClean } from "./dirtyTracker";
   import { createImageViews } from "./imageView";
@@ -59,6 +59,12 @@
   // Where the reader was while body.resizing hides the editor. Hiding collapses the scroller to
   // zero, and a width change reflows the text, so the place is kept as a document position.
   let heldPos: number | null = null;
+
+  /** Bring text block `index` to the reading line. */
+  export function scrollToBlock(index: number): void {
+    const pos = view && blockPos(view.state.doc, index);
+    if (view && pos) scrollPosIntoView(view, pos, "top", POSITION_PROBE_Y);
+  }
 
   export function holdPosition(): void {
     heldPos ??= topPos();

@@ -35,6 +35,8 @@
     "undo-apply": void;
     /** Fired on every CM6 edit. Parent uses this for dirty tracking. */
     "xml-dirty": { dirty: boolean };
+    /** The user scrolled the XML; payload is the line at the top. */
+    "scroll-line": number;
   }>();
 
   let panelEl: HTMLDivElement | undefined;
@@ -181,6 +183,7 @@
         readOnly={!editMode}
         {theme}
         on:change={onEditorChange}
+        on:scrollline={(e) => !editDirty && dispatch("scroll-line", e.detail)}
       />
     </div>
   </div>

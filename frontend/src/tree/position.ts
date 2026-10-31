@@ -45,6 +45,24 @@ function blockIndexAt(doc: PMNode, pos: number): number {
   return lo;
 }
 
+/** A position just inside text block `index`, for scrolling to it. */
+export function blockPos(doc: PMNode, index: number): number | null {
+  const start = textBlocks(doc)[index];
+  return start === undefined ? null : start + 1;
+}
+
+/** Index of the last block starting at or above a 1-based XML line. */
+export function blockAtLine(blockLines: number[], line: number): number {
+  let lo = 0;
+  let hi = blockLines.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (blockLines[mid] <= line) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 // The elements that become PM text blocks, in document order.
 const BLOCK_TAG = /<(?:p|subtitle|v|text-author|date|td|th)(?=[\s>/])/g;
 

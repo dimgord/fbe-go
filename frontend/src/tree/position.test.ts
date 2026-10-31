@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fb2ToPMDoc } from "../editor/parse";
 import { buildOutline, findNodePos } from "./outline";
-import { positionAt, xmlBlockLines } from "./position";
+import { blockAtLine, blockPos, positionAt, xmlBlockLines } from "./position";
 import type { Block, FictionBook, Section } from "../fb2/types";
 
 const para = (text: string): Block => ({ Paragraph: { Children: [{ Text: text }] } });
@@ -129,5 +129,20 @@ describe("xmlBlockLines", () => {
 
   it("copes with no body", () => {
     expect(xmlBlockLines(doc, "<x/>")).toEqual([]);
+  });
+});
+
+describe("from XML back to the text", () => {
+  const lines = [5, 6, 9, 12];
+
+  it("finds the block at or above a line", () => {
+    expect([1, 5, 7, 9, 11, 12, 99].map((l) => blockAtLine(lines, l))).toEqual([0, 0, 1, 2, 2, 3, 3]);
+  });
+
+  it("gives a position inside the block, and null past the end", () => {
+    const doc = fb2ToPMDoc(book);
+    const p = blockPos(doc, 1)!;
+    expect(doc.resolve(p).parent.isTextblock).toBe(true);
+    expect(blockPos(doc, 9999)).toBeNull();
   });
 });
