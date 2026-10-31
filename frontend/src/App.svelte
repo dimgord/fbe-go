@@ -8,8 +8,11 @@
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
   import { backend } from "./runtime/backend";
+  import { applyEditorFont, effectiveTheme, isTheme, nextTheme, theme, type Theme } from "./ui/theme";
+  import { patchSettings, persistPane } from "./settings/store";
   import { descriptionSnapshot } from "./document/dirty";
-  import { basename, dirname } from "./lib/path";
+  import { basename } from "./lib/path";
+  import AppHeader from "./ui/AppHeader.svelte";
   import SearchBar from "./editor/search/SearchBar.svelte";
   import Resizer from "./ui/Resizer.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
@@ -234,7 +237,6 @@
   let outlineWidth: number | null = null;
   let panelWidth: number | null = null;
   let mainEl: HTMLElement | undefined;
-  let descWrapEl: HTMLElement | undefined;
   let draggingOutline = false;
   let draggingPanel = false;
 
@@ -277,7 +279,7 @@
     }>
   ) {
     // Sync live runtime state with what the dialog just wrote to disk.
-    theme = e.detail.theme;
+    theme.set(e.detail.theme);
     applyEditorFont(e.detail.settings.font);
     configurePaste({ nbspChar: e.detail.settings.nbspChar });
     // Fresh object identity so Editor's reactive reconfigure fires.
@@ -288,61 +290,17 @@
     void refreshRecent();
   }
 
-  // applyEditorFont sets CSS custom properties on <html> so the editor's
-  // `:global(.ProseMirror) { font-family: var(--editor-font-family); … }`
-  // picks them up. Empty / invalid values fall through to the
-  // var()-declared defaults in Editor.svelte.
-  function applyEditorFont(font: { family?: string; size?: number }) {
-    if (typeof document === "undefined") return;
-    const root = document.documentElement;
-    if (font.family && font.family.trim()) {
-      root.style.setProperty("--editor-font-family", font.family);
-    } else {
-      root.style.removeProperty("--editor-font-family");
-    }
-    if (typeof font.size === "number" && font.size >= 8 && font.size <= 48) {
-      root.style.setProperty("--editor-font-size", `${font.size}px`);
-    } else {
-      root.style.removeProperty("--editor-font-size");
-    }
-  }
-
   // Most-recently-used files, fed from settings.json on the Go side.
   let recentFiles: string[] = [];
-  let recentMenuOpen = false;
 
-  // Theme: "system" follows prefers-color-scheme, "light"/"dark" pin it.
-  // Stored in settings.Theme on the Go side; defaults to "system".
-  type Theme = "system" | "light" | "dark";
-  let theme: Theme = "system";
-  // Track the OS preference so "system" effective theme updates live.
-  let systemDark = typeof window !== "undefined" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches;
-
-  $: effectiveTheme = theme === "system" ? (systemDark ? "dark" : "light") : theme;
   $: if (typeof document !== "undefined") {
-    document.documentElement.setAttribute("data-theme", effectiveTheme);
+    document.documentElement.setAttribute("data-theme", $effectiveTheme);
   }
 
-  async function cycleTheme() {
-    const next: Theme = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
-    theme = next;
-    await patchSettings((s) => { s.theme = next; });
-  }
-
-  // patchSettings: load, mutate, save. Used by theme cycle, view toggle,
-  // and validation-pane resize. Silent on error — persistence is a
-  // convenience, not correctness.
-  async function patchSettings(mutate: (s: any) => void) {
-    const App = backend();
-    if (!App) return;
-    try {
-      const s = await App.LoadSettings();
-      mutate(s);
-      await App.SaveSettings(s);
-    } catch (e) {
-      console.warn("[fbe] settings save failed:", e);
-    }
+  function cycleTheme() {
+    const next = nextTheme($theme);
+    theme.set(next);
+    void patchSettings((s) => { s.theme = next; });
   }
 
   function switchView(v: View) {
@@ -350,38 +308,21 @@
     void patchSettings((s) => { s.lastView = v; });
   }
 
-  // --- Pane resizers. The validation panel's parent depends on the view. ---
+  // --- Pane resizers. ---
   const DEFAULT_OUTLINE_WIDTH = 260;
-  const panelParentWidth = () =>
-    (view === "body" ? mainEl : descWrapEl)?.getBoundingClientRect().width ?? 0;
+  const mainBox = () => mainEl?.getBoundingClientRect();
 
   const outlineResizer = {
     current: () => outlineWidth ?? DEFAULT_OUTLINE_WIDTH,
     bounds: () => ({ min: OUTLINE_MIN, max: OUTLINE_MAX }),
-    fromPointer: (e: PointerEvent) => e.clientX - (mainEl?.getBoundingClientRect().left ?? 0),
+    fromPointer: (e: PointerEvent) => e.clientX - (mainBox()?.left ?? 0),
   };
   const panelResizer = {
-    current: () => panelWidth ?? Math.round(panelParentWidth() * 0.3),
+    current: () => panelWidth ?? Math.round((mainBox()?.width ?? 0) * 0.3),
     // Capped so the editor surface cannot collapse to nothing.
-    bounds: () => ({ min: PANEL_MIN, max: panelParentWidth() * 0.7 }),
-    fromPointer: (e: PointerEvent) =>
-      ((view === "body" ? mainEl : descWrapEl)?.getBoundingClientRect().right ?? 0) - e.clientX,
+    bounds: () => ({ min: PANEL_MIN, max: (mainBox()?.width ?? 0) * 0.7 }),
+    fromPointer: (e: PointerEvent) => (mainBox()?.right ?? 0) - e.clientX,
   };
-
-  function persistPane(key: "outlineWidth" | "validationWidth" | "validationErrorsHeight", size: number) {
-    void patchSettings((s) => {
-      if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-      s.panes[key] = Math.round(size);
-    });
-  }
-
-  function themeIcon(t: Theme): string {
-    switch (t) {
-      case "light":  return "☀";
-      case "dark":   return "☾";
-      default:       return "◐";
-    }
-  }
 
   async function refreshRecent() {
     const App = backend();
@@ -394,7 +335,6 @@
   // `App.PickFB2ToOpen()` as before.
   async function openFile(preset?: string) {
     error = ""; status = "";
-    recentMenuOpen = false;
     try {
       const App = backend();
       if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
@@ -655,11 +595,6 @@
       launchReady(p);
     })();
 
-    // Live-follow OS color-scheme changes while theme === "system".
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onSystemChange = (e: MediaQueryListEvent) => { systemDark = e.matches; };
-    mq.addEventListener("change", onSystemChange);
-
     // Load persisted preferences: theme, last-open view, validation-pane
     // errors-height. Settings-read errors are swallowed — we'd rather use
     // in-memory defaults than block mount.
@@ -668,10 +603,7 @@
       if (!App) return;
       try {
         const s = await App.LoadSettings();
-        const t = s?.theme;
-        if (t === "light" || t === "dark" || t === "system") {
-          theme = t;
-        }
+        if (isTheme(s?.theme)) theme.set(s.theme);
         if (s?.lastView === "body" || s?.lastView === "description") {
           view = s.lastView;
         }
@@ -749,7 +681,6 @@
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("resize", onWindowResize);
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
-      mq.removeEventListener("change", onSystemChange);
       detachExternalLinks();
       window.clearTimeout(updateTimer);
       detachListeners.forEach((off) => off());
@@ -759,64 +690,22 @@
 
 <div class="layout">
   <UpdateBanner info={updateInfo} on:dismiss={() => (updateInfo = null)} />
-  <header>
-    <div class="open-group">
-      <button on:click={() => openFile()}>Open…</button>
-      <button
-        class="recent-toggle"
-        title="Recent files"
-        disabled={recentFiles.length === 0}
-        on:click={() => (recentMenuOpen = !recentMenuOpen)}
-      >▾</button>
-      {#if recentMenuOpen}
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="recent-backdrop" on:click={() => (recentMenuOpen = false)}></div>
-        <ul class="recent-menu" role="menu">
-          {#each recentFiles as path}
-            <li role="menuitem">
-              <button
-                type="button"
-                class="recent-item"
-                on:click={() => openFile(path)}
-                title={path}
-              >
-                <span class="basename">{basename(path)}</span>
-                <span class="dir">{dirname(path)}</span>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
-    <button on:click={() => save(false)} disabled={!fb}>Save</button>
-    <button on:click={() => save(true)} disabled={!fb}>Save As…</button>
-    <button on:click={validate} disabled={!fb}>Validate</button>
-    <button on:click={exportHTML} disabled={!fb}>Export HTML…</button>
-    <button on:click={() => (showSettings = true)} title="Settings" aria-label="Open settings">⚙</button>
-    <button on:click={() => (showHelp = true)} title="Keyboard shortcuts and about">Help</button>
-    <button
-      class="theme-toggle"
-      on:click={cycleTheme}
-      title={`Theme: ${theme}${theme === "system" ? ` (effective: ${effectiveTheme})` : ""} — click to cycle`}
-      aria-label="Cycle theme (system → light → dark)"
-    >{themeIcon(theme)}</button>
-    <div class="view-toggle" role="tablist" aria-label="View">
-      <button
-        class:active={view === "body"}
-        on:click={() => switchView("body")}
-        role="tab"
-        aria-selected={view === "body"}>Body</button>
-      <button
-        class:active={view === "description"}
-        on:click={() => switchView("description")}
-        role="tab"
-        aria-selected={view === "description"}>Description</button>
-    </div>
-    <span class="title">FictionBook Editor · <em>{filename}</em></span>
-    {#if status}<span class="status">{status}</span>{/if}
-    {#if error}<span class="err">{error}</span>{/if}
-  </header>
+  <AppHeader
+    hasDocument={!!fb}
+    {filename}
+    {status}
+    {error}
+    {recentFiles}
+    {view}
+    on:open={(e) => openFile(e.detail)}
+    on:save={(e) => save(e.detail)}
+    on:validate={validate}
+    on:export={exportHTML}
+    on:settings={() => (showSettings = true)}
+    on:help={() => (showHelp = true)}
+    on:theme={cycleTheme}
+    on:view={(e) => switchView(e.detail)}
+  />
 
   {#if view === "body"}
     <Toolbar {editor} {hotkeys} on:openBinaries={() => (showBinaries = true)} />
@@ -827,11 +716,16 @@
         on:close={() => (searchOpen = false)}
       />
     {/if}
-    <main
-      bind:this={mainEl}
-      class:with-panel={showPanel}
-      style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}`}
-    >
+  {:else}
+    <div class="spacer" />
+  {/if}
+  <main
+    bind:this={mainEl}
+    class:description={view !== "body"}
+    class:with-panel={showPanel}
+    style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}`}
+  >
+    {#if view === "body"}
       <aside>
         <DocumentTree {fb} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
@@ -846,68 +740,35 @@
         <Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} on:position={(e) => (position = e.detail)} />
         <PositionBar {position} />
       </section>
-      {#if showPanel}
-        <Resizer
-          label="Resize validation panel"
-          {...panelResizer}
-          bind:dragging={draggingPanel}
-          on:change={(e) => (panelWidth = e.detail)}
-          on:commit={(e) => persistPane("validationWidth", e.detail)}
-        />
-        <ValidationPanel
-          {xmlSource}
-          followLine={position ? blockLines[position.block] ?? null : null}
-          errors={validationErrors}
-          {initialErrorsHeight}
-          theme={effectiveTheme}
-          applyError={xmlApplyError}
-          canUndoApply={xmlUndoFb !== null}
-          bind:editMode={xmlEditMode}
-          on:close={onPanelClose}
-          on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
-          on:apply={onApplyXml}
-          on:undo-apply={onUndoApplyXml}
-          on:xml-dirty={onXmlDirty}
-          on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
-        />
-      {/if}
-    </main>
-  {:else if fb}
-    <div class="spacer" />
-    <div
-      bind:this={descWrapEl}
-      class="description-wrap with-panel-maybe"
-      class:with-panel={showPanel}
-      style={panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}
-    >
+    {:else if fb}
       <DescriptionPanel bind:fb />
-      {#if showPanel}
-        <Resizer
-          label="Resize validation panel"
-          {...panelResizer}
-          bind:dragging={draggingPanel}
-          on:change={(e) => (panelWidth = e.detail)}
-          on:commit={(e) => persistPane("validationWidth", e.detail)}
-        />
-        <ValidationPanel
-          {xmlSource}
-          followLine={position ? blockLines[position.block] ?? null : null}
-          errors={validationErrors}
-          {initialErrorsHeight}
-          theme={effectiveTheme}
-          applyError={xmlApplyError}
-          canUndoApply={xmlUndoFb !== null}
-          bind:editMode={xmlEditMode}
-          on:close={onPanelClose}
-          on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
-          on:apply={onApplyXml}
-          on:undo-apply={onUndoApplyXml}
-          on:xml-dirty={onXmlDirty}
-          on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
-        />
-      {/if}
-    </div>
-  {/if}
+    {/if}
+    {#if showPanel}
+      <Resizer
+        label="Resize validation panel"
+        {...panelResizer}
+        bind:dragging={draggingPanel}
+        on:change={(e) => (panelWidth = e.detail)}
+        on:commit={(e) => persistPane("validationWidth", e.detail)}
+      />
+      <ValidationPanel
+        {xmlSource}
+        followLine={view === "body" && position ? blockLines[position.block] ?? null : null}
+        errors={validationErrors}
+        {initialErrorsHeight}
+        theme={$effectiveTheme}
+        applyError={xmlApplyError}
+        canUndoApply={xmlUndoFb !== null}
+        bind:editMode={xmlEditMode}
+        on:close={onPanelClose}
+        on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
+        on:apply={onApplyXml}
+        on:undo-apply={onUndoApplyXml}
+        on:xml-dirty={onXmlDirty}
+        on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
+      />
+    {/if}
+  </main>
 </div>
 
 <HelpDialog bind:open={showHelp} />
@@ -936,226 +797,13 @@
     display: none !important;
   }
 
-  /* Theme palette. Applied via [data-theme="light|dark"] on <html>; the
-     default (no attribute) also resolves to light so server-rendered
-     previews look right. Components reference these vars; hard-coded
-     hex should stay rare and documented. */
-  :global(:root),
-  :global([data-theme="light"]) {
-    color-scheme: light;
-    --bg-app:          #fafaf7;
-    --bg-surface:      #ffffff;   /* editor paper */
-    --font-mono: "SF Mono", Menlo, Consolas, monospace;
-    --font-ui: -apple-system, "Segoe UI", sans-serif;
-    --bg-chrome:       #f1f1ec;   /* header, panel-title, toolbar */
-    --bg-sidebar:      #f5f5f0;
-    --bg-card:         #fffdf8;   /* dialogs, menus */
-    --bg-hover:        #fff8e5;
-    --bg-active:       #fce6a0;
-    --bg-active-hover: #f5da7c;
-    --bg-errors:       #fffaf0;
-    --bg-errors-title: #fdecec;
-    --bg-ok:           #f2faf4;
-
-    --fg:              #222;
-    --fg-strong:       #111;
-    --fg-secondary:    #444;
-    --fg-muted:        #888;
-    --fg-muted-soft:   #aaa;
-    --fg-link:         #1a5490;
-
-    --border:          #d5d5cb;
-    --border-strong:   #bfbfb2;
-    --border-input:    #ccc;
-    --border-button:   #bbb;
-
-    --danger:          #a33;
-    --danger-border:   #edc7c7;
-    --ok:              #2a7;
-    --ok-border:       #cfe7d6;
-    --warn:            #b58f00;   /* raw-block accent */
-    --warn-fg:         #7a5a10;
-    --warn-bg-a:       #fef7d8;
-    --warn-bg-b:       #fcebad;
-    --warn-bg-inline:  #fef0bc;
-
-    --highlight:       #fce6a0;
-    --shadow:          rgba(0, 0, 0, 0.25);
-    --backdrop:        rgba(0, 0, 0, 0.35);   /* modal dim */
-
-    /* Search/replace match highlighting — light wash on inactive hits,
-       saturated orange on the currently-focused one (matches VS Code). */
-    --search-match-bg:            #ffe89a;
-    --search-match-active-bg:     #ffb347;
-    --search-match-active-border: #d07b0a;
-  }
-
-  :global([data-theme="dark"]) {
-    color-scheme: dark;
-    --bg-app:          #1a1a1a;
-    --bg-surface:      #242422;
-    --bg-chrome:       #2a2a27;
-    --bg-sidebar:      #242422;
-    --bg-card:         #2a2a27;
-    --bg-hover:        #3a3630;
-    --bg-active:       #5a4a10;
-    --bg-active-hover: #6b5814;
-    --bg-errors:       #2a2420;
-    --bg-errors-title: #3a2222;
-    --bg-ok:           #1a2a22;
-
-    --fg:              #e4e4de;
-    --fg-strong:       #f5f5ef;
-    --fg-secondary:    #c0c0ba;
-    --fg-muted:        #8a8a82;
-    --fg-muted-soft:   #5a5a52;
-    --fg-link:         #7fb6e6;
-
-    --border:          #3a3a35;
-    --border-strong:   #4a4a42;
-    --border-input:    #4a4a42;
-    --border-button:   #4a4a42;
-
-    --danger:          #e88;
-    --danger-border:   #5a2a2a;
-    --ok:              #7ec99f;
-    --ok-border:       #2a4a38;
-    --warn:            #ebc550;
-    --warn-fg:         #f5d878;
-    --warn-bg-a:       #3a2e10;
-    --warn-bg-b:       #4a3818;
-    --warn-bg-inline:  #3a2e10;
-
-    --highlight:       #5a4a10;
-    --shadow:          rgba(0, 0, 0, 0.6);
-    --backdrop:        rgba(0, 0, 0, 0.55);   /* modal dim — stronger in dark mode */
-
-    --search-match-bg:            #6b5814;
-    --search-match-active-bg:     #c88420;
-    --search-match-active-border: #e8a850;
-  }
-
-  :global(body), :global(html) {
-    margin: 0;
-    height: 100%;
-    background: var(--bg-app);
-    color: var(--fg);
-  }
   .layout {
     display: grid;
     grid-template-rows: 2.5rem auto 1fr;
     height: 100vh;
     font-family: var(--font-ui);
   }
-  header {
-    display: flex;
-    align-items: center;
-    padding: 0 0.75rem;
-    gap: 0.5rem;
-    background: var(--bg-chrome);
-    border-bottom: 1px solid var(--border);
-  }
-  header button {
-    padding: 0.25rem 0.7rem;
-    border: 1px solid var(--border-button);
-    background: var(--bg-surface);
-    color: var(--fg);
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  header button:hover:not(:disabled) { background: var(--bg-hover); }
-  header button:disabled { opacity: 0.5; cursor: default; }
-
-  /* Theme cycle icon-button (lives on the right edge, near Help). */
-  header button.theme-toggle {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.95rem;
-    line-height: 1;
-  }
-
-  /* Recent-files split-button: Open…<dropdown-caret>. Visually the two
-     buttons share a border so they read as one control. */
-  .open-group {
-    position: relative;
-    display: inline-flex;
-    gap: 0;
-  }
-  .open-group > button:first-child {
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
-  }
-  .open-group > button.recent-toggle {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
-    border-left-width: 0;
-    padding: 0.25rem 0.45rem;
-    font-size: 0.7rem;
-    line-height: 1;
-  }
-  .recent-backdrop {
-    position: fixed;
-    inset: 0;
-    background: transparent;
-    z-index: 49;
-  }
-  .recent-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    z-index: 50;
-    list-style: none;
-    margin: 2px 0 0;
-    padding: 0.25rem 0;
-    min-width: 22rem;
-    max-width: 38rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    box-shadow: 0 6px 18px var(--shadow);
-    font-size: 0.85rem;
-  }
-  .recent-menu li { margin: 0; padding: 0; }
-  button.recent-item {
-    all: unset;
-    display: block;
-    width: 100%;
-    padding: 0.3rem 0.7rem;
-    cursor: pointer;
-    box-sizing: border-box;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  button.recent-item:hover { background: var(--bg-hover); }
-  button.recent-item .basename { font-weight: 600; color: var(--fg); }
-  button.recent-item .dir {
-    color: var(--fg-muted);
-    font-size: 0.78rem;
-    margin-left: 0.4rem;
-  }
-
-  .view-toggle {
-    display: inline-flex;
-    gap: 0;
-    margin-left: 0.5rem;
-  }
-  .view-toggle button {
-    border-radius: 0;
-    border-right-width: 0;
-  }
-  .view-toggle button:first-child { border-radius: 4px 0 0 4px; }
-  .view-toggle button:last-child { border-radius: 0 4px 4px 0; border-right-width: 1px; }
-  .view-toggle button.active {
-    background: var(--bg-active);
-    font-weight: 600;
-  }
-  .description-wrap {
-    overflow: hidden;
-  }
   .spacer { height: 0; }
-  .title { font-size: 0.9rem; color: var(--fg-secondary); margin-left: 0.5rem; }
-  .status { color: var(--ok); font-size: 0.8rem; margin-left: auto; }
-  .err { color: var(--danger); font-size: 0.8rem; margin-left: auto; }
   main {
     display: grid;
     /* outline | resizer | editor. Resizer is a 6px track so the cursor
@@ -1181,8 +829,10 @@
     overflow: auto;
     background: var(--bg-surface);
   }
-  .description-wrap.with-panel-maybe.with-panel {
-    display: grid;
+  main.description {
+    grid-template-columns: 1fr;
+  }
+  main.description.with-panel {
     grid-template-columns: 1fr 6px var(--panel-w, minmax(320px, 30%));
   }
 </style>

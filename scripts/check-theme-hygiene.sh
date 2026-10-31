@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails if any Svelte/TS/CSS file under frontend/src/ contains a hardcoded
-# color literal outside the palette block (App.svelte). Every color in the
+# color literal outside the palette (styles/theme.css). Every color in the
 # app should go through a CSS custom property defined once in the palette,
 # so theme changes and dark-mode tweaks land in one place.
 #
@@ -24,7 +24,7 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 SRC="$ROOT/frontend/src"
-PALETTE_FILE="$SRC/App.svelte"
+PALETTE_FILE="$SRC/styles/theme.css"
 
 # Named colors commonly used as CSS values. Add to this list if a new one
 # sneaks in — the check can only find what it looks for.

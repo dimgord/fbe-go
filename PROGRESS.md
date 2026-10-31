@@ -6,6 +6,34 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 116 — 2026-10-31 — App.svelte split, part 1: palette, theme, settings, header, one main → v3.21.0 [dev]
+
+- `styles/theme.css` holds the palette and base rules, imported from `main.ts`; `check-theme-hygiene.sh`
+  now treats that file as the palette.
+- `ui/theme.ts`: `theme`, `effectiveTheme` (following the OS through a store), `nextTheme`, `themeIcon`,
+  `applyEditorFont`.
+- `settings/store.ts`: typed `patchSettings`, `persistPane`.
+- `ui/AppHeader.svelte`: header markup, recent-files menu and their CSS; it only emits events.
+- **One `<main>` for both views.** The body and description views each had their own wrapper and their
+  own copy of `Resizer` + `ValidationPanel` (11 props and 6 events kept equal by hand). There is now one
+  panel in one grid, so it stays mounted across a view switch, keeping its scroll and any XML edits.
+
+**`Modal` swallowed keys.** Its `on:keydown|stopPropagation` kept keystrokes from the window listeners all
+four dialogs use, so Esc and Enter did nothing while focus was in a field (reproduced on Insert table).
+Dialogs handle their own keys, so `Modal` now lets them bubble.
+
+`App.svelte` is 838 lines. Verified in WebKit: search and history, annotation save from Description,
+dirty tracking, images, all three resizers in both views, four dialogs with Esc and backdrop, hotkey
+capture, text and XML following each other; light and dark themes and the recent menu by screenshot.
+
+### Files Modified
+
+- `frontend/src/styles/theme.css`, `ui/theme.ts`, `settings/store.ts`, `ui/AppHeader.svelte` (new).
+- `frontend/src/App.svelte`, `main.ts`, `ui/Modal.svelte`, `scripts/check-theme-hygiene.sh`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.20.0 → 3.21.0.
+
+---
+
 ## Rev 115 — 2026-10-31 — Scrolling the XML moves the text → v3.20.0 [dev]
 
 The other half of Rev 114. Scrolling the XML pane brings the matching block to the reading line.

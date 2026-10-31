@@ -11,23 +11,19 @@
   const close = () => dispatch("close");
 </script>
 
+<!-- Keys are not handled here: each dialog listens on window, so Escape must be free to bubble. -->
 {#if open}
-  <div
-    class="backdrop"
-    role="button"
-    tabindex="-1"
-    aria-label="Dismiss dialog"
-    on:click={close}
-    on:keydown={(e) => e.key === "Escape" && close()}>
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <div class="backdrop" role="button" tabindex="-1" aria-label="Dismiss dialog" on:click={close}>
     <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
       class="dialog"
       role="dialog"
       aria-modal="true"
       aria-labelledby={labelledBy}
       {style}
-      on:click|stopPropagation
-      on:keydown|stopPropagation>
+      on:click|stopPropagation>
       <slot />
     </div>
   </div>
