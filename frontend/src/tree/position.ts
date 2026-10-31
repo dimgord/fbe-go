@@ -11,6 +11,104 @@ export interface BookPosition {
   trail: string[];
   /** How far through the document, 0–100. */
   percent: number;
+  /** Index among all text blocks; xmlBlockLines[block] is its line in the XML. */
+  block: number;
+}
+
+/** Start positions of every text block, cached because the position updates while scrolling. */
+const blockStarts = new WeakMap<PMNode, number[]>();
+
+function textBlocks(doc: PMNode): number[] {
+  let starts = blockStarts.get(doc);
+  if (!starts) {
+    const found: number[] = [];
+    doc.descendants((n, pos) => {
+      if (n.isTextblock) found.push(pos);
+      return !n.isTextblock;
+    });
+    blockStarts.set(doc, found);
+    starts = found;
+  }
+  return starts;
+}
+
+/** Index of the last text block starting at or before pos. */
+function blockIndexAt(doc: PMNode, pos: number): number {
+  const starts = textBlocks(doc);
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (starts[mid] <= pos) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+// The elements that become PM text blocks, in document order.
+const BLOCK_TAG = /<(?:p|subtitle|v|text-author|date|td|th)(?=[\s>/])/g;
+
+/** How far past the expected tag to look: <p>s inside a preserved unknown element shift the count. */
+const ALIGN_WINDOW = 12;
+const PROBE_CHARS = 12;
+
+/** 1-based line of every block tag from the first <body> up to the binaries. */
+function blockTagLines(xml: string): number[] {
+  const start = xml.indexOf("<body");
+  if (start < 0) return [];
+  const end = xml.indexOf("<binary", start);
+  const lines: number[] = [];
+  let line = 1;
+  let scanned = 0;
+  BLOCK_TAG.lastIndex = start;
+  for (let m = BLOCK_TAG.exec(xml); m && (end < 0 || m.index < end); m = BLOCK_TAG.exec(xml)) {
+    for (let i = xml.indexOf("\n", scanned); i >= 0 && i < m.index; i = xml.indexOf("\n", i + 1)) {
+      line++;
+      scanned = i + 1;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** A line's text as the reader sees it: tags dropped, the writer's escapes undone. */
+function plainText(line: string): string {
+  return line
+    .replace(/<[^>]+>/g, "")
+    .replace(/&#39;/g, "'")
+    .replace(/&#34;|&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * 1-based XML line of each text block. Blocks pair up with tags in order, and their text corrects
+ * the pairing where the two sequences differ, as they do inside preserved unknown elements.
+ */
+export function xmlBlockLines(doc: PMNode, xml: string): number[] {
+  const tags = blockTagLines(xml);
+  const lines = xml.split("\n");
+  const out: number[] = [];
+  let next = 0;
+  doc.descendants((n) => {
+    if (!n.isTextblock) return true;
+    const probe = n.textContent.trim().slice(0, PROBE_CHARS);
+    let hit = next;
+    if (probe) {
+      const last = Math.min(next + ALIGN_WINDOW, tags.length - 1);
+      for (let t = next; t <= last; t++) {
+        if (plainText(lines[tags[t] - 1]).includes(probe)) {
+          hit = t;
+          break;
+        }
+      }
+    }
+    if (hit < tags.length) out.push(tags[hit]);
+    next = hit + 1;
+    return false;
+  });
+  return out;
 }
 
 /** Index of `parent.child(index)` among its siblings of the same type. */
@@ -43,5 +141,10 @@ export function positionAt(doc: PMNode, pos: number): BookPosition {
     if (title) trail.push(title);
   }
   const size = doc.content.size;
-  return { path, trail, percent: size > 0 ? Math.round((pos / size) * 100) : 0 };
+  return {
+    path,
+    trail,
+    percent: size > 0 ? Math.round((pos / size) * 100) : 0,
+    block: blockIndexAt(doc, pos),
+  };
 }

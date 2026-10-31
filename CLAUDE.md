@@ -76,6 +76,8 @@ speller/  Hunspell (CGo, future)
 
 **XSD validator** (`internal/fb2/xsd/`): `xsd.go` is the shared API, `xsd_helium.go` the only backend — pure-Go `github.com/lestrrat-go/helium/xsd`, always compiled in (no build tag, no CGo; the old `-tags xsd` + libxml2 path was removed in Rev 93 because `lestrrat-go/libxml2` does not compile against libxml2 ≥ 2.14 and is unmaintained). `SchemaFiles` is an `embed.FS` of the four bundled `.xsd` files; the compiler resolves `FictionBook.xsd`'s `xs:import`s against it via `Compiler.FS`. helium reports a line (no column) and the element name per error; `positionOf` finds the column of `<name` on that line, and `ValidationError.Element` carries the local name, which `MergeXSDAndUnknown` compares; messages are display text only. helium may describe a violation from the other side than libxml2 did (e.g. "`<poem>`: missing `<stanza>`" on the poem line instead of "`<text-author>` not expected" one line below) — same error count, different anchor.
 
+**Large lists:** never render a book-sized list as DOM; real WKWebView took 78 s for 13,681 lines where Playwright WebKit took 0.7 s, so measure performance inside the real `.app`. The XML pane is CodeMirror in both modes for this reason.
+
 **Go gateway:** frontend code reaches Go only through `runtime/backend.ts` (`backend()`, null without the bridge); never import `wailsjs` elsewhere.
 
 **Session:** `internal/fb2/session.Session` owns the open document; every Wails call runs on its own goroutine, so never add unguarded mutable state to `App`. A stored document is immutable: replace it, never edit it in place. Settings go through `settings.Store.Update`, which is one locked read-modify-write.

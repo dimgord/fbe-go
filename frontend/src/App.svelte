@@ -13,7 +13,7 @@
   import SearchBar from "./editor/search/SearchBar.svelte";
   import Resizer from "./ui/Resizer.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
-  import type { BookPosition } from "./tree/position";
+  import { xmlBlockLines, type BookPosition } from "./tree/position";
   import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
   import UpdateBanner from "./updates/UpdateBanner.svelte";
   import type { updates as UpdatesNS } from "../wailsjs/go/models";
@@ -26,6 +26,8 @@
   type View = "body" | "description";
   let view: View = "body";
   let position: BookPosition | null = null;
+  /** XML line per text block, for the panel to follow the reader. */
+  let blockLines: number[] = [];
 
   let fb: FictionBook | null = null;
   let filename = "(untitled)";
@@ -103,23 +105,15 @@
   // which is as close to "while mouse is held" as the browser can give us.
   $: if (typeof document !== "undefined") setResizing(draggingOutline || draggingPanel);
 
-  let heldXmlScroll = 0;
-
-  /** Hide the heavy panes for a resize. Hiding empties their scrollers, so places are kept. */
+  /** Hide the heavy editor for a resize. Hiding empties its scroller, so the place is kept. */
   function setResizing(on: boolean): void {
     if (on === document.body.classList.contains("resizing")) return;
-    const xmlPane = document.querySelector<HTMLElement>(".xml");
-    if (on) {
-      editor?.holdPosition();
-      heldXmlScroll = xmlPane?.scrollTop ?? 0;
-    }
+    if (on) editor?.holdPosition();
     document.body.classList.toggle("resizing", on);
-    if (!on) {
-      editor?.releasePosition();
-      if (xmlPane) xmlPane.scrollTop = heldXmlScroll;
-    }
+    if (!on) editor?.releasePosition();
   }
 
+  $: blockLines = editorView && xmlSource ? xmlBlockLines(editorView.state.doc, xmlSource) : [];
 
   // --- XML editing (raw FB2 source pane) ---
   // editMode is shared between the body-view and description-view
@@ -862,6 +856,7 @@
         />
         <ValidationPanel
           {xmlSource}
+          followLine={position ? blockLines[position.block] ?? null : null}
           errors={validationErrors}
           {initialErrorsHeight}
           theme={effectiveTheme}
@@ -895,6 +890,7 @@
         />
         <ValidationPanel
           {xmlSource}
+          followLine={position ? blockLines[position.block] ?? null : null}
           errors={validationErrors}
           {initialErrorsHeight}
           theme={effectiveTheme}
@@ -934,8 +930,7 @@
      `:global()` modifier. The two-modifier form silently scopes the
      `.X` part to the component, which then never matches the
      globally-mounted ProseMirror / XML-line divs. */
-  :global(body.resizing .ProseMirror),
-  :global(body.resizing .xml) {
+  :global(body.resizing .ProseMirror) {
     display: none !important;
   }
 

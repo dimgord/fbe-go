@@ -78,7 +78,7 @@
     const pos = topPos();
     if (pos === null) return;
     const next = positionAt(view.state.doc, pos);
-    const key = `${next.path.join(".")}@${next.percent}`;
+    const key = `${next.path.join(".")}@${next.percent}@${next.block}`;
     if (key !== lastPosition) {
       lastPosition = key;
       dispatch("position", next);

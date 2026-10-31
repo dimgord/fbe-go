@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import { createEventDispatcher, onDestroy } from "svelte";
   import XmlEditor from "./XmlEditor.svelte";
   import Resizer from "../ui/Resizer.svelte";
 
@@ -20,6 +20,8 @@
   // default (45%). Not bound — parent only seeds the initial value; the
   // panel reports changes via the `resize` event.
   export let initialErrorsHeight: number | null = null;
+  /** XML line of the text being read; the pane follows it. */
+  export let followLine: number | null = null;
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -35,9 +37,7 @@
     "xml-dirty": { dirty: boolean };
   }>();
 
-  let xmlPane: HTMLDivElement | undefined;
   let panelEl: HTMLDivElement | undefined;
-  let highlightedLine: number | null = null;
 
   // Edit-mode state. Exported as a bind:able prop so the parent
   // (App.svelte) can flip it off after a successful Apply →
@@ -51,35 +51,29 @@
   $: editDirty = editMode && editedXml !== lastBaselineXml;
   $: dispatch("xml-dirty", { dirty: editDirty });
 
-  // Three-way sync of editMode + xmlSource into CM6:
-  //   - editMode flips false→true: seed CM6 with current xmlSource and
-  //     capture it as the dirty-tracking baseline.
-  //   - editMode flips true→false: reset working buffer.
-  //   - editMode stays true but xmlSource changes externally (parent
-  //     re-ran SerializeCurrent after a successful Apply): refresh CM6
-  //     to the new (writer-normalized) form and reset baseline so the
-  //     dirty mark clears. Without this last branch, the user's Apply
-  //     would commit fine but the editor would still show their
-  //     pre-normalization text and the dirty mark would stay lit.
+  // CM6 shows xmlSource in both modes. A new xmlSource (Validate, or a successful Apply, which
+  // brings the writer-normalized form) replaces its text and clears the dirty mark. Entering edit
+  // mode changes nothing but the baseline, and leaving it drops unapplied edits.
+  let shownXml = xmlSource;
+  $: if (xmlSource !== shownXml) {
+    shownXml = xmlSource;
+    lastBaselineXml = xmlSource;
+    xmlEditor?.setDoc(xmlSource);
+  }
   let prevEditMode = false;
-  let lastSeenXmlSource = "";
   $: {
     if (editMode && !prevEditMode) {
       lastBaselineXml = xmlSource;
       editedXml = xmlSource;
-      lastSeenXmlSource = xmlSource;
-    } else if (!editMode && prevEditMode) {
-      editedXml = "";
-      lastBaselineXml = "";
-      lastSeenXmlSource = "";
-    } else if (editMode && xmlSource !== lastSeenXmlSource) {
-      lastBaselineXml = xmlSource;
-      lastSeenXmlSource = xmlSource;
-      xmlEditor?.setDoc(xmlSource);
-      // CM6 docChanged fires from setDoc → onEditorChange updates
-      // editedXml → editDirty drops to false on next reactive pass.
+    } else if (!editMode && prevEditMode && xmlEditor && xmlEditor.getXml() !== xmlSource) {
+      xmlEditor.setDoc(xmlSource);
     }
     prevEditMode = editMode;
+  }
+
+  // Keep the XML on the line being read, unless the user is working in it.
+  $: if (xmlEditor && followLine && !editDirty && !xmlEditor.hasFocus()) {
+    xmlEditor.scrollToLine(followLine);
   }
 
   function enterEditMode() { editMode = true; }
@@ -113,17 +107,7 @@
     : null;
   let dragging = false;
 
-  $: xmlLines = xmlSource.split("\n");
-
-  async function gotoLine(n: number) {
-    highlightedLine = n;
-    await tick();
-    const el = xmlPane?.querySelector(`#xml-line-${n}`);
-    el?.scrollIntoView({ block: "center", behavior: "smooth" });
-    setTimeout(() => {
-      if (highlightedLine === n) highlightedLine = null;
-    }, 2500);
-  }
+  $: lineCount = xmlSource ? xmlSource.split("\n").length : 0;
 
   function panelBounds() {
     if (!panelEl) return null;
@@ -147,7 +131,7 @@
 <div class="panel" bind:this={panelEl}>
   <div class="panel-title">
     <span>
-      XML source{xmlLines.length > 0 ? ` · ${xmlLines.length} lines` : ""}
+      XML source{lineCount > 0 ? ` · ${lineCount} lines` : ""}
       {#if editDirty}<span class="dirty-mark" title="Unsaved edits">●</span>{/if}
     </span>
     <div class="title-actions">
@@ -175,8 +159,8 @@
     </div>
   </div>
 
-  {#if editMode}
-    <div class="edit-mode-wrap">
+  <div class="edit-mode-wrap">
+    {#if editMode}
       {#if applyError}
         <div class="apply-error" role="alert">
           <strong>Apply failed — your text is preserved.</strong>
@@ -189,29 +173,17 @@
           <button class="action" on:click={() => dispatch("undo-apply")}>Undo Apply</button>
         </div>
       {/if}
-      <div class="edit-host">
-        <XmlEditor
-          bind:this={xmlEditor}
-          initial={lastBaselineXml}
-          {theme}
-          on:change={onEditorChange}
-        />
-      </div>
+    {/if}
+    <div class="edit-host">
+      <XmlEditor
+        bind:this={xmlEditor}
+        initial={xmlSource}
+        readOnly={!editMode}
+        {theme}
+        on:change={onEditorChange}
+      />
     </div>
-  {:else}
-    <div class="xml" bind:this={xmlPane}>
-      {#each xmlLines as line, i}
-        <div
-          id={`xml-line-${i + 1}`}
-          class="xml-line"
-          class:hl={highlightedLine === i + 1}
-        >
-          <span class="ln">{i + 1}</span>
-          <span class="content">{line}</span>
-        </div>
-      {/each}
-    </div>
-  {/if}
+  </div>
 
   {#if errors.length > 0}
     <Resizer
@@ -236,7 +208,7 @@
           <li>
             <button
               type="button"
-              on:click={() => gotoLine(e.line)}
+              on:click={() => xmlEditor?.gotoLine(e.line)}
               title="Jump to line {e.line}"
             >
               <span class="pos">L{e.line}:{e.column}</span>
@@ -387,46 +359,6 @@
     background: var(--bg-hover);
   }
 
-  .xml {
-    overflow: auto;
-    padding: 0.25rem 0;
-    min-height: 0;
-  }
-  .xml-line {
-    display: grid;
-    grid-template-columns: 3.25rem 1fr;
-    gap: 0.35rem;
-    padding: 0 0.25rem;
-    white-space: pre;
-    line-height: 1.35;
-    /* The XML pane is non-virtualized — every line of the source is
-       rendered as its own grid div. A typical FB2 (Облачный атлас) has
-       7 000+ lines, and without these hints the browser reflows all of
-       them on every mousemove of the window resize handle. The actual
-       cost dwarfs the editor's contenteditable reflow.
-         - `content-visibility: auto` skips layout/paint for off-screen
-           lines until they scroll into view.
-         - `contain-intrinsic-size: auto 1.35em` reserves the right
-           placeholder height so the scrollbar geometry stays correct
-           without actually doing layout. */
-    content-visibility: auto;
-    contain-intrinsic-size: auto 1.35em;
-  }
-  .xml-line .ln {
-    color: var(--fg-muted-soft);
-    text-align: right;
-    user-select: none;
-    border-right: 1px solid var(--border);
-    padding-right: 0.35rem;
-  }
-  .xml-line.hl {
-    background: var(--highlight);
-    transition: background 0.4s ease-out;
-  }
-  .xml-line.hl .ln {
-    color: var(--warn-fg);
-    font-weight: 600;
-  }
 
   .errors {
     /* Default size when the user hasn't dragged the resizer. Inline `height`

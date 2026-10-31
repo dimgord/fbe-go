@@ -6,6 +6,46 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 114 — 2026-10-31 — XML pane: 78 s to 50 ms, and it follows the text → v3.19.0 [dev]
+
+User report: Validate took "ridiculously" long on an M5 Pro, and the XML pane and the text showed
+different places.
+
+**Measured first.** Go was innocent: parse 24 ms, writer 81, validate 41, verified parse 127. The real
+Wails bridge too: `UpdateDocument` 55 ms, `SerializeCurrent` 215, `ValidateCurrent` 159. Even the
+`validate()` handler was 225 ms. The whole cost was the first frame of the panel: **78,480 ms** in the
+real app. The read-only pane rendered one DOM element per line, 13,681 of them, each with
+`content-visibility`, and a scroll then cost 7.2 s. Playwright WebKit showed 0.7 s for the same DOM,
+which is why no earlier test saw it; only a timing probe inside the real `.app` found it.
+
+**Fix.** CodeMirror already virtualizes (17-38 lines in the DOM), so it is now the only XML view, in
+both modes: `XmlEditor` takes `readOnly`, flipped through a compartment, and the DOM list, its CSS
+and `gotoLine`'s highlight are gone. Measured in the real app on the same 13,681-line book: first
+frames 50 ms, jump in the XML 36 ms. Copying from the read-only pane still works, and errors go to
+their line. Since nothing heavy is left in the pane, `body.resizing` no longer hides `.xml`, which
+drops Rev 113's scroll save.
+
+**Follow.** The pane scrolls to the block being read, unless the XML has focus or unapplied edits.
+`xmlBlockLines(doc, xml)` pairs PM text blocks with block tags after `<body>` by order. Plain order
+was not enough: one `<text-author>` inside a preserved unknown element shifted 2,703 blocks of a real
+book, so the text corrects the pairing within a small window. Checked across all 26 sample books:
+190,245 of 190,258 blocks land on their line (the 13 are a title split over XML lines), 26 ms at worst.
+After an edit in the text the XML is a snapshot until the next Validate, so it can lag slightly.
+
+Verified in WebKit: text and XML side by side at 30%, 61% and 85%, by screenshot too; error click;
+read-only refuses typing; edit, dirty mark, Apply.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `readOnly`, `scrollToLine`, `hasFocus`.
+- `frontend/src/validation/ValidationPanel.svelte` — one editor; DOM list removed; `followLine`.
+- `frontend/src/tree/position.ts`, `position.test.ts` — `block`, `xmlBlockLines`.
+- `frontend/src/editor/Editor.svelte`, `frontend/src/App.svelte` — wiring; `.xml` resize rule removed.
+- `CLAUDE.md` — note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.18.0 → 3.19.0.
+
+---
+
 ## Rev 113 — 2026-10-31 — Resizing no longer throws the reader back to the start → v3.18.0 [dev]
 
 User report: after dragging the sidebar divider, the bar kept 29% and Chapter 10 while the screen

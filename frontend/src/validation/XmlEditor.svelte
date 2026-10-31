@@ -2,10 +2,9 @@
   /*
    * CodeMirror 6 wrapper for editing raw FB2 XML.
    *
-   * Mounted by ValidationPanel when the user clicks "Edit XML". The
-   * editor takes the current XML source as its initial doc, lets the
-   * user freely edit it, and exposes getXml() + a "dirty" event for
-   * the parent panel.
+   * The whole XML pane, read-only until the user clicks "Edit XML". It stays
+   * one CodeMirror in both modes because only CM6 virtualizes: a plain DOM
+   * list of a book's 13,000 lines took 78 s to render in WKWebView.
    *
    * Theme tracks the app's effective theme (light/dark) via the `theme`
    * prop; the CM6 instance is rebuilt when theme flips because CM6's
@@ -38,6 +37,7 @@
 
   /** "light" | "dark" — drives CM6 theme selection. */
   export let theme: "light" | "dark" = "light";
+  export let readOnly = true;
 
   const dispatch = createEventDispatcher<{
     /** Fired on every edit; payload is the current full document.
@@ -48,6 +48,7 @@
   let host: HTMLDivElement | undefined;
   let view: EditorView | undefined;
   const themeCompartment = new Compartment();
+  const readOnlyCompartment = new Compartment();
 
   function buildExtensions() {
     return [
@@ -65,6 +66,7 @@
         if (u.docChanged) dispatch("change", u.state.doc.toString());
       }),
       themeCompartment.of(theme === "dark" ? oneDark : []),
+      readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
     ];
   }
 
@@ -86,6 +88,18 @@
       scrollIntoView: true,
     });
     view.focus();
+  }
+
+  /** Bring a 1-based line to the top without moving the caret or taking focus. */
+  export function scrollToLine(n: number) {
+    if (!view || n < 1 || n > view.state.doc.lines) return;
+    view.dispatch({
+      effects: EditorView.scrollIntoView(view.state.doc.line(n).from, { y: "start" }),
+    });
+  }
+
+  export function hasFocus(): boolean {
+    return view?.hasFocus ?? false;
   }
 
   /** Replace the entire doc — used when the panel resets after an
@@ -120,6 +134,10 @@
     });
   }
 
+  $: if (view) {
+    view.dispatch({ effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(readOnly)) });
+  }
+
   onDestroy(() => {
     view?.destroy();
     view = undefined;
@@ -141,7 +159,7 @@
   }
   .xml-editor :global(.cm-editor) {
     height: 100%;
-    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.82rem;
   }
   .xml-editor :global(.cm-scroller) {

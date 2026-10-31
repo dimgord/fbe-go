@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fb2ToPMDoc } from "../editor/parse";
 import { buildOutline, findNodePos } from "./outline";
-import { positionAt } from "./position";
+import { positionAt, xmlBlockLines } from "./position";
 import type { Block, FictionBook, Section } from "../fb2/types";
 
 const para = (text: string): Block => ({ Paragraph: { Children: [{ Text: text }] } });
@@ -87,5 +87,47 @@ describe("positionAt", () => {
     expect(early).toBeLessThan(late);
     expect(positionAt(doc, doc.content.size).percent).toBe(100);
     expect(positionAt(doc, 0).percent).toBe(0);
+  });
+});
+
+describe("xmlBlockLines", () => {
+  const doc = fb2ToPMDoc({
+    Description: {},
+    Bodies: [{
+      Sections: [{
+        Title: title("Heading"),
+        Body: [para("it's first"), para("second"), para("third")],
+      }],
+    }],
+  } as unknown as FictionBook);
+
+  const xml = (extra: string[]) => [
+    "<FictionBook>",                       // 1
+    "<description><annotation><p>skip</p></annotation></description>", // 2
+    "<body>",                              // 3
+    "<section>",                           // 4
+    "<title><p>Heading</p></title>",       // 5
+    "<p>it&#39;s first</p>",               // 6
+    ...extra,
+    "<p>second</p>",
+    "<p>third</p>",
+    "</section>",
+    "</body>",
+    '<binary id="a"><p>nope</p></binary>',
+    "</FictionBook>",
+  ].join("\n");
+
+  it("pairs blocks with their lines, past the description", () => {
+    expect(xmlBlockLines(doc, xml([]))).toEqual([5, 6, 7, 8]);
+  });
+
+  // The book that exposed this: one <text-author> inside a preserved element shifted 2,703 blocks.
+  it("realigns on text after tags the document does not have as blocks", () => {
+    const extra = ["<unknown><p>inside raw</p><text-author>x</text-author></unknown>"];
+    expect(xmlBlockLines(doc, xml(extra))).toEqual([5, 6, 8, 9]);
+  });
+
+  it("copes with no body", () => {
+    expect(xmlBlockLines(doc, "<x/>")).toEqual([]);
   });
 });
