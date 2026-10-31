@@ -18,6 +18,9 @@ go build -o build/fbe ./cmd/fbe
 wails dev   -tags webkit2_41          # hot-reload dev mode   (webkit2_41 is Linux-only; no-op on macOS)
 wails build -tags webkit2_41          # production bundle → build/bin/
 
+# Taskfile: `task check` before a commit; `task deploy` installs locally (macOS /Applications, Linux ~/.local).
+# It builds with npm ci + `wails build -s`, so it leaves package-lock.json alone; plain `wails build` does not.
+
 # Go tests (hermetic)
 go test ./...
 
@@ -71,7 +74,17 @@ settings/ JSON persistence at OS-standard config dir
 speller/  Hunspell (CGo, future)
 ```
 
-**XSD validator** (`internal/fb2/xsd/`): `xsd.go` is the shared API, `xsd_helium.go` the only backend — pure-Go `github.com/lestrrat-go/helium/xsd`, always compiled in (no build tag, no CGo; the old `-tags xsd` + libxml2 path was removed in Rev 93 because `lestrrat-go/libxml2` does not compile against libxml2 ≥ 2.14 and is unmaintained). `SchemaFiles` is an `embed.FS` of the four bundled `.xsd` files; the compiler resolves `FictionBook.xsd`'s `xs:import`s against it via `Compiler.FS`. helium reports a line (no column) and the element name per error; `positionOf` finds the column of `<name` on that line, and messages keep the libxml2 shape `Element '{ns}name': …` because `MergeXSDAndUnknown` parses the element name out of them (the frontend only displays them). helium may describe a violation from the other side than libxml2 did (e.g. "`<poem>`: missing `<stanza>`" on the poem line instead of "`<text-author>` not expected" one line below) — same error count, different anchor.
+**XSD validator** (`internal/fb2/xsd/`): `xsd.go` is the shared API, `xsd_helium.go` the only backend — pure-Go `github.com/lestrrat-go/helium/xsd`, always compiled in (no build tag, no CGo; the old `-tags xsd` + libxml2 path was removed in Rev 93 because `lestrrat-go/libxml2` does not compile against libxml2 ≥ 2.14 and is unmaintained). `SchemaFiles` is an `embed.FS` of the four bundled `.xsd` files; the compiler resolves `FictionBook.xsd`'s `xs:import`s against it via `Compiler.FS`. helium reports a line (no column) and the element name per error; `positionOf` finds the column of `<name` on that line, and `ValidationError.Element` carries the local name, which `MergeXSDAndUnknown` compares; messages are display text only. helium may describe a violation from the other side than libxml2 did (e.g. "`<poem>`: missing `<stanza>`" on the poem line instead of "`<text-author>` not expected" one line below) — same error count, different anchor.
+
+**Large lists:** never render a book-sized list as DOM; real WKWebView took 78 s for 13,681 lines where Playwright WebKit took 0.7 s, so measure performance inside the real `.app`. The XML pane is CodeMirror in both modes for this reason.
+
+**Go gateway:** frontend code reaches Go only through `runtime/backend.ts` (`backend()`, null without the bridge); never import `wailsjs` elsewhere.
+
+**Session:** `internal/fb2/session.Session` owns the open document; every Wails call runs on its own goroutine, so never add unguarded mutable state to `App`. A stored document is immutable: replace it, never edit it in place. Settings go through `settings.Store.Update`, which is one locked read-modify-write.
+
+**Apply guard:** `internal/fb2/roundtrip.ParseVerified` is the data-loss check behind "Edit XML"; any path that takes hand-edited XML goes through it, not `parser.Parse`.
+
+**File writes:** anything that replaces a user file goes through `fsutil.WriteAtomic`, never `os.Create`, which truncates first.
 
 **Lossless fallback invariant:** `doc.Block` and `doc.Inline` each carry a `Raw *RawElement` field; `Block.UnmarshalXML` / `unmarshalInlineContent` route unknown elements there instead of calling `d.Skip()`. Writer round-trips `Raw` verbatim, preserving attributes and nested content. Do not reintroduce silent skips — they caused a Rev-5 regression where an `<empty-line>` in an unexpected position was dropped. When adding new typed fields, make sure the dispatcher still falls through to `Raw` for unknown elements.
 
@@ -123,7 +136,7 @@ The corpus test (`-tags corpus`) reports two key metrics:
 
 ## Platform notes
 
-- **Wails v2.9.2–v2.12.0 macOS file-dialog crash:** never pass multi-dot patterns like `*.fb2.zip` to `OpenFileDialog` — the native code feeds each token to `[UTType typeWithFilenameExtension:]`, `fb2.zip` returns nil, and `[NSArray addObject:nil]` throws `NSInvalidArgumentException` from Obj-C (unrecoverable by Go `recover()`). Use `*.fb2` only; users open archives via "All files". Re-verified on v2.12.0 (Rev 25): the filter block in `WailsContext.m` (`USE_NEW_FILTERS` path) is byte-identical to v2.9.2 — no nil-guard added upstream.
+- **Wails v2.9.2–v2.16.0 macOS file-dialog crash:** never pass multi-dot patterns like `*.fb2.zip` to `OpenFileDialog` — the native code feeds each token to `[UTType typeWithFilenameExtension:]`, `fb2.zip` returns nil, and `[NSArray addObject:nil]` throws `NSInvalidArgumentException` from Obj-C (unrecoverable by Go `recover()`). Use `*.fb2` only; users open archives via "All files". Re-verified on v2.12.0 (Rev 25) and v2.16.0 (Rev 111): the filter block in `WailsContext.m` (`USE_NEW_FILTERS` path) is byte-identical to v2.9.2 — no nil-guard added upstream.
 - **Linux build deps:** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`.
 - **Linux CGo tag:** Wails v2's `#cgo` directives default to `webkit2gtk-4.0` (libsoup 2.x, missing from modern distros). The `webkit2_41` build tag flips every affected file to `webkit2gtk-4.1`. **Always pass `-tags webkit2_41` on Linux** — `wails dev -tags webkit2_41`, `wails build -tags webkit2_41`. The tag is a no-op on macOS (`//go:build linux` gates the affected files), so always-on is safe.
 - **NixOS / Nix:** `flake.nix` at the repo root provides a `devShells.default` for all four systems (`{x86_64,aarch64}-{linux,darwin}`). `nix develop` drops you into a shell with `go_1_26`, `nodejs_22`, and — on Linux only — `pkg-config`, `gtk3`, `webkitgtk_4_1`, `gsettings-desktop-schemas`. The Linux `shellHook` also exports `XDG_DATA_DIRS` pointing at the Nix-store GSettings schema directories — without this, GTK's file-chooser native dialog crashes at runtime with *"Settings schema 'org.gtk.Settings.FileChooser' is not installed"* (the binary builds fine, SIGTRAP only fires on Open/Save click). Wails CLI auto-installs into `$GOPATH/bin` on first entry. Pinned against `nixpkgs-unstable` via `flake.lock`. When bumping the Wails library version, consider whether to also `nix flake update` to refresh pinned nixpkgs.

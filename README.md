@@ -36,6 +36,10 @@ Original FBE is Windows-only (C++/WTL + embedded MSHTML + MSXML). This project r
   per document `<lang>`.
 - **Auto-update notify:** in-app banner surfaces newer GitHub
   Releases; one-click opens the Release page in the OS browser.
+- **Find & replace:** case, whole-word and regex modes; recent searches kept between sessions
+  (↓ in the find box).
+- **Position indicator:** the current chapter path and percent under the text, with the chapter
+  highlighted in the outline.
 - **HTML export:** Go text/template renderer (`internal/fb2/export/html`).
 - **XSD validation:** read-only XML-source panel with clickable
   line-highlighted errors; pure-Go (helium), always built in.

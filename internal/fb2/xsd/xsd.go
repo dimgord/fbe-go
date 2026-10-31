@@ -11,6 +11,7 @@ import (
 type ValidationError struct {
 	Line    int    `json:"line"`
 	Column  int    `json:"column"`
+	Element string `json:"element"` // local name, "" when the error names no element
 	Message string `json:"message"`
 }
 

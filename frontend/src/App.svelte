@@ -7,7 +7,13 @@
   import ValidationPanel from "./validation/ValidationPanel.svelte";
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
+  import { backend } from "./runtime/backend";
+  import { descriptionSnapshot } from "./document/dirty";
+  import { basename, dirname } from "./lib/path";
   import SearchBar from "./editor/search/SearchBar.svelte";
+  import Resizer from "./ui/Resizer.svelte";
+  import PositionBar from "./tree/PositionBar.svelte";
+  import { blockAtLine, xmlBlockLines, type BookPosition } from "./tree/position";
   import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
   import UpdateBanner from "./updates/UpdateBanner.svelte";
   import type { updates as UpdatesNS } from "../wailsjs/go/models";
@@ -19,11 +25,22 @@
 
   type View = "body" | "description";
   let view: View = "body";
+  let position: BookPosition | null = null;
+  /** XML line per text block, for the panel to follow the reader. */
+  let blockLines: number[] = [];
 
   let fb: FictionBook | null = null;
   let filename = "(untitled)";
   let currentPath = "";
   let status = "";
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** A transient message. A newer one cancels the older one's timer, so it is not cut short. */
+  function showStatus(message: string, ms: number): void {
+    clearTimeout(statusTimer);
+    status = message;
+    statusTimer = setTimeout(() => (status = ""), ms);
+  }
   let error = "";
 
   // Dirty-tracking is hybrid because the body editor and the description
@@ -38,132 +55,23 @@
   //     baseline captured at mount / save.
   //   - Description has no PM involvement; both clean and current
   //     readings come straight from `fb.Description`. The parser /
-  //     defaulters / mutations agree on the shape (after normalizeFb
-  //     pre-warm), so a canonicalized JSON snapshot of just the
-  //     Description sub-tree is reliable.
+  //     defaulters / mutations differ only in empty fields, which the
+  //     canonical snapshot ignores (see document/dirty.ts).
   //
-  // isDirty = bodyDirty (from PM) OR descSnapshot mismatch. Cleared on
+  // isDirty = bodyDirty (from PM) OR description snapshot mismatch. Cleared on
   // open / save / sample fallback.
   let bodyDirty = false;
   let cleanDescSnapshot: string | null = null;
 
-  /** Description form subforms (DescriptionPanel, TitleInfoForm,
-   *  AuthorField, CoverpageField, PublishInfoForm, DocumentInfoForm,
-   *  CustomInfoForm) carry `$: if (!info.X) info.X = …` initializers
-   *  that inject empty defaults the first time each is mounted.
-   *  Without this eager normalization, the clean snapshot captured on
-   *  the body view doesn't yet carry those defaults — so a single visit
-   *  to the description tab mutates `fb`, and the snapshot comparison
-   *  wrongly flags the doc as dirty even after the user undoes /
-   *  retypes their edits back to the original text.
-   *
-   *  Apply every defaulter here so the snapshot is taken in the same
-   *  shape that any future description-form mount will produce. New
-   *  defaults added to subforms must be mirrored here. */
-  function normalizeFb(target: FictionBook | null): void {
-    if (!target) return;
-    if (!target.Description.PublishInfo) target.Description.PublishInfo = {};
-    if (!target.Description.CustomInfo)  target.Description.CustomInfo  = [];
-
-    for (const info of [target.Description.TitleInfo, target.Description.SrcTitleInfo]) {
-      if (!info) continue;
-      if (!info.Translators) info.Translators = [];
-      if (!info.Sequences)   info.Sequences   = [];
-      if (!info.Annotation)  info.Annotation  = { Children: [] };
-      // NEVER inject an empty Coverpage here. FB2 XSD requires `coverpage`
-      // to have at least one `<image>` child — an empty `<coverpage></coverpage>`
-      // fails validation with the cryptic "Missing child element(s). Expected
-      // is ( image )." message that points at an unrelated line. Until Rev 89
-      // we injected `{ Images: [] }` to keep the dirty-snapshot baseline
-      // matching CoverpageField's mount-time defaulter, but CoverpageField has
-      // since been changed to materialize Coverpage only when the user clicks
-      // "+ add cover image" — so this defaulter is no longer needed AND it
-      // was actively breaking XSD validation on every blank/freshly-opened
-      // document. Same logic applies for any future field that's only XSD-
-      // valid when populated: prefer letting the form leave it absent.
-      normalizeAuthors(info.Authors);
-      normalizeAuthors(info.Translators);
-    }
-
-    if (target.Description.DocumentInfo) {
-      if (!target.Description.DocumentInfo.SrcURL) target.Description.DocumentInfo.SrcURL = [];
-      normalizeAuthors(target.Description.DocumentInfo.Authors);
-      normalizeAuthors(target.Description.DocumentInfo.Publishers);
-    }
-
-    if (target.Description.PublishInfo) {
-      if (!target.Description.PublishInfo.Sequences) target.Description.PublishInfo.Sequences = [];
-    }
-  }
-
-  /** AuthorField.svelte's `$: if (!author.Email) author.Email = []` and
-   *  matching HomePage init. Applied to every author / translator /
-   *  publisher slot. */
-  function normalizeAuthors(list: import("./fb2/types").Author[] | null | undefined): void {
-    if (!list) return;
-    for (const a of list) {
-      if (!a.Email)    a.Email    = [];
-      if (!a.HomePage) a.HomePage = [];
-    }
-  }
-
-  /** Canonical content-only stringification.
-   *
-   *  The Go parser and the TS PM-serializer build identically-shaped
-   *  FictionBook objects with two systematic differences:
-   *    1. Key insertion order differs (Go's encoding/json uses struct
-   *       declaration order; pmDocToFB2 builds fields in TS construction
-   *       order).
-   *    2. Go emits empty/null fields ("Lang":"", "Image":null,
-   *       "Epigraph":null) for every absent value because the FictionBook
-   *       struct's fields aren't all marked `omitempty`. The PM
-   *       serializer simply omits those keys.
-   *
-   *  Both differences would make plain JSON.stringify diverge byte-for-
-   *  byte even when the user hasn't touched anything. We canonicalize:
-   *  sort keys alphabetically, and treat null / empty string / empty
-   *  array as semantically absent (drop them). The result is purely
-   *  content-driven — independent of which serializer produced the
-   *  object. */
-  function canonicalize(v: unknown): unknown {
-    if (v === null || v === undefined) return undefined;
-    if (typeof v === "string") return v === "" ? undefined : v;
-    if (Array.isArray(v)) {
-      const out = v.map(canonicalize).filter((x) => x !== undefined);
-      return out.length === 0 ? undefined : out;
-    }
-    if (typeof v === "object") {
-      const src = v as Record<string, unknown>;
-      const out: Record<string, unknown> = {};
-      let kept = 0;
-      for (const k of Object.keys(src).sort()) {
-        const cv = canonicalize(src[k]);
-        if (cv !== undefined) { out[k] = cv; kept++; }
-      }
-      return kept === 0 ? undefined : out;
-    }
-    return v;
-  }
-  function stableStringify(value: unknown): string {
-    return JSON.stringify(canonicalize(value)) ?? "";
-  }
-  function descSnapshot(): string {
-    return stableStringify(fb?.Description);
-  }
   function isCurrentlyDirty(): boolean {
     if (bodyDirty) return true;
     if (xmlDirty) return true;
     if (cleanDescSnapshot === null) return false;
-    return descSnapshot() !== cleanDescSnapshot;
+    return descriptionSnapshot(fb) !== cleanDescSnapshot;
   }
-  /** Capture the current Description serialization as the clean baseline
-   *  and reset bodyDirty. Called after open / save. Eagerly applies the
-   *  description-form defaults via `normalizeFb` so the clean side
-   *  carries the same shape the form initializers will produce on first
-   *  mount. */
+  /** The current description becomes the clean baseline, and body edits count as saved. */
   function captureCleanSnapshot() {
-    normalizeFb(fb);
-    cleanDescSnapshot = descSnapshot();
+    cleanDescSnapshot = descriptionSnapshot(fb);
     bodyDirty = false;
   }
   function onEditorDirty(e: CustomEvent<boolean>) {
@@ -193,13 +101,19 @@
   // same size; only an internal grid-column width changes — so the
   // onWindowResize debounce path below never catches these. This reactive
   // mirror catches them at the source: draggingOutline/draggingPanel are
-  // set in startDrag* and cleared in endDrag* on actual pointerdown/up,
+  // bound to the Resizers, which set them on actual pointerdown/up,
   // which is as close to "while mouse is held" as the browser can give us.
-  $: if (typeof document !== "undefined") {
-    const dragging = draggingOutline || draggingPanel;
-    document.body.classList.toggle("resizing", dragging);
+  $: if (typeof document !== "undefined") setResizing(draggingOutline || draggingPanel);
+
+  /** Hide the heavy editor for a resize. Hiding empties its scroller, so the place is kept. */
+  function setResizing(on: boolean): void {
+    if (on === document.body.classList.contains("resizing")) return;
+    if (on) editor?.holdPosition();
+    document.body.classList.toggle("resizing", on);
+    if (!on) editor?.releasePosition();
   }
 
+  $: blockLines = editorView && xmlSource ? xmlBlockLines(editorView.state.doc, xmlSource) : [];
 
   // --- XML editing (raw FB2 source pane) ---
   // editMode is shared between the body-view and description-view
@@ -249,7 +163,7 @@
   }
   async function onApplyXml(e: CustomEvent<{ xml: string }>) {
     xmlApplyError = "";
-    const App = await wailsApp();
+    const App = backend();
     if (!App) {
       xmlApplyError = "Wails bindings unavailable";
       return;
@@ -269,7 +183,6 @@
       xmlUndoXml = xmlSource;
       // Wails generates doc.FictionBook structurally identical to our FB.
       fb = parsed;
-      // @ts-expect-error — Wails-generated type wraps doc.FictionBook with XMLName/convertValues.
       await App.UpdateDocument(fb);
       try { xmlSource = await App.SerializeCurrent(); } catch { /* leave as-is */ }
       try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* leave as-is */ }
@@ -279,8 +192,7 @@
       // races with the panel's re-render, an explicit set here pins
       // the empty state once the success path is committed.
       xmlApplyError = "";
-      status = "XML applied — Undo Apply is available in the panel";
-      setTimeout(() => (status = ""), 5000);
+      showStatus("XML applied — Undo Apply is available in the panel", 5000);
     } catch (err) {
       xmlApplyError = (err as Error).message || String(err);
     }
@@ -294,15 +206,13 @@
     xmlSource = xmlUndoXml;
     xmlUndoFb = null;
     xmlUndoXml = "";
-    const App = await wailsApp();
+    const App = backend();
     if (App) {
-      // @ts-expect-error — Wails-generated type wraps doc.FictionBook with XMLName/convertValues.
       try { await App.UpdateDocument(fb); } catch { /* ignore */ }
       try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* ignore */ }
     }
     captureCleanSnapshot();
-    status = "Apply undone";
-    setTimeout(() => (status = ""), 3000);
+    showStatus("Apply undone", 3000);
   }
 
   let editor: Editor | undefined = undefined;
@@ -424,7 +334,7 @@
   // and validation-pane resize. Silent on error — persistence is a
   // convenience, not correctness.
   async function patchSettings(mutate: (s: any) => void) {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try {
       const s = await App.LoadSettings();
@@ -440,133 +350,29 @@
     void patchSettings((s) => { s.lastView = v; });
   }
 
-  function onPanelResize(e: CustomEvent<{ height: number }>) {
-    const h = Math.max(0, Math.round(e.detail.height));
+  // --- Pane resizers. The validation panel's parent depends on the view. ---
+  const DEFAULT_OUTLINE_WIDTH = 260;
+  const panelParentWidth = () =>
+    (view === "body" ? mainEl : descWrapEl)?.getBoundingClientRect().width ?? 0;
+
+  const outlineResizer = {
+    current: () => outlineWidth ?? DEFAULT_OUTLINE_WIDTH,
+    bounds: () => ({ min: OUTLINE_MIN, max: OUTLINE_MAX }),
+    fromPointer: (e: PointerEvent) => e.clientX - (mainEl?.getBoundingClientRect().left ?? 0),
+  };
+  const panelResizer = {
+    current: () => panelWidth ?? Math.round(panelParentWidth() * 0.3),
+    // Capped so the editor surface cannot collapse to nothing.
+    bounds: () => ({ min: PANEL_MIN, max: panelParentWidth() * 0.7 }),
+    fromPointer: (e: PointerEvent) =>
+      ((view === "body" ? mainEl : descWrapEl)?.getBoundingClientRect().right ?? 0) - e.clientX,
+  };
+
+  function persistPane(key: "outlineWidth" | "validationWidth" | "validationErrorsHeight", size: number) {
     void patchSettings((s) => {
       if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-      s.panes.validationErrorsHeight = h;
+      s.panes[key] = Math.round(size);
     });
-  }
-
-  function clamp(v: number, lo: number, hi: number) {
-    return Math.max(lo, Math.min(hi, v));
-  }
-
-  // --- Outline sidebar resizer (left edge, drags right-ward) ---
-  function startDragOutline(e: PointerEvent) {
-    e.preventDefault();
-    draggingOutline = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-  }
-  function onDragOutline(e: PointerEvent) {
-    if (!draggingOutline || !mainEl) return;
-    const rect = mainEl.getBoundingClientRect();
-    outlineWidth = clamp(e.clientX - rect.left, OUTLINE_MIN, OUTLINE_MAX);
-  }
-  function endDragOutline(e: PointerEvent) {
-    if (!draggingOutline) return;
-    draggingOutline = false;
-    const el = e.currentTarget as HTMLElement;
-    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    if (outlineWidth !== null) {
-      const w = Math.round(outlineWidth);
-      void patchSettings((s) => {
-        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-        s.panes.outlineWidth = w;
-      });
-    }
-  }
-
-  // --- Validation-panel resizer (drags toward left = panel wider,
-  //     toward right = panel narrower) ---
-  function startDragPanel(e: PointerEvent) {
-    e.preventDefault();
-    draggingPanel = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-  }
-  function onDragPanel(e: PointerEvent) {
-    if (!draggingPanel) return;
-    // In body view mainEl is the parent; in description view descWrapEl is.
-    const parent = (view === "body" ? mainEl : descWrapEl) ?? undefined;
-    if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    // Cap max at 70% of parent so the editor surface can't collapse to
-    // zero. Min keeps the errors list legible.
-    panelWidth = clamp(rect.right - e.clientX, PANEL_MIN, rect.width * 0.7);
-  }
-  function endDragPanel(e: PointerEvent) {
-    if (!draggingPanel) return;
-    draggingPanel = false;
-    const el = e.currentTarget as HTMLElement;
-    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    if (panelWidth !== null) {
-      const w = Math.round(panelWidth);
-      void patchSettings((s) => {
-        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-        s.panes.validationWidth = w;
-      });
-    }
-  }
-
-  function onResizerKeyH(
-    e: KeyboardEvent,
-    get: () => number,
-    set: (v: number) => void,
-    min: number,
-    max: number,
-    persist: (w: number) => void,
-  ) {
-    const step = e.shiftKey ? 40 : 10;
-    let changed = false;
-    if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      set(clamp(get() - step, min, max));
-      changed = true;
-    } else if (e.key === "ArrowRight") {
-      e.preventDefault();
-      set(clamp(get() + step, min, max));
-      changed = true;
-    }
-    if (changed) persist(Math.round(get()));
-  }
-
-  function onOutlineResizerKey(e: KeyboardEvent) {
-    onResizerKeyH(
-      e,
-      () => outlineWidth ?? 260,
-      (v) => (outlineWidth = v),
-      OUTLINE_MIN,
-      OUTLINE_MAX,
-      (w) => patchSettings((s) => {
-        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-        s.panes.outlineWidth = w;
-      }),
-    );
-  }
-
-  function onPanelResizerKey(e: KeyboardEvent) {
-    const parent = view === "body" ? mainEl : descWrapEl;
-    if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    onResizerKeyH(
-      e,
-      () => panelWidth ?? Math.round(rect.width * 0.3),
-      (v) => (panelWidth = v),
-      PANEL_MIN,
-      rect.width * 0.7,
-      (w) => patchSettings((s) => {
-        if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-        s.panes.validationWidth = w;
-      }),
-    );
   }
 
   function themeIcon(t: Theme): string {
@@ -577,12 +383,8 @@
     }
   }
 
-  async function wailsApp() {
-    return await import("../wailsjs/go/main/App").catch(() => null);
-  }
-
   async function refreshRecent() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try { recentFiles = (await App.RecentFiles()) ?? []; } catch { /* ignore */ }
   }
@@ -594,7 +396,7 @@
     error = ""; status = "";
     recentMenuOpen = false;
     try {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
       // Guard the in-memory replacement: if the current document has
       // unsaved edits, prompt before discarding them. The native Save /
@@ -612,7 +414,7 @@
       const path = preset ?? await App.PickFB2ToOpen();
       if (!path) return;
       console.log(`[fbe] opening ${path}`);
-      status = `Opening ${path.split(/[\\/]/).pop()}…`;
+      status = `Opening ${basename(path)}…`;
       const parsed: FictionBook = await App.OpenFile(path);
       console.log(
         `[fbe] parsed: ${parsed.Bodies?.length ?? 0} bodies, ` +
@@ -624,9 +426,8 @@
       await new Promise((r) => setTimeout(r, 0));
       fb = parsed;
       currentPath = path;
-      filename = path.split(/[\\/]/).pop() ?? path;
-      status = `Opened ${filename}`;
-      setTimeout(() => (status = ""), 3000);
+      filename = basename(path);
+      showStatus(`Opened ${filename}`, 3000);
       captureCleanSnapshot();
       void refreshRecent();
     } catch (e) {
@@ -637,7 +438,7 @@
         // Recent-file pointed at something that no longer exists (or is
         // unreadable) — purge it so the menu doesn't keep offering a dead
         // entry.
-        const App = await wailsApp();
+        const App = backend();
         try { await App?.RemoveFromRecent(preset); } catch { /* ignore */ }
         void refreshRecent();
       } else {
@@ -649,13 +450,18 @@
     }
   }
 
+  /** The document as it stands now: the live editor in body view, `fb` otherwise (the switch away
+   *  from body flushed into it, and the description forms edit it directly). */
+  function liveDoc(): FictionBook | null {
+    return (view === "body" && editor) ? editor.currentFB() : fb;
+  }
+
   async function save(saveAs: boolean) {
     error = ""; status = "";
     try {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) throw new Error("Wails bindings not available — save works only in the desktop app.");
-      if (!editor) throw new Error("Editor not ready.");
-      const current = editor.currentFB();
+      const current = liveDoc();
       if (!current) throw new Error("No document loaded.");
 
       let path = currentPath;
@@ -664,17 +470,15 @@
         path = await App.PickFB2ToSave(suggested);
         if (!path) return;
       }
-      // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
       await App.UpdateDocument(current);
       await App.SaveFile(path);
       currentPath = path;
-      filename = path.split(/[\\/]/).pop() ?? path;
-      status = `Saved ${filename}`;
+      filename = basename(path);
+      showStatus(`Saved ${filename}`, 3000);
       captureCleanSnapshot();
       // Re-baseline PM's undo stack so subsequent undos that return to
       // this just-saved point are recognised as clean.
       editor?.markSaved();
-      setTimeout(() => (status = ""), 3000);
       void refreshRecent();
     } catch (e) {
       error = (e as Error).message;
@@ -684,20 +488,17 @@
   async function exportHTML() {
     error = ""; status = "";
     try {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) throw new Error("Wails bindings not available.");
-      if (!editor) throw new Error("Editor not ready.");
-      const current = editor.currentFB();
+      const current = liveDoc();
       if (current) {
-        // @ts-expect-error
         await App.UpdateDocument(current);
       }
       const suggested = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
       const path = await App.PickHTMLToSave(suggested);
       if (!path) return;
       await App.ExportHTML(path);
-      status = `Exported ${path.split(/[\\/]/).pop() ?? path}`;
-      setTimeout(() => (status = ""), 3000);
+      showStatus(`Exported ${basename(path)}`, 3000);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -706,15 +507,14 @@
   async function validate() {
     error = ""; status = "";
     try {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) throw new Error("Wails bindings not available.");
       if (!fb) throw new Error("No document loaded.");
 
       // Push the latest editor state to Go (if we're in body view) so the
       // serialized XML and the validation result reflect unsaved edits.
-      const current = (view === "body" && editor) ? editor.currentFB() : fb;
+      const current = liveDoc();
       if (current) {
-        // @ts-expect-error — Wails-generated type uses doc.FictionBook shape.
         await App.UpdateDocument(current);
       }
 
@@ -727,10 +527,9 @@
       validationErrors = errs ?? [];
       showPanel = true;
 
-      status = errs && errs.length > 0
+      showStatus(errs && errs.length > 0
         ? `XSD: ${errs.length} error(s)`
-        : "XSD valid ✓";
-      setTimeout(() => (status = ""), 4000);
+        : "XSD valid ✓", 4000);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -790,12 +589,10 @@
   // so debounced silence is the next best proxy.
   let resizeTimer: number | undefined;
   function onWindowResize() {
-    if (!document.body.classList.contains("resizing")) {
-      document.body.classList.add("resizing");
-    }
+    setResizing(true);
     if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(() => {
-      document.body.classList.remove("resizing");
+      setResizing(false);
       resizeTimer = undefined;
     }, 150);
   }
@@ -821,13 +618,12 @@
     let launchReady: (p: string) => void = () => {};
     const launchFile = new Promise<string>((r) => (launchReady = r));
     void (async () => {
-      const rt = await import("../wailsjs/runtime/runtime").catch(() => null);
-      const App = await wailsApp();
-      if (!rt || !App) { launchReady(""); return; }
-      const offCheck = rt.EventsOn("app:check-dirty", () => {
-        rt.EventsEmit("app:dirty-response", isCurrentlyDirty());
+      const App = backend();
+      if (!App) { launchReady(""); return; }
+      const offCheck = App.on("app:check-dirty", () => {
+        App.emit("app:dirty-response", isCurrentlyDirty());
       });
-      const offSave = rt.EventsOn("app:save-and-quit", async () => {
+      const offSave = App.on("app:save-and-quit", async () => {
         try {
           await save(false);
         } catch (e) {
@@ -843,13 +639,13 @@
       // status text, and recent-files update all behave identically to
       // a regular File→Open. Without this listener the drop would be
       // silently swallowed (WebView drop is disabled in main.go).
-      const offDrop = rt.EventsOn("app:file-drop", (path: string) => {
+      const offDrop = App.on("app:file-drop", (path: string) => {
         if (typeof path === "string" && path) void openFile(path);
       });
       if (typeof offCheck === "function") detachListeners.push(offCheck);
       if (typeof offSave === "function") detachListeners.push(offSave);
       // OS "open this file" (double-click / Open With) while the app is already running.
-      const offOpen = rt.EventsOn("app:open-file", (path: string) => {
+      const offOpen = App.on("app:open-file", (path: string) => {
         if (typeof path === "string" && path) void openFile(path);
       });
       if (typeof offDrop === "function") detachListeners.push(offDrop);
@@ -868,7 +664,7 @@
     // errors-height. Settings-read errors are swallowed — we'd rather use
     // in-memory defaults than block mount.
     void (async () => {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) return;
       try {
         const s = await App.LoadSettings();
@@ -910,7 +706,7 @@
     // first paint. A network flake just means "no banner this launch",
     // which is the right trade-off — the banner's job is to be polite.
     const updateTimer = window.setTimeout(async () => {
-      const App = await wailsApp();
+      const App = backend();
       if (!App) return;
       try {
         const info = await App.CheckForUpdate();
@@ -933,7 +729,7 @@
         if (fb) return;
         // open failed (error is shown) — fall through to the sample
       }
-      const App = await wailsApp();
+      const App = backend();
       if (App) {
         try {
           const current = await App.CurrentDocument();
@@ -985,18 +781,18 @@
                 on:click={() => openFile(path)}
                 title={path}
               >
-                <span class="basename">{path.split(/[\\/]/).pop() ?? path}</span>
-                <span class="dir">{path.slice(0, -((path.split(/[\\/]/).pop() ?? path).length))}</span>
+                <span class="basename">{basename(path)}</span>
+                <span class="dir">{dirname(path)}</span>
               </button>
             </li>
           {/each}
         </ul>
       {/if}
     </div>
-    <button on:click={() => save(false)} disabled={!editor}>Save</button>
-    <button on:click={() => save(true)} disabled={!editor}>Save As…</button>
+    <button on:click={() => save(false)} disabled={!fb}>Save</button>
+    <button on:click={() => save(true)} disabled={!fb}>Save As…</button>
     <button on:click={validate} disabled={!fb}>Validate</button>
-    <button on:click={exportHTML} disabled={!editor}>Export HTML…</button>
+    <button on:click={exportHTML} disabled={!fb}>Export HTML…</button>
     <button on:click={() => (showSettings = true)} title="Settings" aria-label="Open settings">⚙</button>
     <button on:click={() => (showHelp = true)} title="Keyboard shortcuts and about">Help</button>
     <button
@@ -1023,7 +819,7 @@
   </header>
 
   {#if view === "body"}
-    <Toolbar {editor} on:openBinaries={() => (showBinaries = true)} />
+    <Toolbar {editor} {hotkeys} on:openBinaries={() => (showBinaries = true)} />
     {#if searchOpen}
       <SearchBar
         view={editorView}
@@ -1037,42 +833,30 @@
       style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}`}
     >
       <aside>
-        <DocumentTree {fb} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
+        <DocumentTree {fb} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
-      <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-      <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-      <div
-        class="v-resizer"
-        class:dragging={draggingOutline}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize outline sidebar"
-        tabindex="0"
-        on:pointerdown={startDragOutline}
-        on:pointermove={onDragOutline}
-        on:pointerup={endDragOutline}
-        on:pointercancel={endDragOutline}
-        on:keydown={onOutlineResizerKey}
-      ></div>
-      <section><Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} /></section>
+      <Resizer
+        label="Resize outline sidebar"
+        {...outlineResizer}
+        bind:dragging={draggingOutline}
+        on:change={(e) => (outlineWidth = e.detail)}
+        on:commit={(e) => persistPane("outlineWidth", e.detail)}
+      />
+      <section>
+        <Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} on:position={(e) => (position = e.detail)} />
+        <PositionBar {position} />
+      </section>
       {#if showPanel}
-        <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <div
-          class="v-resizer"
-          class:dragging={draggingPanel}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize validation panel"
-          tabindex="0"
-          on:pointerdown={startDragPanel}
-          on:pointermove={onDragPanel}
-          on:pointerup={endDragPanel}
-          on:pointercancel={endDragPanel}
-          on:keydown={onPanelResizerKey}
-        ></div>
+        <Resizer
+          label="Resize validation panel"
+          {...panelResizer}
+          bind:dragging={draggingPanel}
+          on:change={(e) => (panelWidth = e.detail)}
+          on:commit={(e) => persistPane("validationWidth", e.detail)}
+        />
         <ValidationPanel
           {xmlSource}
+          followLine={position ? blockLines[position.block] ?? null : null}
           errors={validationErrors}
           {initialErrorsHeight}
           theme={effectiveTheme}
@@ -1080,10 +864,11 @@
           canUndoApply={xmlUndoFb !== null}
           bind:editMode={xmlEditMode}
           on:close={onPanelClose}
-          on:resize={onPanelResize}
+          on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
           on:apply={onApplyXml}
           on:undo-apply={onUndoApplyXml}
           on:xml-dirty={onXmlDirty}
+          on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
         />
       {/if}
     </main>
@@ -1097,23 +882,16 @@
     >
       <DescriptionPanel bind:fb />
       {#if showPanel}
-        <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <div
-          class="v-resizer"
-          class:dragging={draggingPanel}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize validation panel"
-          tabindex="0"
-          on:pointerdown={startDragPanel}
-          on:pointermove={onDragPanel}
-          on:pointerup={endDragPanel}
-          on:pointercancel={endDragPanel}
-          on:keydown={onPanelResizerKey}
-        ></div>
+        <Resizer
+          label="Resize validation panel"
+          {...panelResizer}
+          bind:dragging={draggingPanel}
+          on:change={(e) => (panelWidth = e.detail)}
+          on:commit={(e) => persistPane("validationWidth", e.detail)}
+        />
         <ValidationPanel
           {xmlSource}
+          followLine={position ? blockLines[position.block] ?? null : null}
           errors={validationErrors}
           {initialErrorsHeight}
           theme={effectiveTheme}
@@ -1121,10 +899,11 @@
           canUndoApply={xmlUndoFb !== null}
           bind:editMode={xmlEditMode}
           on:close={onPanelClose}
-          on:resize={onPanelResize}
+          on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
           on:apply={onApplyXml}
           on:undo-apply={onUndoApplyXml}
           on:xml-dirty={onXmlDirty}
+          on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
         />
       {/if}
     </div>
@@ -1153,8 +932,7 @@
      `:global()` modifier. The two-modifier form silently scopes the
      `.X` part to the component, which then never matches the
      globally-mounted ProseMirror / XML-line divs. */
-  :global(body.resizing .ProseMirror),
-  :global(body.resizing .xml) {
+  :global(body.resizing .ProseMirror) {
     display: none !important;
   }
 
@@ -1167,6 +945,8 @@
     color-scheme: light;
     --bg-app:          #fafaf7;
     --bg-surface:      #ffffff;   /* editor paper */
+    --font-mono: "SF Mono", Menlo, Consolas, monospace;
+    --font-ui: -apple-system, "Segoe UI", sans-serif;
     --bg-chrome:       #f1f1ec;   /* header, panel-title, toolbar */
     --bg-sidebar:      #f5f5f0;
     --bg-card:         #fffdf8;   /* dialogs, menus */
@@ -1265,7 +1045,7 @@
     display: grid;
     grid-template-rows: 2.5rem auto 1fr;
     height: 100vh;
-    font-family: -apple-system, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
   }
   header {
     display: flex;
@@ -1404,39 +1184,5 @@
   .description-wrap.with-panel-maybe.with-panel {
     display: grid;
     grid-template-columns: 1fr 6px var(--panel-w, minmax(320px, 30%));
-  }
-
-  /* Vertical drag handle (separator between two columns). Shares its
-     styling approach with ValidationPanel's horizontal resizer but lives
-     here because these two handles are App.svelte's responsibility. */
-  .v-resizer {
-    background: var(--border);
-    cursor: ew-resize;
-    border-left: 1px solid var(--border-strong);
-    border-right: 1px solid var(--border-strong);
-    touch-action: none;
-    position: relative;
-  }
-  .v-resizer::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 2px;
-    height: 32px;
-    background: var(--fg-muted);
-    border-radius: 1px;
-    box-shadow: 3px 0 0 var(--fg-muted);
-  }
-  .v-resizer:hover,
-  .v-resizer.dragging,
-  .v-resizer:focus-visible {
-    background: var(--border-strong);
-    outline: none;
-  }
-  .v-resizer:focus-visible::before {
-    background: var(--fg-secondary);
-    box-shadow: 3px 0 0 var(--fg-secondary);
   }
 </style>

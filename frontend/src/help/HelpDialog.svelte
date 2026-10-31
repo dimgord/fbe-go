@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Modal from "../ui/Modal.svelte";
+  import { backend } from "../runtime/backend";
   import { createEventDispatcher, onMount } from "svelte";
   import pkg from "../../package.json";
 
@@ -18,11 +20,8 @@
 
   async function loadVersion(): Promise<void> {
     try {
-      const App = await import("../../wailsjs/go/main/App").catch(() => null);
-      if (App && typeof App.AppVersion === "function") {
-        const v = await App.AppVersion();
-        if (v) version = v;
-      }
+      const v = await backend()?.AppVersion();
+      if (v) version = v;
     } catch {
       // Keep the package.json fallback — browser tab / non-Wails dev.
     }
@@ -118,22 +117,7 @@
   });
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="button"
-    tabindex="-1"
-    aria-label="Dismiss help"
-    on:click={close}
-    on:keydown={(e) => e.key === "Escape" && close()}>
-    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="hd-title"
-      on:click|stopPropagation
-      on:keydown|stopPropagation>
+<Modal {open} labelledBy="hd-title" style="padding: 1rem 1.4rem 1.2rem; min-width: 28rem; max-width: 36rem; max-height: 80vh; overflow: auto; font-family: var(--font-ui); font-size: 0.9rem; user-select: text; -webkit-user-select: text;" on:close={close}>
       <header>
         <h3 id="hd-title">FictionBook Editor (Go)</h3>
         <button type="button" class="close" on:click={close} title="Close">×</button>
@@ -208,40 +192,9 @@
       <div class="actions">
         <button type="button" class="primary" on:click={close}>Close</button>
       </div>
-    </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--backdrop);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .dialog {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 1rem 1.4rem 1.2rem;
-    min-width: 28rem;
-    max-width: 36rem;
-    max-height: 80vh;
-    overflow: auto;
-    box-shadow: 0 8px 24px var(--shadow);
-    font-family: -apple-system, "Segoe UI", sans-serif;
-    font-size: 0.9rem;
-    color: var(--fg);
-    /* Explicitly opt-in to text selection so users can copy the version
-       string, kbd labels, and link text. Rest of the app (editor surface,
-       raw-block placeholders, resizer handle) sets `user-select: none` on
-       its chrome; without this override some of that could inherit. */
-    user-select: text;
-    -webkit-user-select: text;
-    cursor: auto;
-  }
   header {
     display: flex;
     align-items: center;
@@ -306,7 +259,7 @@
     border-bottom-width: 2px;
     border-radius: 3px;
     background: var(--bg-chrome);
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
     color: var(--fg);
   }
@@ -334,7 +287,7 @@
     flex: none;
     padding: 0.1rem 0.5rem;
     font-size: 0.72rem;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     color: var(--fg-secondary);
     background: var(--bg-chrome);
     border: 1px solid var(--border);

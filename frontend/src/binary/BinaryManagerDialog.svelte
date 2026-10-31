@@ -1,4 +1,7 @@
 <script lang="ts">
+  import Modal from "../ui/Modal.svelte";
+  import { backend } from "../runtime/backend";
+  import { basename } from "../lib/path";
   import { createEventDispatcher, onMount } from "svelte";
   import type { EditorView } from "prosemirror-view";
   import type { FictionBook, Binary } from "../fb2/types";
@@ -42,10 +45,6 @@
     renaming = null;
     open = false;
     dispatch("close");
-  }
-
-  async function wailsApp() {
-    return await import("../../wailsjs/go/main/App").catch(() => null);
   }
 
   function beginRename(b: Binary) {
@@ -95,7 +94,7 @@
 
   async function upload() {
     if (!fb) return;
-    const App = await wailsApp();
+    const App = backend();
     if (!App) { errorMessage = "Wails bindings unavailable — run `wails dev` or a proper build."; return; }
     let path: string;
     try {
@@ -118,7 +117,7 @@
     // Stage the binary and prompt for an id via the in-component overlay.
     // Suggested id: sanitized filename stem, de-duplicated against existing ids.
     const existingIds = new Set((fb.Binaries ?? []).map(b => b.ID));
-    const filenameGuess = path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "image";
+    const filenameGuess = basename(path).replace(/\.[^.]+$/, "") || "image";
     let suggested = filenameGuess.replace(/[^A-Za-z0-9._-]/g, "_");
     if (/^[^A-Za-z_]/.test(suggested)) suggested = "_" + suggested;
     while (existingIds.has(suggested)) suggested += "_1";
@@ -187,23 +186,7 @@
   }
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
-  <div
-    class="backdrop"
-    role="button"
-    tabindex="-1"
-    aria-label="Dismiss dialog"
-    on:click={cancel}
-    on:keydown={(e) => e.key === "Escape" && cancel()}>
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="bm-title"
-      on:click|stopPropagation
-      on:keydown|stopPropagation>
+<Modal {open} labelledBy="bm-title" style="width: min(640px, 92vw); max-height: min(80vh, 720px); display: flex; flex-direction: column;" on:close={cancel}>
       <header>
         <h3 id="bm-title">Binaries</h3>
         <button type="button" class="close" title="Close (Esc)" on:click={cancel}>✕</button>
@@ -272,6 +255,7 @@
       <!-- Upload "name your binary" sub-overlay. -->
       {#if uploadStaged}
         <div class="sub-backdrop" on:click={cancelUpload} on:keydown={() => {}} role="button" tabindex="-1" aria-label="Cancel upload">
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
           <div class="sub-dialog" role="dialog" aria-modal="true" aria-labelledby="up-title" on:click|stopPropagation on:keydown|stopPropagation>
             <h4 id="up-title">Name this binary</h4>
             <div class="preview-row">
@@ -281,7 +265,7 @@
                 {/if}
               </div>
               <div class="meta">
-                <div class="info">{uploadStaged.path.split(/[\\/]/).pop()}</div>
+                <div class="info">{basename(uploadStaged.path)}</div>
                 <div class="info muted">{uploadStaged.bin.ContentType} · {fmtBytes(base64Size(uploadStaged.bin.Data))}</div>
               </div>
             </div>
@@ -309,6 +293,7 @@
       <!-- Delete confirmation sub-overlay. -->
       {#if deleting}
         <div class="sub-backdrop" on:click={cancelDelete} on:keydown={() => {}} role="button" tabindex="-1" aria-label="Cancel delete">
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
           <div class="sub-dialog" role="alertdialog" aria-modal="true" aria-labelledby="del-title" on:click|stopPropagation on:keydown|stopPropagation>
             <h4 id="del-title">Delete binary?</h4>
             <p>
@@ -331,6 +316,7 @@
       <!-- Generic error toast — used by rename validation + wails import. -->
       {#if errorMessage}
         <div class="sub-backdrop" on:click={() => (errorMessage = "")} on:keydown={() => {}} role="button" tabindex="-1" aria-label="Dismiss error">
+          <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
           <div class="sub-dialog error" role="alertdialog" aria-modal="true" on:click|stopPropagation on:keydown|stopPropagation>
             <p>{errorMessage}</p>
             <div class="sub-actions">
@@ -339,31 +325,9 @@
           </div>
         </div>
       {/if}
-    </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--backdrop);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .dialog {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0;
-    width: min(640px, 92vw);
-    max-height: min(80vh, 720px);
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 8px 24px var(--shadow);
-    color: var(--fg);
-  }
   header {
     display: flex;
     align-items: center;
@@ -442,7 +406,7 @@
     object-fit: contain;
   }
   .thumb .placeholder {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--fg-secondary);
     text-transform: uppercase;
@@ -461,7 +425,7 @@
     min-width: 0;
   }
   .id {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -476,14 +440,14 @@
     color: var(--fg);
     border-radius: 3px;
     font: inherit;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .badge.cover {
     padding: 0.05rem 0.35rem;
     font-size: 0.65rem;
     letter-spacing: 0.04em;
     font-weight: 700;
-    color: var(--bg);
+    color: var(--bg-surface);
     background: var(--warn);
     border-radius: 3px;
   }
@@ -566,7 +530,6 @@
     place-items: center;
     border-radius: 6px;
   }
-  .dialog { position: relative; }
   .sub-dialog {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -618,10 +581,10 @@
     color: var(--fg);
     border-radius: 3px;
     font: inherit;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .sub-dialog code {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.9em;
     background: var(--bg-chrome);
     padding: 0.05em 0.3em;
@@ -658,7 +621,7 @@
   .sub-actions button:hover { background: var(--bg-hover); }
   .sub-actions button.danger {
     background: var(--danger);
-    color: var(--bg);
+    color: var(--bg-surface);
     border-color: var(--danger-border);
   }
   .sub-actions button.danger:hover { opacity: 0.9; }

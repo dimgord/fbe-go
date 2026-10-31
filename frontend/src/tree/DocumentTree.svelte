@@ -5,10 +5,13 @@
   import type { FictionBook } from "../fb2/types";
 
   export let fb: FictionBook | null = null;
+  /** Outline path of the section being read; highlighted in the tree. */
+  export let activePath: number[] | null = null;
 
   const dispatch = createEventDispatcher<{ navigate: { path: number[] } }>();
 
   $: tree = buildOutline(fb);
+  $: activeKey = activePath?.join(".") ?? "";
 
   function onNavigate(e: CustomEvent<{ path: number[] }>) {
     dispatch("navigate", e.detail);
@@ -20,7 +23,7 @@
 {:else}
   <ul class="outline">
     {#each tree as node (node.path.join("."))}
-      <OutlineItem {node} on:navigate={onNavigate} />
+      <OutlineItem {node} {activeKey} on:navigate={onNavigate} />
     {/each}
   </ul>
 {/if}

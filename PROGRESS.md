@@ -6,6 +6,692 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 115 — 2026-10-31 — Scrolling the XML moves the text → v3.20.0 [dev]
+
+The other half of Rev 114. Scrolling the XML pane brings the matching block to the reading line.
+It does nothing while the XML holds unapplied edits, since the line map is then out of date.
+
+Two panes that follow each other can chase forever, so `XmlEditor` tracks who leads: a scroll it
+caused itself (`scrollToLine`) marks it as following, and a user's scroll marks it as leading.
+Each lasts 400 ms and the other direction is ignored meanwhile. `blockAtLine` inverts the line
+map with a binary search, and `blockPos` gives the position to scroll to.
+
+Verified in WebKit: wheel and a far jump in the XML move the text to the same paragraph, as the
+screenshot confirms; both positions then stay put, with no chasing; the text can take the lead back.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `scrollline` event, lead/follow.
+- `frontend/src/validation/ValidationPanel.svelte`, `frontend/src/App.svelte`, `frontend/src/editor/Editor.svelte` — wiring, `scrollToBlock`.
+- `frontend/src/tree/position.ts`, `position.test.ts` — `blockAtLine`, `blockPos`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.19.0 → 3.20.0.
+
+---
+
+## Rev 114 — 2026-10-31 — XML pane: 78 s to 50 ms, and it follows the text → v3.19.0 [dev]
+
+User report: Validate took "ridiculously" long on an M5 Pro, and the XML pane and the text showed
+different places.
+
+**Measured first.** Go was innocent: parse 24 ms, writer 81, validate 41, verified parse 127. The real
+Wails bridge too: `UpdateDocument` 55 ms, `SerializeCurrent` 215, `ValidateCurrent` 159. Even the
+`validate()` handler was 225 ms. The whole cost was the first frame of the panel: **78,480 ms** in the
+real app. The read-only pane rendered one DOM element per line, 13,681 of them, each with
+`content-visibility`, and a scroll then cost 7.2 s. Playwright WebKit showed 0.7 s for the same DOM,
+which is why no earlier test saw it; only a timing probe inside the real `.app` found it.
+
+**Fix.** CodeMirror already virtualizes (17-38 lines in the DOM), so it is now the only XML view, in
+both modes: `XmlEditor` takes `readOnly`, flipped through a compartment, and the DOM list, its CSS
+and `gotoLine`'s highlight are gone. Measured in the real app on the same 13,681-line book: first
+frames 50 ms, jump in the XML 36 ms. Copying from the read-only pane still works, and errors go to
+their line. Since nothing heavy is left in the pane, `body.resizing` no longer hides `.xml`, which
+drops Rev 113's scroll save.
+
+**Follow.** The pane scrolls to the block being read, unless the XML has focus or unapplied edits.
+`xmlBlockLines(doc, xml)` pairs PM text blocks with block tags after `<body>` by order. Plain order
+was not enough: one `<text-author>` inside a preserved unknown element shifted 2,703 blocks of a real
+book, so the text corrects the pairing within a small window. Checked across all 26 sample books:
+190,245 of 190,258 blocks land on their line (the 13 are a title split over XML lines), 26 ms at worst.
+After an edit in the text the XML is a snapshot until the next Validate, so it can lag slightly.
+
+Verified in WebKit: text and XML side by side at 30%, 61% and 85%, by screenshot too; error click;
+read-only refuses typing; edit, dirty mark, Apply.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `readOnly`, `scrollToLine`, `hasFocus`.
+- `frontend/src/validation/ValidationPanel.svelte` — one editor; DOM list removed; `followLine`.
+- `frontend/src/tree/position.ts`, `position.test.ts` — `block`, `xmlBlockLines`.
+- `frontend/src/editor/Editor.svelte`, `frontend/src/App.svelte` — wiring; `.xml` resize rule removed.
+- `CLAUDE.md` — note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.18.0 → 3.19.0.
+
+---
+
+## Rev 113 — 2026-10-31 — Resizing no longer throws the reader back to the start → v3.18.0 [dev]
+
+User report: after dragging the sidebar divider, the bar kept 29% and Chapter 10 while the screen
+showed the beginning of the book.
+
+`body.resizing` sets `display: none` on `.ProseMirror` and `.xml` to keep a resize fast. Hidden, the
+scroller has no content, so `scrollTop` falls to 0 and stays there when the content returns. The
+position bar could keep the old value because it could not measure a hidden editor. It affected
+the outline and panel dividers and window resizing, and it dates from the resize speedup, not from
+Rev 112, which only made it easier to see. Two earlier guesses about painting and
+`scrollIntoView` were tried and reverted, without being committed, once the report named the trigger.
+
+`setResizing` in `App.svelte` is now the single switch for the class. Before hiding it calls
+`Editor.holdPosition`, which keeps a document position; a pixel offset would be wrong, since a new
+column width reflows the text. After showing, `releasePosition` returns there through
+`scrollPosIntoView`. The position bar does not report while held. The XML pane has uniform lines,
+so its `scrollTop` is simply saved and restored.
+
+Verified in WebKit: divider at 30% and at 62%, window resize, and the validation-panel divider with
+the XML pane scrolled; the place and the bar stay, and earlier resizer and dirty flows still pass.
+
+### Files Modified
+
+- `frontend/src/editor/Editor.svelte` — `topPos`, `holdPosition`, `releasePosition`.
+- `frontend/src/App.svelte` — `setResizing`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.17.0 → 3.18.0.
+
+---
+
+## Rev 112 — 2026-10-30 — The scrollbar tells the truth; the position bar shows the chapter → v3.17.0 [dev]
+
+User report with screenshots: the scrollbar thumb sat mid-track while the bar said 9%.
+
+Measured on two books, `scrollHeight` was 16,948px for a whole illustrated book: 75% of the
+scrollbar read as 100% of the text. Two causes:
+
+1. Every off-screen section used the same 600px placeholder, whatever its length.
+2. `content-visibility` also applied to wrapper sections. A skipped wrapper keeps a size
+   remembered from before its children were laid out, so a section estimated at 307,034px measured
+   245px and the book collapsed to a few screens. This is what estimates alone did not fix: they
+   looked right after a few jumps and failed on a fresh open, which a wheel test exposed.
+
+Now only leaf sections are lazy (`section leaf`), each with `contain-intrinsic-size:
+auto <estimate>`, computed from its text and images in `schema.ts`. Wrappers measure as the sum of
+their children. The resize speedup survives, because the leaves are where the text is. The fix also
+removes what `scroll.ts` had to work around, though forcing sections around a target stays: an
+estimate is not an exact height.
+
+After: scrollbar → text is 10→9, 25→23, 50→46, 75→73, 90→89 on the illustrated book and 10→10,
+25→25, 50→51, 76→77, 91→91 on the larger one; wheel scrolling is steady, with `scrollHeight`
+moving under 1%. Far jumps in Find still miss nothing.
+
+`Editor` also re-measures 150 ms after scrolling stops, since a jump lands on sections still rendering.
+
+**Position bar.** A long book title filled the line and the chapter fell off the end. It now shows
+the two nearest levels, with the full path in the tooltip.
+
+### Files Modified
+
+- `frontend/src/editor/schema.ts` — `estimateHeight`, `sectionAttrs`; `schema.test.ts` (new).
+- `frontend/src/editor/Editor.svelte` — leaf-only `content-visibility`, settle re-measure.
+- `frontend/src/tree/PositionBar.svelte` — two levels.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.16.0 → 3.17.0.
+
+---
+
+## Rev 111 — 2026-10-30 — Wails 2.12.0 → 2.16.0 → v3.16.0 [dev]
+
+`task build` warned that `go.mod` was behind the CLI, and CI installs `wails@latest`, so the
+library and the tool had drifted. `go.mod` is on 2.16.0; `golang.org/x/{crypto,net,sys}` moved
+with it.
+
+Code that depends on Wails internals was re-read in the new source:
+
+- `mac.Options.OnFileOpen` is unchanged.
+- A non-nil `Mac` block still sets `zoomable`, so the green button keeps working.
+- `WailsContext.m` still adds an unguarded `UTType`, so `*.fb2.zip` in a file filter would still
+  crash on a nil. The `*.fb2`-only rule stands; CLAUDE.md is updated.
+
+Verified: `task check`, `task build` with the warning gone, and the built `.app` launched with a
+file under a throwaway `$HOME`.
+
+### Files Modified
+
+- `go.mod`, `go.sum`, `CLAUDE.md`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.15.0 → 3.16.0.
+
+---
+
+## Rev 110 — 2026-10-30 — DRY in `doc.go` and the HTML exporter → v3.15.0 [dev]
+
+Mechanical cleanups, checked for byte-identical output.
+
+- `doc.go`: `encodeAs(e, v, "name")` replaces 21 `xml.StartElement{Name: xml.Name{Local: …}}`
+  spellings, `encodeMixed` the four start/content/end sequences, and `isHrefAttr` the two href
+  checks. `l:href` goes through the existing `addAttrIfSet`.
+- `html.go`: `writeP`, `writeParagraphs`, `writeQuote` (epigraph and cite share rendering, while
+  their types stay separate) and `writeWrapped` for simple marks.
+
+Left as they are, as the review advised: the `Block`/`Inline` marshal switches, which are readable
+and type-safe, and the per-type attribute loops.
+
+Verified: writer output is identical before and after on all sample books, and the HTML export of
+the largest (9 MB) is byte-identical.
+
+### Files Modified
+
+- `internal/fb2/doc/doc.go`, `internal/fb2/export/html/html.go`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.14.0 → 3.15.0.
+
+---
+
+## Rev 109 — 2026-10-30 — `app.go` sheds fonts and the close flow; CLI becomes testable → v3.14.0 [dev]
+
+`app.go` is 573 lines now, against 1,224 at the review.
+
+- **`internal/sysfonts`.** About 230 lines of font discovery moved out of the Wails binding file.
+  `fc-list` parsing split into a pure `parseFontconfig`. New tests pinned down what the filename
+  heuristic really does: its doc comment promised "DejaVu Sans", it gives "Deja Vu Sans", so the
+  comment was corrected and the behaviour left alone.
+- **`close.go`.** A small `shell` interface (`FrontendDirty`, `AskSaveDiscardCancel`, `Emit`)
+  separates the close decision from Wails. `App.stayOpen` is the three-way decision with data-loss
+  consequences, previously impossible to run without a window, and it now has a table test,
+  including that a re-entrant close after Discard does not ask again. The Save/Discard/Cancel
+  dialog, which existed twice, is one `wailsShell` method.
+- **`binary.DataURL`.** Three hand-built `data:` strings differed in whether they trimmed the
+  payload and defaulted the content type. `ExtractThumbnail` decoded and re-encoded the bytes for
+  nothing; `thumb.Cover` returns the entry directly. `ExtractToReader` (unused) is gone.
+- **`cmd/fbe`.** `run(argv, stdout, stderr) int` replaces `os.Exit` inside commands, with a
+  sentinel `errInvalid`. Tests cover usage, unknown command, validate both ways, pack then info
+  through a zip, and a missing file.
+
+The real close dialog and the frontend round-trip are not exercised by tests, since `wailsShell`
+needs a window: quit with unsaved edits is worth trying by hand.
+
+### Files Modified
+
+- `internal/sysfonts/sysfonts.go`, `sysfonts_test.go`, `close.go`, `close_test.go`, `cmd/fbe/main_test.go`, `internal/fb2/binary/dataurl_test.go` (new).
+- `app.go`, `cmd/fbe/main.go`, `internal/fb2/binary/binary.go`, `internal/fb2/thumb/thumb.go`, `internal/fb2/export/html/html.go`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.13.0 → 3.14.0.
+
+---
+
+## Rev 108 — 2026-10-30 — Mark table; Editor.svelte is view lifecycle only → v3.13.0 [dev]
+
+- **`editor/markCodec.ts`.** Mark name, FB2 field, nesting order and attributes were spelled out
+  in `parse.ts`, `serialize.ts` and `outline.ts` (the `AnnotationEditor` copy went in Rev 96).
+  One ordered table now drives all three, and `plainText` replaces `flattenInlines`. Adding a
+  mark is one row.
+- **`editor/dirtyTracker.ts`.** The baseline moved from a closure set by the plugin view into
+  keyed plugin state, so it can no longer be lost when a view is recreated (the root cause fixed
+  around in Rev 97). `markSaved` is now a transaction. Tests cover undo back to clean and undo
+  past the saved point, which the old code had none of.
+- **`editor/imageView.ts`.** `createImageViews(getBinaries)` holds the NodeViews and their cache.
+  A missing image now drops `src` instead of setting an empty one.
+- **`findNodePos` → `tree/outline.ts`,** beside the code that creates those paths, with a
+  round-trip test against `positionAt` for every outline node. **`errorDoc` → `parse.ts`.**
+
+`Editor.svelte` goes from 660 lines at the review to 462.
+
+Verified in WebKit: a body edit is dirty, undo clears it, Save clears it, undo past the save is
+dirty again; images resolve; the outline jumps; toolbar, hotkeys and F3 still work.
+
+### Files Modified
+
+- `frontend/src/editor/markCodec.ts`, `dirtyTracker.ts`, `dirtyTracker.test.ts`, `imageView.ts` (new).
+- `frontend/src/editor/Editor.svelte`, `parse.ts`, `serialize.ts`.
+- `frontend/src/tree/outline.ts`, `position.test.ts`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.12.0 → 3.13.0.
+
+---
+
+## Rev 107 — 2026-10-30 — Typed command registry; toolbar shows the user's real hotkeys → v3.12.0 [dev]
+
+The same command set was listed three times in `Editor.svelte` plus `Toolbar.svelte`, and the
+toolbar did `(editor as any)[name]`, so a typo was a silently dead button. `EDITOR_COMMANDS` was
+kept "in sync by comment" with `HOTKEY_ACTIONS`.
+
+- `editor/commandRegistry.ts` is the single `Record<CommandId, Command>`. `CommandId` is derived
+  from the `editor: true` rows of `HOTKEY_ACTIONS` (now `as const satisfies`), so a row with no
+  command, or a wrong id at a call site, no longer compiles.
+- `Editor` exposes `run(id)`; the `exec` export and the re-export block of 21 commands are gone.
+- Toolbar tooltips come from the user's bindings through `displayAccel`, and they used to
+  hard-code `⌘B` even after a rebind. Undo and Redo stay fixed, since those keys are not rebindable.
+
+Verified in WebKit: tooltip from settings, bold and undo by button and hotkey, Cite, F3 with focus
+in the editor.
+
+### Files Modified
+
+- `frontend/src/editor/commandRegistry.ts` (new).
+- `frontend/src/editor/Editor.svelte`, `Toolbar.svelte`, `frontend/src/App.svelte`.
+- `frontend/src/settings/hotkeys.ts` — `EditorActionId`; `settings/SettingsDialog.svelte` — types.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.11.0 → 3.12.0.
+
+---
+
+## Rev 106 — 2026-10-30 — Insert commands ask the schema instead of repeating it → v3.11.0 [dev]
+
+`insertCite`, `insertPoem` and `insertTableCmd` carried hand-written parent lists, a second
+copy of the content model that had drifted from `schema.ts`:
+
+- `history` was listed, but the schema has no such node.
+- `insertTableCmd` allowed `epigraph`, whose content has no `table`, so it built an
+  invalid document.
+- `insertCite` refused `epigraph`, which does allow `cite`.
+
+All three now use `parent.canReplaceWith(...)` on the block range, so the rules cannot
+drift. A caret table checks the insertion point after its block, a selection the range it
+replaces. New tests run each command in nine contexts, compare availability with the content
+model, and run `doc.check()` on every result.
+
+`insertCite` used to be offered for a range directly inside `poem`; the schema has no `cite`
+there, so that is gone with the list.
+
+Small cleanups in the same file: `findAncestor(...names)` replaces two near-identical
+helpers, `hasChild` and `unwrapTitleInto` replace repeated loops, and the local two-argument
+`Command` type gives way to ProseMirror's, which `Editor.svelte` already imported.
+
+Also corrects the `App.svelte` line count in the Rev 105 entry.
+
+### Files Modified
+
+- `frontend/src/editor/commands.ts`, `commands.test.ts`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.10.0 → 3.11.0.
+
+---
+
+## Rev 105 — 2026-10-30 — `ui/Resizer.svelte` replaces three copies of the divider logic → v3.10.0 [dev]
+
+The outline divider, the validation-panel divider and the errors-pane divider each had their
+own pointer start/move/end handlers, keyboard handling and CSS; the panel divider's markup also
+appeared twice, for body and description views. `ui/Resizer.svelte` owns pointer capture, the
+body cursor, clamping, arrow keys (Shift = large step) and both orientations. Callers give it
+`current`, `bounds` and `fromPointer`, and it emits `change` while moving and `commit` when
+final. `persistPane` replaces five copies of the "default `panes`, then set one field" block.
+`App.svelte` is now 1,179 lines (1,442 at the review), and the CSS moved with the component.
+The arrow directions are unchanged, as is the 70% cap on the panel.
+
+Verified in WebKit: drag, arrow keys, Shift step and the max clamp on the outline; drag on the
+panel in both views; drag and ArrowUp on the errors pane; all sizes reach `SaveSettings`, and
+`body.resizing` clears after a drag. Layout checked by screenshot.
+
+### Files Modified
+
+- `frontend/src/ui/Resizer.svelte` (new).
+- `frontend/src/App.svelte`, `validation/ValidationPanel.svelte` — use it; handlers and CSS removed.
+- `frontend/src/binary/BinaryManagerDialog.svelte` — a11y ignore on the last sub-dialog.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.9.0 → 3.10.0.
+
+---
+
+## Rev 104 — 2026-10-30 — `ui/Modal.svelte` replaces four copies of the dialog shell → v3.9.0 [dev]
+
+Settings, Table, Help and Binaries each carried the same backdrop, role/aria markup and
+`.backdrop`/`.dialog` CSS. `ui/Modal.svelte` owns all of it (about 90 lines removed); each
+dialog passes only its sizing as `style` and handles `on:close`. Their content, scoped CSS
+and key handling are unchanged. The dialogs' `on:click|stopPropagation` shell keeps its
+behaviour, and sub-overlays in Binaries stay local to that dialog.
+
+Also finishes `showStatus` for the Save message, which Rev 103's pass missed.
+
+Verified in WebKit: all four open, are labelled by their heading and close on Esc, and the
+backdrop closes Settings; Settings was compared by screenshot.
+
+### Files Modified
+
+- `frontend/src/ui/Modal.svelte` (new).
+- `frontend/src/settings/SettingsDialog.svelte`, `editor/TableDialog.svelte`, `help/HelpDialog.svelte`, `binary/BinaryManagerDialog.svelte`.
+- `frontend/src/App.svelte` — `showStatus`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.8.0 → 3.9.0.
+
+---
+
+## Rev 103 — 2026-10-30 — Dirty logic extracted and tested; no empty placeholders in saved books → v3.8.0 [dev]
+
+First step of the `App.svelte` split, plus the last bug from the review.
+
+- **Saved books gained empty elements.** `normalizeFb` ran on every open and set
+  `PublishInfo = {}` and `Annotation = {Children: []}`, so each save wrote
+  `<publish-info></publish-info>` and `<annotation></annotation>`. Valid against the
+  schema, but noise in the user's file. It existed only to pre-warm the dirty snapshot,
+  and `canonicalize` already treats empty values as absent, so it is deleted, with its
+  "must be mirrored" rule. The description forms still create those defaults when
+  mounted, so `doc.Normalize` (run on every `UpdateDocument`) now drops an empty
+  `Annotation` and `PublishInfo` too. A source file's own empty `<annotation/>` also
+  goes on save; that is accepted, as it carries no content.
+- **`document/dirty.ts`.** `canonicalize`, `stableStringify` and `descriptionSnapshot`
+  moved out of the component and got their first tests.
+- **`lib/path.ts`, `lib/math.ts`.** `basename` replaces eight inline splits, `dirname` a
+  slice expression, and `clamp` its two copies.
+- **`showStatus`.** Six `setTimeout(() => status = "")` calls did not cancel each other,
+  so an old timer could erase a newer message.
+- **`--font-mono`, `--font-ui`.** 27 literal font stacks became two tokens. The mono stack
+  had two spellings; it now has one.
+
+Verified in WebKit on a real book: a fresh open and a visit to Description are not dirty, a
+real edit is, undoing it by hand is not, and Save from Description works. 102 unit tests.
+
+### Files Modified
+
+- `internal/fb2/doc/normalize.go`, `normalize_test.go` (new test).
+- `frontend/src/document/dirty.ts`, `dirty.test.ts`, `lib/path.ts`, `lib/math.ts`, `lib/lib.test.ts` (new).
+- `frontend/src/App.svelte`, `validation/ValidationPanel.svelte`, `binary/BinaryManagerDialog.svelte`, font tokens across `*.svelte`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.7.0 → 3.8.0.
+
+---
+
+## Rev 102 — 2026-10-30 — One gateway to Go; "Clear list" in Settings works again → v3.7.0 [dev]
+
+**Regression from Rev 99, fixed.** Settings → "Clear list" did `recentFiles = []` and
+`SaveSettings`, but `Store.Replace` now keeps Go-owned fields from disk, so nothing was
+cleared. New `ClearRecentFiles` binding. The Rev 99 test covered `Replace` itself, not
+its one caller that relied on the old behaviour.
+
+**`runtime/backend.ts`.** Wails bindings were imported in six files with a copy of
+`wailsApp()` in three, and five `@ts-expect-error` hid the same model mismatch at each
+call. `backend()` now returns the gateway or null, and `Backend` declares the four
+FictionBook-typed methods once, so the casts and suppressions are gone. It also wraps
+events and `BrowserOpenURL`. The null check is now real: the old
+`import(...).catch(() => null)` could not detect a missing bridge, because the generated
+module always exists and only its calls fail. `setBackend` lets a test substitute a fake.
+No bindings are imported outside this file any more.
+
+Verified: 93 unit tests, the WebKit search/history/annotation flows, and the built `.app`
+launched with a file under a throwaway `$HOME`, which opened it through the real bridge.
+
+### Files Modified
+
+- `frontend/src/runtime/backend.ts`, `backend.test.ts` (new).
+- `frontend/src/App.svelte`, `settings/SettingsDialog.svelte`, `binary/BinaryManagerDialog.svelte`,
+  `editor/search/SearchBar.svelte`, `help/HelpDialog.svelte`, `runtime/externalLink.ts` — use the gateway.
+- `app.go` — `ClearRecentFiles`.
+- `CLAUDE.md` — gateway rule.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.6.0 → 3.7.0.
+
+---
+
+## Rev 101 — 2026-10-30 — Undefined `--bg` fixed everywhere; theme lint catches undefined variables → v3.6.0 [dev]
+
+The recent-searches dropdown had a see-through background, so the outline showed
+through it. The cause was not stacking: `--bg` is not in the palette. An undefined
+variable fails silently, the property just goes transparent. Rev 100 copied it from
+the neighbouring find-bar styles, and it was an old bug there too, in seven places:
+
+- find box, toggles and nav buttons had no background of their own;
+- the active toggle and two `BinaryManagerDialog` controls used it as `color` on a
+  coloured button, so their label inherited instead of contrasting.
+
+All are `--bg-surface` now. `check-theme-hygiene.sh` gained a step that fails on any
+`var(--x)` with no definition, including those set through `setProperty`. It was
+tested with a throwaway undefined variable. Rev 91's `--err-border` / `--err-fg` were
+the same class of bug.
+
+Rev 100 missed this because the WebKit test only asserted behaviour. Playwright
+screenshots can be inspected directly, so visual changes are now checked by eye too;
+this fix was.
+
+### Files Modified
+
+- `frontend/src/editor/search/SearchBar.svelte`, `frontend/src/binary/BinaryManagerDialog.svelte` — `--bg-surface`.
+- `scripts/check-theme-hygiene.sh` — undefined-variable check.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.5.0 → 3.6.0.
+
+---
+
+## Rev 100 — 2026-10-30 — Recent searches and a position indicator → v3.5.0 [dev]
+
+**Recent searches.** The find box keeps a history of 20 queries between sessions. ↓ or the
+▾ button opens the list; ↑/↓ and Enter or a click pick an entry, which runs the search;
+Esc closes only the list; "Clear history" empties it. A query is recorded on Enter and on
+closing the bar, and only if it found something, so typing an incremental query or a typo
+adds no noise. The list lives in `Settings.RecentSearches`, written through new
+`AddRecentSearch` / `RecentSearches` / `ClearRecentSearches` bindings; `Store.Replace` keeps
+it from disk like the other Go-owned MRU fields. `pushFront` now backs both MRU lists.
+
+**Position indicator.** A thin bar stuck to the bottom of the text shows where you are,
+e.g. `Книга › Глава 3 · 42%`, and the outline highlights that section and keeps it in view.
+`tree/position.ts` is a pure `positionAt(doc, pos)`. Its paths match `buildOutline`, which
+a test asserts, because the highlight is a key match between the two. `Editor` reports the
+position at the top of the visible text, at most once a frame, on scroll and on doc changes.
+The listener is a capture-phase one on `window`, since scroll does not bubble. It reports
+reading position, not caret position: the point is "where am I", and the caret can be
+chapters behind after scrolling. Percent is by document position rather than pixels,
+because off-screen `content-visibility` sections make pixel heights meaningless.
+
+Verified in WebKit on the 142-section book: the bar follows scrolling, search jumps and
+outline clicks; the tree item stays highlighted and in view; history add, keyboard pick,
+mouse pick, Esc, no-match not saved, clear. Go tests cover the cap, dedupe and `Replace`.
+
+### Files Modified
+
+- `internal/fb2/settings/settings.go` — `RecentSearches`, `AddRecentSearch`, `pushFront`; tests.
+- `app.go` — three bindings.
+- `frontend/src/tree/position.ts`, `position.test.ts`, `PositionBar.svelte` (new).
+- `frontend/src/tree/DocumentTree.svelte`, `OutlineItem.svelte` — active item.
+- `frontend/src/editor/Editor.svelte` — `position` event.
+- `frontend/src/editor/search/SearchBar.svelte` — history dropdown.
+- `frontend/src/App.svelte` — wiring.
+- `README.md` — features.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.4.0 → 3.5.0.
+
+---
+
+## Rev 99 — 2026-10-30 — Session and settings get owners; no more unsynchronized state in App → v3.4.0 [dev]
+
+Wails runs every bound method on its own goroutine, and `OnStartup` on another, but
+`App` read and wrote `current`, `path` and `forceClose` with no lock. `launchMu` looked
+as if it protected `ctx`, yet `OnStartup` wrote it outside the lock.
+
+- `internal/fb2/session.Session` owns the open document and path. A stored document is
+  never mutated: `AddBinary` swaps in a copy with a fresh slice. So readers take a
+  snapshot under the lock and serialize outside it, and a slow save never blocks the UI.
+  The six "no document open" guards became `Require()` / `ErrNoDocument`. A failed
+  Save As leaves the path alone. `Replace(nil)` is ignored, where `UpdateDocument(nil)`
+  used to drop the book silently.
+- `(*doc.FictionBook).Normalize` replaces `normalizeFictionBook` in `package main`.
+- `settings.Store` replaces the package-level `Load`/`Save` with a fixed path. `Update(fn)`
+  makes read-modify-write one locked step; recents, window geometry and the dialog used
+  to race and could overwrite each other. `Replace` keeps `RecentFiles` and `Window` from
+  disk, because the frontend's draft may be older and Go owns those fields. The MRU rules
+  moved beside their data as `(*Settings).AddRecent` / `RemoveRecent`. Tests now use
+  `t.TempDir()` instead of the real config.
+- `forceClose` is an `atomic.Bool`; `ctx` is set under `launchMu`.
+
+`app.go` is down from 1,224 to 846 lines; the bound API is unchanged, so no frontend
+edits were needed. `go test -race ./...` passes, including new concurrent tests for
+`Session` and `Store`. Search and annotation save re-checked in WebKit, which exercises
+the frontend only: the Go session path was not run in the real app in this revision.
+
+### Files Modified
+
+- `internal/fb2/session/session.go`, `session_test.go` (new).
+- `internal/fb2/doc/normalize.go` (new).
+- `internal/fb2/settings/settings.go` — `Store`, `AddRecent`, `RemoveRecent`; tests.
+- `app.go`, `main.go` — delegate to both.
+- `CLAUDE.md` — notes.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.3.0 → 3.4.0.
+
+---
+
+## Rev 98 — 2026-10-30 — One loader for every entry point; Apply guard tested; structured validation errors → v3.3.0 [dev]
+
+Three items from the review, all in the Go layer.
+
+1. **`parser.Open` / `parser.ParseFile`.** Only `App.OpenFile` handled `.fb2.zip`, so
+   `fbe info`, `thumb`, `export`, `validate` and `ExtractThumbnail` rejected an archive,
+   while CLAUDE.md and ARCHITECTURE.md said the parser unwraps zips. The magic check,
+   zip unwrap and panic recovery now live in the parser, and every path-based entry
+   point uses them, so those docs are finally true.
+2. **`internal/fb2/roundtrip`.** The Apply data-loss guard (`ParseXMLString`,
+   `dataLossMessage`, `countOpen`), the most safety-critical logic in the app, sat in
+   `package main` with no tests. `roundtrip.ParseVerified` owns it now, and `App` just
+   delegates. Tests cover typos in tags, a typo that eats the rest of the document, a
+   mismatched close tag, an unclosed root, the "topmost lost element" rule and `countOpen`.
+3. **`ValidationError.Element`.** The element name was recovered from message text by
+   three regexes, which made the wording an API. Both producers set the field now,
+   `MergeXSDAndUnknown` compares it, and the regexes are gone. `xsd.ValidateAll` is the
+   full check (schema + unknown-element scan); `ValidateCurrent`, `Validate(path)` and
+   `fbe validate` all use it, so the CLI no longer reports less than the app, and it
+   prints line:column.
+
+### Files Modified
+
+- `internal/fb2/parser/parser.go` — `Open`, `ParseFile`, `zipEntry`; `open_test.go` (new).
+- `internal/fb2/roundtrip/roundtrip.go`, `roundtrip_test.go` (new).
+- `internal/fb2/xsd/xsd.go` — `Element`; `xsd_helium.go` — `ValidateAll`, `localName`;
+  `unknown.go` — regex removed; tests updated.
+- `app.go` — `OpenFile`, `ParseXMLString`, `ExtractThumbnail`, `Validate`, `ValidateCurrent` delegate.
+- `cmd/fbe/main.go` — `ParseFile`, `ValidateAll`, line numbers in `validate`.
+- `CLAUDE.md` — roundtrip note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.2.0 → 3.3.0.
+
+---
+
+## Rev 97 — 2026-10-30 — Hotkey changes no longer reset editor plugins; PM's public `isDestroyed` → v3.2.0 [dev]
+
+The plugin list existed twice in `Editor.svelte`, once in `mount` and once in a
+`reconfigure` run on Settings → Apply. Forgetting a site was the small problem (Rev 95
+nearly did). The real one: `reconfigure` keeps plugin state but destroys and recreates
+every plugin **view**. That reset `dirtyPlugin`'s baseline and last-emitted flag with
+no event to App, so undo after Apply reported clean or dirty wrongly, and
+`searchPlugin`'s view `destroy` blanked the store, so an open find bar said "No matches"
+over live highlights.
+
+Hotkeys now live in one `handleKeyDown` plugin that reads `activeKeymap`, a reactive
+`keydownHandler(buildKeymap(hotkeys))`. Changing hotkeys touches no plugin, so the second
+list, `lastHotkeys` and the `reconfigure` are gone.
+
+Separately, the four casts to PM's private `docView` (`scroll.ts`, `search/plugin.ts`,
+twice in `binary/refs.ts`) became the public `view.isDestroyed`.
+
+Verified: `svelte-check`, `vitest` 85/85, and in WebKit that search, F3 and Shift+F3 still
+work through the new key path. The Settings → Apply path itself was not driven in WebKit.
+
+### Files Modified
+
+- `frontend/src/editor/Editor.svelte` — `activeKeymap`, `reconfigure` block removed.
+- `frontend/src/editor/scroll.ts`, `search/plugin.ts`, `search/plugin.test.ts`, `binary/refs.ts` — `isDestroyed`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.1.0 → 3.2.0.
+
+---
+
+## Rev 96 — 2026-10-30 — Data safety: atomic writes, lossless annotation editor, Save from Description → v3.1.0 [dev]
+
+First stage of the fixes from the OOP/DRY review.
+
+1. **A failed save could leave an empty book.** `os.Create` truncates before the
+   writer runs, and `defer f.Close()` dropped close errors. New
+   `internal/fb2/fsutil`: `WriteAtomic(path, fn)` writes a temp file beside the
+   target, syncs it and renames it over; a failure at any step leaves the old file.
+   An existing file keeps its mode, and a symlinked target stays a link. Used by
+   every writer: `SaveFile`, `ExportHTML`, settings and all `fbe` CLI outputs.
+   `zipfb2.Pack` now returns `zw.Close()`'s error, because it writes the central
+   directory and a dropped failure means an unreadable zip. `copyAll` (a hand-rolled
+   `io.Copy`) and the `_ = writer.Write` leftover are gone.
+2. **The annotation editor lost content on the first keystroke.** It was a reduced
+   fork of parse/serialize: `cite`, `poem`, `table`, `raw_block`, `Style`, inline
+   images, and paragraph `ID`/`Style` were all dropped, though its comment claimed
+   they survived. The fork is deleted (about 100 lines). The `annotation` node is now
+   the PM root of that editor, with the exported `buildAnnotation` from both
+   `parse.ts` and `serialize.ts`, so it shares `fb2Schema` and the full conversion.
+   Sweep: the same builders dropped `Annotation.ID`/`Lang` in the main editor as well,
+   so the `annotation` node gained `id`/`lang` attrs.
+3. **Save, Save As and Export were disabled in Description view**, because they
+   needed the Editor, which is unmounted there; `app:save-and-quit` failed the same
+   way, although a Save there is what the description forms exist for. New
+   `liveDoc()` in `App.svelte` (the editor in body view, `fb` otherwise) is used by
+   save, export and validate; the buttons depend on `fb`.
+
+Verified in Playwright WebKit: an annotation with poem, cite and table, edited in
+Description (text appended, Enter, new paragraph) and saved from that tab: all
+blocks present, `ID`, `Style` kept, no error shown. `fsutil` tests cover failure,
+mode, new file and symlink. Unit tests: annotation round trip including `Raw`.
+
+### Files Modified
+
+- `internal/fb2/fsutil/fsutil.go`, `fsutil_test.go` (new).
+- `app.go` — `SaveFile`, `ExportHTML` through `WriteAtomic`.
+- `internal/fb2/settings/settings.go` — `Save` through `fsutil.WriteFile`.
+- `internal/fb2/zipfb2` — `Pack` returns the close error.
+- `cmd/fbe/main.go` — all outputs atomic; `copyAll` removed.
+- `frontend/src/description/AnnotationEditor.svelte` — fork removed.
+- `frontend/src/editor/parse.ts`, `serialize.ts` — exported `buildAnnotation`, `ID`/`Lang` kept.
+- `frontend/src/editor/schema.ts` — `annotation` attrs.
+- `frontend/src/editor/serialize.test.ts` — annotation round trip.
+- `frontend/src/App.svelte` — `liveDoc()`, buttons.
+- `CLAUDE.md` — write rule.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.0.0 → 3.1.0.
+
+---
+
+## Rev 95 — 2026-10-30 — Find navigation really fixed (inverted condition, far jumps), F3 in the find box → v3.0.0 [dev]
+
+Rev 92 claimed to fix Next/Prev but was never run, and it made things worse. This
+time the bug was reproduced in real WebKit (Playwright) on a 28,345-paragraph,
+142-section book, with `window.go` stubbed.
+
+1. **Enter stuck at 2/N.** `findNext`/`findPrev` advanced when the selection was
+   NOT on the active hit, the reverse of the intent: the first press moved, every
+   later one only re-selected the same hit. Condition inverted.
+2. **Far jumps landed at the end of the book, the hit ~100,000px off-screen.** An
+   off-screen section (`content-visibility: auto`) occupies its 600px placeholder
+   while its children measure at full size, so `coordsAtPos` is wrong and Rev 92's
+   frame-by-frame correction could not converge. `scroll.ts` now renders the sections
+   around the target first, through a `cv-visible` node decoration
+   (`scrollForcePlugin`), then measures and scrolls, and clears the decoration two
+   frames after landing. A decoration, not a DOM class, because PM re-parses nodes
+   whose attributes change under it. Applies to find, outline clicks and note links.
+3. **F3 did nothing with focus in the find box** — the editor keymap never sees keys
+   typed in that input. `onFindKeydown` handles it.
+
+Verified in WebKit: 70 sequential presses, 40 far jumps with two rare words (before:
+29 and 14 misses, after: 0), rapid presses, wrap-around, ◀ ▶ buttons, F3, outline
+clicks; then by hand in the deployed app. `plugin.test.ts` fails if (1) comes back.
+
+### Files Modified
+
+- `frontend/src/editor/scroll.ts` — `scrollForcePlugin`, `sectionsAround`, cancellable runs.
+- `frontend/src/editor/search/plugin.ts` — inverted condition fixed.
+- `frontend/src/editor/search/plugin.test.ts` (new) — navigation tests.
+- `frontend/src/editor/search/SearchBar.svelte` — F3.
+- `frontend/src/editor/Editor.svelte` — plugin registered at both sites, `.cv-visible` CSS.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 2.0.1 → 3.0.0.
+
+---
+
+## Rev 94 — 2026-10-30 — Taskfile with local deploy for macOS and Linux → v2.0.1 [dev]
+
+The repo had no `Taskfile.yml`. Added one with `run`, `frontend`, `build`,
+`build-cli`, `test`, `fmt`, `lint`, `check`, `deploy`, `clean`.
+
+`task deploy` picks the platform through task's `platforms:`:
+
+- **macOS** (`INSTALL_DIR`, default `/Applications`) — refuses while the app runs
+  from there, because it may hold unsaved edits. Copies to `fbe-go.app.new` first
+  and swaps, so a failed copy leaves the installed app intact. Refreshes the
+  `.fb2` association with `lsregister -f`.
+- **Linux** (`PREFIX`, default `~/.local`) — installs the binary, 512 px icon, MIME
+  type and a `.desktop` file with an absolute `Exec`, because `~/.local/bin` is
+  often not on a desktop session's PATH. Refreshes the MIME and desktop databases
+  and makes the app the `.fb2` default; those three steps tolerate missing tools.
+
+Two build details are deliberate:
+
+- `build` runs `npm ci` + `wails build -s`, not plain `wails build`, whose
+  `npm install` under npm 11 pruned `package-lock.json` in Rev 93.
+- `frontend` creates `frontend/dist/.keep` first: `wails generate module` compiles
+  the Go code, and `go:embed all:frontend/dist` fails on a fresh clone with no
+  files there. Found on a clean clone; the Mac tree hid it with old build output.
+
+Verified: `task check`, `build-cli` and `lint` on the Mac; `task deploy` into a
+temporary `INSTALL_DIR` on the Mac and a temporary `PREFIX` on a clean NixOS clone
+inside `nix develop`. The Linux binary was built and installed, not launched
+(headless host). `fmt` was only dry-run, since it would reformat ~12 unrelated files.
+
+### Files Modified
+
+- `Taskfile.yml` (new).
+- `CLAUDE.md` — Taskfile note under the build commands.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 2.0.0 → 2.0.1.
+
+---
+
 ## Rev 93 — 2026-10-30 — XSD validation on pure-Go helium; libxml2 and `-tags xsd` removed → v2.0.0 [dev]
 
 The v1.0.6 release (Rev 92) never published: both Linux jobs failed to compile.

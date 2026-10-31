@@ -7,8 +7,9 @@
  * If any shape is lost, users would see content disappear on Save.
  */
 import { describe, it, expect } from "vitest";
-import { fb2ToPMDoc } from "./parse";
-import { pmDocToFB2 } from "./serialize";
+import { buildAnnotation, fb2ToPMDoc } from "./parse";
+import { buildAnnotation as serializeAnnotation, pmDocToFB2 } from "./serialize";
+import type { Annotation } from "../fb2/types";
 import { SAMPLE_BOOK } from "../fb2/sample";
 import type { FictionBook, Inline } from "../fb2/types";
 
@@ -158,5 +159,41 @@ describe("serialize round-trip on SAMPLE_BOOK", () => {
 
   it("preserves description untouched (title-info, document-info)", () => {
     expect(out.Description).toEqual(SAMPLE_BOOK.Description);
+  });
+});
+
+describe("annotation round trip", () => {
+  it("keeps every block kind, paragraph attrs, Style and Raw", () => {
+    const raw = { XMLName: { Space: "", Local: "unknown-tag" }, Attrs: [], Content: "x" };
+    const a: Annotation = {
+      ID: "ann1",
+      Lang: "uk",
+      Children: [
+        { Paragraph: { ID: "p1", Style: "fancy", Children: [
+          { Text: "plain " },
+          { Style: { Name: "dropcap", Children: [{ Text: "styled" }] } },
+        ] } },
+        { Subtitle: { Children: [{ Text: "sub" }] } },
+        { EmptyLine: {} },
+        { Cite: { Children: [{ Paragraph: { Children: [{ Text: "quoted" }] } }] } },
+        { Poem: { Stanzas: [{ Verses: [{ Children: [{ Text: "verse" }] }] }] } },
+        { Table: { Rows: [{ Cells: [{ Children: [{ Text: "cell" }] }] }] } },
+        { Raw: raw },
+      ] as Annotation["Children"],
+    };
+    const back = serializeAnnotation(buildAnnotation(a));
+    expect(back.ID).toBe("ann1");
+    expect(back.Lang).toBe("uk");
+    const kids = back.Children!;
+    expect(kids.map((b) => Object.keys(b).filter((k) => (b as Record<string, unknown>)[k])[0]))
+      .toEqual(["Paragraph", "Subtitle", "EmptyLine", "Cite", "Poem", "Table", "Raw"]);
+    expect(kids[0].Paragraph!.ID).toBe("p1");
+    expect(kids[0].Paragraph!.Style).toBe("fancy");
+    expect(JSON.stringify(kids[0].Paragraph!.Children)).toContain("dropcap");
+    expect(JSON.stringify(kids[6].Raw)).toContain("unknown-tag");
+  });
+
+  it("gives an empty annotation one paragraph to type in", () => {
+    expect(buildAnnotation(null).childCount).toBe(1);
   });
 });

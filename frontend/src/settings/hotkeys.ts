@@ -26,7 +26,7 @@ export interface HotkeyAction {
   editor: boolean;
 }
 
-export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
+export const HOTKEY_ACTIONS = [
   // File
   { id: "Save",                 label: "Save",                    category: "File",       editor: false },
   { id: "SaveAs",               label: "Save As…",                category: "File",       editor: false },
@@ -67,7 +67,10 @@ export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
   { id: "OpenBinaries",         label: "Binary manager…",         category: "Dialogs",    editor: false },
   { id: "OpenSettings",         label: "Settings…",               category: "Dialogs",    editor: false },
   { id: "OpenHelp",             label: "Help…",                   category: "Dialogs",    editor: false },
-];
+] as const satisfies readonly HotkeyAction[];
+
+/** Ids of the actions that are ProseMirror commands; see editor/commandRegistry.ts. */
+export type EditorActionId = Extract<(typeof HOTKEY_ACTIONS)[number], { editor: true }>["id"];
 
 export const HOTKEY_ACTION_IDS: readonly string[] = HOTKEY_ACTIONS.map((a) => a.id);
 

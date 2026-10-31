@@ -1,40 +1,34 @@
 <script lang="ts">
-  import { onDestroy, createEventDispatcher } from "svelte";
+  import { onDestroy, onMount, createEventDispatcher } from "svelte";
   import { EditorState, Plugin, type Transaction } from "prosemirror-state";
   import { EditorView } from "prosemirror-view";
-  import { history, redo, undo, undoDepth } from "prosemirror-history";
-  import { keymap } from "prosemirror-keymap";
+  import { history } from "prosemirror-history";
+  import { keydownHandler, keymap } from "prosemirror-keymap";
   import { baseKeymap } from "prosemirror-commands";
   import { Node as PMNode } from "prosemirror-model";
   import { fb2Schema } from "./schema";
-  import { fb2ToPMDoc } from "./parse";
+  import { errorDoc, fb2ToPMDoc } from "./parse";
   import { pmDocToFB2 } from "./serialize";
   import { cleanPastedHTML, cleanPastedText } from "./paste";
-  import { searchPlugin, findNext as searchFindNext, findPrev as searchFindPrev } from "./search/plugin";
+  import { searchPlugin } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
-  import { scrollPosIntoView } from "./scroll";
-  import {
-    toggleStrong, toggleEmphasis, toggleStrikethrough,
-    toggleSub, toggleSup, toggleCode, toggleLink,
-    styleNormal, styleSubtitle, styleTextAuthor,
-    insertEmptyLine,
-    cloneContainer, removeOuterContainer,
-    addTitle, addEpigraph, addAnnotation, addTextAuthor,
-    insertCite, insertPoem, insertTableCmd,
-    mergeContainers,
-  } from "./commands";
+  import { scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
+  import { blockPos, positionAt, type BookPosition } from "../tree/position";
+  import { findNodePos } from "../tree/outline";
+  import { dirtyPlugin, markClean } from "./dirtyTracker";
+  import { createImageViews } from "./imageView";
+  import { toggleLink, insertTableCmd } from "./commands";
+  import { EDITOR_COMMANDS, type CommandId } from "./commandRegistry";
   import { HOTKEY_ACTIONS, toPMKey } from "../settings/hotkeys";
   import type { Command } from "prosemirror-state";
   import TableDialog from "./TableDialog.svelte";
   import type { FictionBook, Binary } from "../fb2/types";
-  import type { NodeView } from "prosemirror-view";
 
   export let fb: FictionBook | null = null;
 
-  /** User-configurable hotkey map, loaded from settings.Hotkeys. Passing a
-      new object identity triggers a reconfigure — history / document survive,
-      but the keymap plugin is swapped. Empty / missing actions are simply
-      not bound. */
+  /** User-configurable hotkey map, loaded from settings.Hotkeys. A new object
+      takes effect at once, see `activeKeymap`. Empty / missing actions are
+      simply not bound. */
   export let hotkeys: Record<string, string> = {};
 
   /** Export the EditorView so the toolbar in App.svelte can dispatch commands. */
@@ -43,47 +37,81 @@
   /** Inferred from the document's title-info <lang> for native spellcheck routing. */
   $: lang = fb?.Description?.TitleInfo?.Lang || "en";
 
-  const dispatch = createEventDispatcher<{ dirty: boolean }>();
-  let baselineUndoDepth = 0;
-  let lastEmittedBodyDirty: boolean | null = null;
+  const dispatch = createEventDispatcher<{ dirty: boolean; position: BookPosition }>();
+  // What sits at the top of the visible text, reported once per frame at most.
+  const POSITION_PROBE_Y = 40;
+  let positionFrame = 0;
+  let lastPosition = "";
+  const POSITION_SETTLE_MS = 150;
+  let positionSettle: ReturnType<typeof setTimeout> | undefined;
 
-  /** Body edits are tracked via PM's undo stack: capture baseline on
-   *  view creation, emit `dirty: true` when the depth grows past it
-   *  and `dirty: false` once the user undoes back to it. Baseline is
-   *  set in the view-factory (called at view creation, before any
-   *  transactions) — capturing it inside `update` would set it AFTER
-   *  the first user edit, leaving undo-to-clean unreachable. */
-  function dirtyPlugin(): Plugin {
-    return new Plugin({
-      view: (v) => {
-        baselineUndoDepth = undoDepth(v.state);
-        lastEmittedBodyDirty = false;
-        return {
-          update(v, prev) {
-            if (v.state.doc === prev.doc) return;
-            const dirty = undoDepth(v.state) > baselineUndoDepth;
-            if (lastEmittedBodyDirty !== dirty) {
-              lastEmittedBodyDirty = dirty;
-              dispatch("dirty", dirty);
-            }
-          },
-        };
-      },
-    });
+  function schedulePosition(): void {
+    if (!positionFrame) positionFrame = requestAnimationFrame(reportPosition);
   }
 
-  /** Re-snapshot the baseline at the current PM state. App.svelte calls
-   *  this after a successful Save so subsequent undos that return to
-   *  the just-saved point are recognised as clean. */
-  export function markSaved(): void {
-    if (!view) return;
-    baselineUndoDepth = undoDepth(view.state);
-    if (lastEmittedBodyDirty !== false) {
-      lastEmittedBodyDirty = false;
-      dispatch("dirty", false);
+  /** The document position at the top of the visible text. */
+  function topPos(): number | null {
+    if (!view || view.isDestroyed) return null;
+    const box = (scrollContainer(view) ?? (view.dom as HTMLElement)).getBoundingClientRect();
+    return view.posAtCoords({ left: box.left + box.width / 2, top: box.top + POSITION_PROBE_Y })?.pos ?? null;
+  }
+
+  // Where the reader was while body.resizing hides the editor. Hiding collapses the scroller to
+  // zero, and a width change reflows the text, so the place is kept as a document position.
+  let heldPos: number | null = null;
+
+  /** Bring text block `index` to the reading line. */
+  export function scrollToBlock(index: number): void {
+    const pos = view && blockPos(view.state.doc, index);
+    if (view && pos) scrollPosIntoView(view, pos, "top", POSITION_PROBE_Y);
+  }
+
+  export function holdPosition(): void {
+    heldPos ??= topPos();
+  }
+
+  export function releasePosition(): void {
+    const pos = heldPos;
+    heldPos = null;
+    if (pos === null || !view) return;
+    scrollPosIntoView(view, pos, "top", POSITION_PROBE_Y);
+    schedulePosition();
+  }
+
+  function reportPosition(): void {
+    positionFrame = 0;
+    if (!view || view.isDestroyed || heldPos !== null) return;
+    const pos = topPos();
+    if (pos === null) return;
+    const next = positionAt(view.state.doc, pos);
+    const key = `${next.path.join(".")}@${next.percent}@${next.block}`;
+    if (key !== lastPosition) {
+      lastPosition = key;
+      dispatch("position", next);
     }
   }
 
+  function onAnyScroll(e: Event): void {
+    if (!view || !(e.target instanceof Node) || !e.target.contains(view.dom)) return;
+    schedulePosition();
+    // A jump lands on sections that are only just rendering: measure again once it settles.
+    clearTimeout(positionSettle);
+    positionSettle = setTimeout(schedulePosition, POSITION_SETTLE_MS);
+  }
+
+  onMount(() => {
+    window.addEventListener("scroll", onAnyScroll, true); // scroll does not bubble
+    return () => {
+      window.removeEventListener("scroll", onAnyScroll, true);
+      cancelAnimationFrame(positionFrame);
+      clearTimeout(positionSettle);
+    };
+  });
+
+  /** The current state is saved: undoing back to it now reads as clean. */
+  export function markSaved(): void {
+    if (view) markClean(view);
+  }
 
   /** Serialize current PM doc back to a FictionBook, merged with the original description + binaries. */
   export function currentFB(): FictionBook | null {
@@ -116,185 +144,30 @@
     }
   }
 
-  /** Walk the doc by outline path: [bodyIdx, sectionIdx, sub, …]. Returns the position of that node. */
-  function findNodePos(doc: PMNode, path: number[]): number | null {
-    if (path.length === 0) return null;
-    // Step 0: the bodyIdx-th body child of doc.
-    let cursor = doc;
-    let absPos = 0;
-    let remaining = path.slice();
-    // Descend through body → section → sub…
-    // First, pick body.
-    const bodyIdx = remaining.shift()!;
-    let i = 0;
-    for (let c = 0; c < cursor.childCount; c++) {
-      const child = cursor.child(c);
-      if (child.type.name === "body") {
-        if (i === bodyIdx) {
-          absPos += 1; // enter body
-          cursor = child;
-          break;
-        }
-        i++;
-      }
-      absPos += child.nodeSize;
-    }
-    // Then descend into sections.
-    while (remaining.length > 0) {
-      const want = remaining.shift()!;
-      let sIdx = 0;
-      let found = false;
-      for (let c = 0; c < cursor.childCount; c++) {
-        const child = cursor.child(c);
-        if (child.type.name === "section") {
-          if (sIdx === want) {
-            absPos += 1; // enter section
-            cursor = child;
-            found = true;
-            break;
-          }
-          sIdx++;
-        }
-        absPos += child.nodeSize;
-      }
-      if (!found) return null;
-    }
-    return absPos;
-  }
-
   let container: HTMLDivElement;
 
-  // Image rendering: schema.ts' toDOM generates `fb2://binary${href}` which
-  // relies on a custom asset-server handler we never wired up — images would
-  // otherwise render as broken icons. We resolve href → `data:` URL on the
-  // fly via NodeViews, closed over a shared binariesRef that we refresh
-  // whenever fb.Binaries identity changes (file open, upload, rename,
-  // delete). `refreshImageViews()` iterates every active NodeView and
-  // re-resolves its src — cheap, since each view only reassigns img.src.
-  //
-  // Serialization is unaffected: pmDocToFB2 only reads node.attrs.href.
-  let binariesRef: { current: Binary[] } = { current: [] };
-  $: binariesRef.current = fb?.Binaries ?? [];
-  const imageViews = new Set<ImageNodeView>();
+  let binaries: Binary[] = [];
+  $: binaries = fb?.Binaries ?? [];
+  const images = createImageViews(() => binaries);
+  $: binaries, images.refresh();
 
-  interface ImageNodeView extends NodeView {
-    refresh(): void;
-  }
-
-  function resolveBinary(href: string | undefined): string {
-    if (!href) return "";
-    const id = href.replace(/^#/, "");
-    const bin = binariesRef.current.find(b => b.ID === id);
-    return bin ? `data:${bin.ContentType};base64,${bin.Data}` : "";
-  }
-
-  function refreshImageViews(): void {
-    for (const v of imageViews) v.refresh();
-  }
-
-  // Re-resolve every image whenever the binaries array changes identity —
-  // new upload / delete / rename cascades here and images pick up fresh
-  // data: URLs without needing a PM remount (which would blow undo history).
-  $: void fb?.Binaries, refreshImageViews();
-
-  function createImageView(node: PMNode): ImageNodeView {
-    const blockLevel = node.type.name === "image_block";
-    const wrap = document.createElement(blockLevel ? "div" : "span");
-    wrap.className = "image";
-    if (node.attrs.href) wrap.setAttribute("data-href", node.attrs.href);
-    if (node.attrs.title) wrap.title = node.attrs.title;
-
-    const img = document.createElement("img");
-    img.alt = node.attrs.alt || "";
-    const resolved = resolveBinary(node.attrs.href);
-    if (resolved) {
-      img.src = resolved;
-    } else {
-      img.classList.add("missing");
-    }
-    wrap.appendChild(img);
-
-    // Keep a mutable reference to the current node so refresh() uses the
-    // latest href (after setNodeMarkup) without needing another update()
-    // round-trip.
-    let current = node;
-    const nv: ImageNodeView = {
-      dom: wrap,
-      update(next) {
-        if (next.type !== current.type) return false;
-        current = next;
-        wrap.setAttribute("data-href", next.attrs.href || "");
-        wrap.title = next.attrs.title || "";
-        img.alt = next.attrs.alt || "";
-        const src = resolveBinary(next.attrs.href);
-        img.src = src;
-        img.classList.toggle("missing", !src);
-        return true;
-      },
-      refresh() {
-        const src = resolveBinary(current.attrs.href);
-        img.src = src;
-        img.classList.toggle("missing", !src);
-      },
-      destroy() {
-        imageViews.delete(nv);
-      },
-    };
-    imageViews.add(nv);
-    return nv;
-  }
-
-  /** Map of action id → PM Command. Non-PM actions (Save, Find, dialogs) are
-      handled at the App level and not listed here. Keep in sync with the
-      `editor: true` rows of HOTKEY_ACTIONS. */
-  const EDITOR_COMMANDS: Record<string, Command> = {
-    ToggleStrong: toggleStrong,
-    ToggleEmphasis: toggleEmphasis,
-    ToggleStrikethrough: toggleStrikethrough,
-    ToggleSub: toggleSub,
-    ToggleSup: toggleSup,
-    ToggleCode: toggleCode,
-    StyleNormal: styleNormal,
-    StyleSubtitle: styleSubtitle,
-    StyleTextAuthor: styleTextAuthor,
-    InsertEmptyLine: insertEmptyLine,
-    CloneContainer: cloneContainer,
-    RemoveOuterContainer: removeOuterContainer,
-    AddTitle: addTitle,
-    AddEpigraph: addEpigraph,
-    AddAnnotation: addAnnotation,
-    AddTextAuthor: addTextAuthor,
-    InsertCite: insertCite,
-    InsertPoem: insertPoem,
-    MergeContainers: mergeContainers,
-    FindNext: (_s, _d, v) => (v ? searchFindNext(v) : false),
-    FindPrev: (_s, _d, v) => (v ? searchFindPrev(v) : false),
-  };
-
-  /** Build a PM keymap record from the current hotkeys map. Always includes
-      the undo/redo stack — those are hardcoded because rebinding them
-      invariably breaks in ways users don't expect. Also keeps F3 / Shift-F3
-      aliases for FindNext / FindPrev (legacy Windows affordance; independent
-      of the user's Ctrl-G remap). */
   function buildKeymap(hk: Record<string, string>): Record<string, Command> {
     const bindings: Record<string, Command> = {
-      "Mod-z": undo,
-      "Mod-y": redo,
-      "Mod-Shift-z": redo,
+      "Mod-z": EDITOR_COMMANDS.Undo,
+      "Mod-y": EDITOR_COMMANDS.Redo,
+      "Mod-Shift-z": EDITOR_COMMANDS.Redo,
     };
     for (const action of HOTKEY_ACTIONS) {
       if (!action.editor) continue;
       const raw = hk[action.id];
       if (!raw) continue;
       const pmKey = toPMKey(raw);
-      const cmd = EDITOR_COMMANDS[action.id];
-      if (!pmKey || !cmd) continue;
-      bindings[pmKey] = cmd;
+      if (pmKey) bindings[pmKey] = EDITOR_COMMANDS[action.id];
     }
     // F3 / Shift-F3 stay hardcoded as Windows-convention aliases — users can
     // still rebind FindNext to something else without losing these.
-    bindings["F3"] = (_s, _d, v) => (v ? searchFindNext(v) : false);
-    bindings["Shift-F3"] = (_s, _d, v) => (v ? searchFindPrev(v) : false);
+    bindings["F3"] = EDITOR_COMMANDS.FindNext;
+    bindings["Shift-F3"] = EDITOR_COMMANDS.FindPrev;
     return bindings;
   }
 
@@ -305,12 +178,20 @@
       doc,
       plugins: [
         history(),
-        keymap(buildKeymap(hotkeys)),
+        new Plugin({ props: { handleKeyDown: (v, e) => activeKeymap(v, e) } }),
         keymap({ "Mod-[": noteLinksBack }),
         keymap(baseKeymap),
         searchPlugin(),
+        scrollForcePlugin(),
         noteLinksPlugin(),
-        dirtyPlugin(),
+        dirtyPlugin((dirty) => dispatch("dirty", dirty)),
+        new Plugin({
+          view: () => ({
+            update(v, prev) {
+              if (v.state.doc !== prev.doc) schedulePosition();
+            },
+          }),
+        }),
       ],
     });
     view = new EditorView(container, {
@@ -318,33 +199,14 @@
       attributes: { spellcheck: "true", lang },
       transformPastedHTML: cleanPastedHTML,
       transformPastedText: cleanPastedText,
-      nodeViews: {
-        image_block: (node) => createImageView(node),
-        image_inline: (node) => createImageView(node),
-      },
+      nodeViews: images.nodeViews,
     });
-    lastHotkeys = hotkeys;
+    schedulePosition();
   }
 
-  /** Rebuild just the user-facing keymap without re-mounting — preserves
-      document state, selection, and undo history via PluginKey continuity
-      in prosemirror-history (historyKey) and our searchPlugin (searchPluginKey).
-      Called when the parent writes a new `hotkeys` object (Settings → Apply). */
-  let lastHotkeys: Record<string, string> | null = null;
-  $: if (view && hotkeys !== lastHotkeys) {
-    lastHotkeys = hotkeys;
-    view.updateState(view.state.reconfigure({
-      plugins: [
-        history(),
-        keymap(buildKeymap(hotkeys)),
-        keymap({ "Mod-[": noteLinksBack }),
-        keymap(baseKeymap),
-        searchPlugin(),
-        noteLinksPlugin(),
-        dirtyPlugin(),
-      ],
-    }));
-  }
+  /** Settings → Apply swaps the bindings here. Never `reconfigure` for this: PM destroys every
+   *  plugin view on it, which reset the dirty baseline and blanked the search bar. */
+  $: activeKeymap = keydownHandler(buildKeymap(hotkeys));
 
   /**
    * Build a PM doc from the FictionBook; on schema failure, fall back to a
@@ -357,18 +219,7 @@
       return fb2ToPMDoc(src);
     } catch (err) {
       console.error("[fbe] fb2ToPMDoc failed:", err, src);
-      const msg = (err as Error).message || String(err);
-      const N = fb2Schema.nodes;
-      const body = N.body.create(null, [
-        N.section.create(null, [
-          N.title.create(null, [
-            N.paragraph.create(null, fb2Schema.text("Could not render this document")),
-          ]),
-          N.paragraph.create(null, fb2Schema.text(msg)),
-          N.paragraph.create(null, fb2Schema.text("The raw FB2 is still loaded — Save As will write it back unchanged.")),
-        ]),
-      ]);
-      return N.doc.create(null, [body]);
+      return errorDoc((err as Error).message || String(err));
     }
   }
 
@@ -402,9 +253,10 @@
     lastMountedFB = null;
   });
 
-  export function exec(cmd: (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean): void {
+  /** Run a command from outside the editor, such as a toolbar button. */
+  export function run(id: CommandId): void {
     if (!view) return;
-    cmd(view.state, view.dispatch);
+    EDITOR_COMMANDS[id](view.state, view.dispatch, view);
     view.focus();
   }
 
@@ -424,19 +276,6 @@
     insertTableCmd(e.detail.rows, e.detail.cols, e.detail.header)(view.state, view.dispatch);
     view.focus();
   }
-
-  // Re-export commands so App.svelte can import-and-bind from the same place.
-  export {
-    toggleStrong, toggleEmphasis, toggleStrikethrough,
-    toggleSub, toggleSup, toggleCode,
-    styleNormal, styleSubtitle, styleTextAuthor,
-    insertEmptyLine,
-    cloneContainer, removeOuterContainer,
-    addTitle, addEpigraph, addAnnotation, addTextAuthor,
-    insertCite, insertPoem,
-    mergeContainers,
-    undo, redo,
-  };
 </script>
 
 <div bind:this={container} class="editor" />
@@ -460,11 +299,10 @@
      on every mousemove of the window edge.
      1. `contain: layout style` — children can't affect outer layout, so
         the reflow walk stops at the section boundary.
-     2. `content-visibility: auto` — actively skip rendering of off-screen
-        sections entirely until they scroll into view. Combined with
-        `contain-intrinsic-size`, the browser reserves a placeholder
-        height so the scrollbar stays accurate without paying for layout
-        on hidden content. This is where the big win comes from on
+     2. `content-visibility: auto` on leaf sections — skip rendering them
+        off-screen. Each carries an estimated `contain-intrinsic-size`
+        (schema.ts), so the scrollbar stays accurate without paying for
+        layout on hidden content. This is where the big win comes from on
         large books — Облачный атлас (~7 000 lines XML, ~3 000 PM
         blocks) goes from "the resize handle drags with a 500 ms lag"
         to "drags at 60 fps".
@@ -477,8 +315,12 @@
        positions, not DOM rect coordinates. */
   :global(.ProseMirror div.section) {
     contain: layout style;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 600px;
+  }
+  :global(.ProseMirror div.section.leaf) {
+    content-visibility: auto; /* height estimate: schema.ts, estimateHeight */
+  }
+  :global(.ProseMirror div.section.cv-visible) {
+    content-visibility: visible;
   }
   :global(.ProseMirror div.poem),
   :global(.ProseMirror div.table),
@@ -559,7 +401,7 @@
   }
   :global(.ProseMirror span.code),
   :global(.ProseMirror code) {
-    font-family: "SF Mono", Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.92em;
     background: var(--bg-chrome);
     padding: 0.1em 0.3em;
@@ -591,7 +433,7 @@
     content: attr(alt) " (missing)";
     display: block;
     padding: 0.5em;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.8em;
     color: var(--warn-fg);
   }
@@ -629,7 +471,7 @@
       );
     border: 1px dashed var(--warn);
     color: var(--warn-fg);
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
     border-radius: 3px;
     user-select: none;
@@ -641,7 +483,7 @@
     background: var(--warn-bg-inline);
     border: 1px dashed var(--warn);
     color: var(--warn-fg);
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
     border-radius: 3px;
     user-select: none;

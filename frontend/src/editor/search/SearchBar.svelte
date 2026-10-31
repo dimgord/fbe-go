@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backend } from "../../runtime/backend";
   import { createEventDispatcher, onMount, tick } from "svelte";
   import type { EditorView } from "prosemirror-view";
   import {
@@ -22,6 +23,41 @@
   let findInput: HTMLInputElement;
   let replaceInput: HTMLInputElement;
 
+  // Search history, kept in the settings file by Go.
+  let recent: string[] = [];
+  let historyOpen = false;
+  let historyIdx = -1;
+
+  /** Only a query that found something is worth keeping; called on Enter and on close. */
+  async function remember() {
+    const q = pattern.trim();
+    if (!q || matchCount === 0 || q === recent[0]) return;
+    recent = (await backend()?.AddRecentSearch(q).catch(() => null)) ?? recent;
+  }
+
+  async function clearHistory() {
+    await backend()?.ClearRecentSearches().catch(() => null);
+    recent = [];
+    closeHistory();
+  }
+
+  function openHistory() {
+    if (recent.length === 0) return;
+    historyOpen = true;
+    historyIdx = -1;
+  }
+
+  function closeHistory() {
+    historyOpen = false;
+    historyIdx = -1;
+  }
+
+  function pickHistory(q: string) {
+    pattern = q;
+    closeHistory();
+    findInput?.focus();
+  }
+
   // Push every relevant change into the plugin. Separate reactive from the
   // input binding so we don't rescan on every keystroke inside replacement.
   $: if (view) {
@@ -44,6 +80,7 @@
     await tick();
     findInput?.focus();
     findInput?.select();
+    recent = (await backend()?.RecentSearches().catch(() => null)) ?? [];
   });
 
   async function switchMode(next: "find" | "replace") {
@@ -54,14 +91,40 @@
   }
 
   function close() {
+    void remember();
     if (view) clearSearch(view);
     dispatch("close");
   }
 
   function onFindKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") {
+    if (historyOpen) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const step = e.key === "ArrowDown" ? 1 : -1;
+        historyIdx = (historyIdx + step + recent.length + (historyIdx < 0 && step < 0 ? 1 : 0)) % recent.length;
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeHistory();
+        return;
+      }
+      if (e.key === "Enter" && historyIdx >= 0) {
+        e.preventDefault();
+        pickHistory(recent[historyIdx]);
+        return;
+      }
+      closeHistory();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      openHistory();
+      return;
+    }
+    // F3 too: the editor's keymap never sees keys typed in this input.
+    if (e.key === "Enter" || e.key === "F3") {
       e.preventDefault();
       if (!view) return;
+      void remember();
       if (e.shiftKey) findPrev(view);
       else findNext(view);
     } else if (e.key === "Escape") {
@@ -110,16 +173,48 @@
     >
       ▸
     </button>
-    <input
-      bind:this={findInput}
-      type="text"
-      class="query"
-      class:invalid={pattern && !valid}
-      placeholder="Find"
-      bind:value={pattern}
-      on:keydown={onFindKeydown}
-      spellcheck="false"
-    />
+    <div class="find-field">
+      <input
+        bind:this={findInput}
+        type="text"
+        class="query"
+        class:invalid={pattern && !valid}
+        placeholder="Find"
+        bind:value={pattern}
+        on:keydown={onFindKeydown}
+        on:blur={closeHistory}
+        spellcheck="false"
+        role="combobox"
+        aria-controls="find-history"
+        aria-expanded={historyOpen}
+      />
+      {#if recent.length > 0}
+        <button
+          type="button"
+          class="history-toggle"
+          title="Recent searches (↓)"
+          aria-label="Recent searches"
+          on:mousedown|preventDefault={() => (historyOpen ? closeHistory() : openHistory())}
+        >▾</button>
+      {/if}
+      {#if historyOpen}
+        <ul id="find-history" class="history" role="listbox" aria-label="Recent searches">
+          {#each recent as q, i (q)}
+            <li role="option" aria-selected={i === historyIdx}>
+              <button
+                type="button"
+                class:selected={i === historyIdx}
+                title={q}
+                on:mousedown|preventDefault={() => pickHistory(q)}
+              >{q}</button>
+            </li>
+          {/each}
+          <li class="clear">
+            <button type="button" on:mousedown|preventDefault={clearHistory}>Clear history</button>
+          </li>
+        </ul>
+      {/if}
+    </div>
     <span class="counter" class:empty={!pattern}>{counter}</span>
 
     <div class="toggles">
@@ -224,12 +319,74 @@
   .query {
     min-width: 180px;
     padding: 0.25rem 0.5rem;
-    background: var(--bg);
+    background: var(--bg-surface);
     color: var(--fg);
     border: 1px solid var(--border-input);
     border-radius: 3px;
     font-family: inherit;
     font-size: inherit;
+  }
+  .find-field {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .find-field .query {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-right: 1.5rem;
+  }
+  .history-toggle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 1.4rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--fg-secondary);
+    cursor: pointer;
+  }
+  .history {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    max-height: 16rem;
+    margin: 2px 0 0;
+    padding: 0.2rem 0;
+    overflow-y: auto;
+    list-style: none;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-input);
+    border-radius: 3px;
+  }
+  .history button {
+    display: block;
+    width: 100%;
+    padding: 0.2rem 0.5rem;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+  }
+  .history button:hover,
+  .history button.selected {
+    background: var(--bg-hover);
+  }
+  .history .clear {
+    border-top: 1px solid var(--border);
+  }
+  .history .clear button {
+    color: var(--fg-secondary);
   }
   .query.invalid {
     border-color: var(--danger);
@@ -257,24 +414,24 @@
     min-width: 1.8rem;
     height: 1.7rem;
     padding: 0 0.4rem;
-    background: var(--bg);
+    background: var(--bg-surface);
     color: var(--fg-secondary);
     border: 1px solid var(--border-input);
     border-radius: 3px;
     cursor: pointer;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
   }
   button.toggle.on {
     background: var(--fg-link);
-    color: var(--bg);
+    color: var(--bg-surface);
     border-color: var(--fg-link);
   }
   .nav button,
   .close {
     height: 1.7rem;
     padding: 0 0.6rem;
-    background: var(--bg);
+    background: var(--bg-surface);
     color: var(--fg);
     border: 1px solid var(--border-input);
     border-radius: 3px;

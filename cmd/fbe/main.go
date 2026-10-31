@@ -16,28 +16,38 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
+	"github.com/dimgord/fbe-go/internal/fb2/fsutil"
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
-	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
 	"github.com/dimgord/fbe-go/internal/fb2/zipfb2"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// errInvalid means the command ran and its answer is "this book is not valid".
+var errInvalid = errors.New("invalid")
+
+// run is the whole CLI, returning the exit code: 0 ok, 1 failure, 2 bad usage.
+func run(argv []string, stdout, stderr io.Writer) int {
+	if len(argv) < 1 {
+		usage(stderr)
+		return 2
 	}
-	cmd, args := os.Args[1], os.Args[2:]
+	cmd, args := argv[0], argv[1:]
 
 	var err error
 	switch cmd {
 	case "validate":
-		err = cmdValidate(args)
+		err = cmdValidate(args, stdout)
 	case "thumb":
 		err = cmdThumb(args)
 	case "unpack":
@@ -45,24 +55,28 @@ func main() {
 	case "pack":
 		err = cmdPack(args)
 	case "info":
-		err = cmdInfo(args)
+		err = cmdInfo(args, stdout)
 	case "export":
 		err = cmdExport(args)
 	case "help", "-h", "--help":
-		usage()
+		usage(stderr)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
-		usage()
-		os.Exit(2)
+		fmt.Fprintf(stderr, "unknown command: %s\n\n", cmd)
+		usage(stderr)
+		return 2
+	}
+	if errors.Is(err, errInvalid) {
+		return 1
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, "error:", err)
+		return 1
 	}
+	return 0
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, `fbe — FictionBook Editor (Go) CLI
+func usage(w io.Writer) {
+	fmt.Fprintln(w, `fbe — FictionBook Editor (Go) CLI
 
 Usage:
   fbe validate FILE.fb2
@@ -73,43 +87,36 @@ Usage:
   fbe export   html FILE.fb2 OUT.html`)
 }
 
-func cmdValidate(args []string) error {
+func cmdValidate(args []string, stdout io.Writer) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: fbe validate FILE.fb2")
 	}
-	in, err := os.Open(args[0])
+	in, err := parser.Open(args[0])
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	errs, err := xsd.Validate(in)
+	errs, err := xsd.ValidateAll(in)
 	if err != nil {
 		return err
 	}
 	if len(errs) == 0 {
-		fmt.Println("VALID")
+		fmt.Fprintln(stdout, "VALID")
 		return nil
 	}
-	fmt.Printf("INVALID: %d error(s)\n", len(errs))
+	fmt.Fprintf(stdout, "INVALID: %d error(s)\n", len(errs))
 	for _, e := range errs {
-		fmt.Printf("  %s\n", e.Message)
+		fmt.Fprintf(stdout, "  %d:%d %s\n", e.Line, e.Column, e.Message)
 	}
-	os.Exit(1)
-	return nil
+	return errInvalid
 }
 
 func cmdThumb(args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: fbe thumb FILE.fb2 OUT.jpg")
 	}
-	in, err := os.Open(args[0])
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	fb, err := parser.Parse(in)
+	fb, err := parser.ParseFile(args[0])
 	if err != nil {
 		return err
 	}
@@ -117,7 +124,7 @@ func cmdThumb(args []string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(args[1], data, 0o644)
+	return fsutil.WriteFile(args[1], data)
 }
 
 func cmdUnpack(args []string) error {
@@ -140,13 +147,10 @@ func cmdUnpack(args []string) error {
 	if len(args) >= 2 {
 		out = args[1]
 	}
-	f, err := os.Create(out)
-	if err != nil {
+	return fsutil.WriteAtomic(out, func(w io.Writer) error {
+		_, err := io.Copy(w, rc)
 		return err
-	}
-	defer f.Close()
-	_, err = copyAll(f, rc)
-	return err
+	})
 }
 
 func cmdPack(args []string) error {
@@ -163,28 +167,18 @@ func cmdPack(args []string) error {
 	if len(args) >= 2 {
 		out = args[1]
 	}
-	f, err := os.Create(out)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return zipfb2.Pack(f, args[0], in)
+	return fsutil.WriteAtomic(out, func(w io.Writer) error { return zipfb2.Pack(w, args[0], in) })
 }
 
-func cmdInfo(args []string) error {
+func cmdInfo(args []string, stdout io.Writer) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: fbe info FILE.fb2")
 	}
-	in, err := os.Open(args[0])
+	fb, err := parser.ParseFile(args[0])
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	fb, err := parser.Parse(in)
-	if err != nil {
-		return err
-	}
-	enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(fb.Description)
 }
@@ -193,41 +187,9 @@ func cmdExport(args []string) error {
 	if len(args) < 3 || args[0] != "html" {
 		return fmt.Errorf("usage: fbe export html FILE.fb2 OUT.html")
 	}
-	in, err := os.Open(args[1])
+	fb, err := parser.ParseFile(args[1])
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	fb, err := parser.Parse(in)
-	if err != nil {
-		return err
-	}
-	out, err := os.Create(args[2])
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_ = writer.Write // keep writer imported for later
-	return html.Export(out, fb)
-}
-
-// copyAll avoids importing io just for io.Copy.
-func copyAll(dst interface{ Write([]byte) (int, error) }, src interface{ Read([]byte) (int, error) }) (int64, error) {
-	buf := make([]byte, 32*1024)
-	var total int64
-	for {
-		n, err := src.Read(buf)
-		if n > 0 {
-			if _, werr := dst.Write(buf[:n]); werr != nil {
-				return total, werr
-			}
-			total += int64(n)
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				return total, nil
-			}
-			return total, err
-		}
-	}
+	return fsutil.WriteAtomic(args[2], func(w io.Writer) error { return html.Export(w, fb) })
 }

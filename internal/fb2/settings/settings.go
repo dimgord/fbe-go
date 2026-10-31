@@ -10,8 +10,12 @@ package settings
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+
+	"github.com/dimgord/fbe-go/internal/fb2/fsutil"
 )
 
 // Settings captures everything originally held in FBE's Settings.h.
@@ -27,6 +31,7 @@ type Settings struct {
 	Panes             PaneSizes         `json:"panes"`
 	Hotkeys           map[string]string `json:"hotkeys"` // action -> accelerator (e.g. "InsertPoem": "Ctrl+Shift+P")
 	RecentFiles       []string          `json:"recentFiles"`
+	RecentSearches    []string          `json:"recentSearches"`
 	WordsList         []WordsEntry      `json:"wordsList"`
 	FastMode          bool              `json:"fastMode"`
 }
@@ -84,16 +89,47 @@ func ConfigPath() (string, error) {
 	return filepath.Join(dir, "fbe", "config.json"), nil
 }
 
+// Maximum lengths of the Most-Recently-Used lists.
+const (
+	recentFilesCap    = 10
+	recentSearchesCap = 20
+)
+
+// Store is the settings file. The app has several writers (recents, window geometry, the
+// Settings dialog) on different goroutines; Update serializes their read-modify-write cycles.
+type Store struct {
+	mu   sync.Mutex
+	path string
+}
+
+// NewStore returns a Store for the file at path.
+func NewStore(path string) *Store { return &Store{path: path} }
+
+// UserStore returns the Store at ConfigPath. With no resolvable config directory it still
+// works: Load gives defaults, and writes fail.
+func UserStore() *Store {
+	p, err := ConfigPath()
+	if err != nil {
+		return &Store{}
+	}
+	return NewStore(p)
+}
+
 // Load reads settings from disk; returns defaults if the file does not exist.
 // Any missing hotkey-action keys are backfilled from DefaultHotkeys so users
 // picking up a new release don't have to reset their config to see the new
 // bindings.
-func Load() (*Settings, error) {
-	p, err := ConfigPath()
-	if err != nil {
-		return nil, err
+func (st *Store) Load() (*Settings, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.load()
+}
+
+func (st *Store) load() (*Settings, error) {
+	if st.path == "" {
+		return Default(), nil
 	}
-	data, err := os.ReadFile(p)
+	data, err := os.ReadFile(st.path)
 	if os.IsNotExist(err) {
 		return Default(), nil
 	}
@@ -106,6 +142,68 @@ func Load() (*Settings, error) {
 	}
 	MergeDefaultHotkeys(&s)
 	return &s, nil
+}
+
+// Update applies fn to the stored settings and writes the result, as one atomic step.
+func (st *Store) Update(fn func(*Settings)) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, err := st.load()
+	if err != nil {
+		return err
+	}
+	fn(s)
+	return st.save(s)
+}
+
+// Replace stores settings edited by the frontend. The MRU lists and window geometry are kept
+// from disk: Go owns them, and the frontend's copy may be older.
+func (st *Store) Replace(next *Settings) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	cur, err := st.load()
+	if err != nil {
+		return err
+	}
+	merged := *next
+	merged.RecentFiles, merged.RecentSearches, merged.Window = cur.RecentFiles, cur.RecentSearches, cur.Window
+	return st.save(&merged)
+}
+
+// AddRecent moves path to the front of the MRU list, capped at recentFilesCap.
+func (s *Settings) AddRecent(path string) {
+	s.RecentFiles = pushFront(s.RecentFiles, path, recentFilesCap)
+}
+
+// AddRecentSearch moves query to the front of the search history, capped at recentSearchesCap.
+func (s *Settings) AddRecentSearch(query string) {
+	s.RecentSearches = pushFront(s.RecentSearches, query, recentSearchesCap)
+}
+
+// pushFront returns list with item first, without its earlier occurrence, at most limit long.
+func pushFront(list []string, item string, limit int) []string {
+	if item == "" {
+		return list
+	}
+	out := make([]string, 0, limit)
+	out = append(out, item)
+	for _, x := range list {
+		if x != item && len(out) < limit {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// RemoveRecent drops path from the MRU list; a no-op if absent.
+func (s *Settings) RemoveRecent(path string) {
+	out := make([]string, 0, len(s.RecentFiles))
+	for _, p := range s.RecentFiles {
+		if p != path {
+			out = append(out, p)
+		}
+	}
+	s.RecentFiles = out
 }
 
 // MergeDefaultHotkeys ensures every action in DefaultHotkeys has an entry in
@@ -122,20 +220,19 @@ func MergeDefaultHotkeys(s *Settings) {
 	}
 }
 
-// Save writes settings to disk, creating the config directory as needed.
-func Save(s *Settings) error {
-	p, err := ConfigPath()
-	if err != nil {
-		return err
+// save writes settings to disk, creating the config directory as needed.
+func (st *Store) save(s *Settings) error {
+	if st.path == "" {
+		return errors.New("settings: no config directory")
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(st.path), 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o644)
+	return fsutil.WriteFile(st.path, data)
 }
 
 // Default returns a reasonable starting configuration.

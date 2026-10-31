@@ -53,11 +53,6 @@ var knownFB2Elements = map[string]bool{
 // first-char requirement.
 var openTagRE = regexp.MustCompile(`<([a-zA-Z][\w-]*)`)
 
-// unknownMsgTagRE pulls the tag name back out of a message this file
-// produced. Used by mergeXSDAndUnknown to dedupe against the validator's own
-// entries when both cover the same element at the same line.
-var unknownMsgTagRE = regexp.MustCompile(`Unknown FB2 element '([^']+)'`)
-
 // FindUnknownElements scans src for element names outside the bundled
 // FictionBook 2.0 vocabulary and returns one ValidationError per
 // occurrence. Supplements Validate: the schema validator's content-model
@@ -77,6 +72,7 @@ func FindUnknownElements(src []byte) []ValidationError {
 		out = append(out, ValidationError{
 			Line:    line,
 			Column:  col,
+			Element: tag,
 			Message: "Unknown FB2 element '" + tag + "' — not in the FictionBook 2.0 schema. Preserved verbatim on save.",
 		})
 	}
@@ -88,38 +84,26 @@ func FindUnknownElements(src []byte) []ValidationError {
 // same line with the same element name. Keeps the validator's richer messages
 // when both cover the same issue.
 func MergeXSDAndUnknown(xsdErrs, unknowns []ValidationError) []ValidationError {
-	// Build a set of (line, tag) already covered by Validate. Tag is extracted
-	// from its libxml2-style messages "Element '{ns}name':".
-	xsdTagRE := regexp.MustCompile(`Element '(?:\{[^}]*\})?([^']+)'`)
 	type key struct {
 		line int
 		tag  string
 	}
 	seen := make(map[key]bool, len(xsdErrs))
 	for _, e := range xsdErrs {
-		m := xsdTagRE.FindStringSubmatch(e.Message)
-		if len(m) >= 2 {
-			seen[key{e.Line, m[1]}] = true
+		if e.Element != "" {
+			seen[key{e.Line, e.Element}] = true
 		}
 	}
-
 	out := make([]ValidationError, 0, len(xsdErrs)+len(unknowns))
 	out = append(out, xsdErrs...)
 	for _, u := range unknowns {
-		m := unknownMsgTagRE.FindStringSubmatch(u.Message)
-		if len(m) < 2 {
+		if !seen[key{u.Line, u.Element}] {
 			out = append(out, u)
-			continue
 		}
-		if seen[key{u.Line, m[1]}] {
-			continue
-		}
-		out = append(out, u)
 	}
 	return out
 }
 
-// byteOffsetToLineCol converts a zero-based byte offset within src into
 // 1-based (line, column). Newlines terminate lines.
 func byteOffsetToLineCol(src []byte, offset int) (int, int) {
 	if offset < 0 || offset > len(src) {

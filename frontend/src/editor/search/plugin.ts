@@ -226,12 +226,12 @@ export function searchPlugin(): Plugin<SearchState> {
 //    EditorView; it's cleaner than wrapping every dispatch in a PM command. ──
 
 /**
- * `view.docView` is null on a destroyed EditorView — guard all entry points
+ * Guard all entry points
  * so stale refs propagated through `bind:view` during a view-switch don't
  * trip PM's internal `docView.matchesNode` on a dead view.
  */
 function isAlive(view: EditorView | undefined): view is EditorView {
-  return !!view && (view as unknown as { docView: unknown }).docView !== null;
+  return !!view && !view.isDestroyed;
 }
 
 export function setSearch(view: EditorView, pattern: string, flags: SearchFlags): void {
@@ -249,7 +249,7 @@ export function findNext(view: EditorView): boolean {
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return false;
   // The first Enter after typing visits the highlighted hit instead of skipping past it.
-  if (!onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "next" }));
+  if (onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "next" }));
   scrollActiveIntoView(view);
   return true;
 }
@@ -258,7 +258,7 @@ export function findPrev(view: EditorView): boolean {
   if (!isAlive(view)) return false;
   const st = searchPluginKey.getState(view.state);
   if (!st || st.matches.length === 0) return false;
-  if (!onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "prev" }));
+  if (onActive(view, st)) view.dispatch(view.state.tr.setMeta(searchPluginKey, { type: "prev" }));
   scrollActiveIntoView(view);
   return true;
 }

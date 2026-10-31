@@ -6,7 +6,7 @@
  * that captures the new state, and asserts the resulting doc shape.
  */
 import { describe, it, expect } from "vitest";
-import { EditorState, TextSelection } from "prosemirror-state";
+import { EditorState, TextSelection, type Command } from "prosemirror-state";
 import { Node as PMNode } from "prosemirror-model";
 import { fb2Schema } from "./schema";
 import { fb2ToPMDoc } from "./parse";
@@ -439,6 +439,51 @@ describe("insertTable", () => {
     const state = EditorState.create({ schema: fb2Schema, doc });
     expect(insertTableCmd(0, 3, true)(state)).toBe(false);
     expect(insertTableCmd(3, -1, true)(state)).toBe(false);
+  });
+});
+
+describe("insert commands follow the schema", () => {
+  const para = (text: string) => ({ Paragraph: { Children: [{ Text: text }] } });
+  const book = {
+    Description: {},
+    Bodies: [{
+      Sections: [{
+        Epigraph: [{ Children: [para("epigraph text")] }],
+        Body: [
+          para("plain"),
+          { Cite: { Children: [para("cited")] } },
+          { Poem: { Stanzas: [{ Verses: [{ Children: [{ Text: "verse" }] }] }] } },
+        ],
+      }],
+    }],
+  } as unknown as FictionBook;
+
+  const caretIn = (text: string) => {
+    const state = EditorState.create({ schema: fb2Schema, doc: fb2ToPMDoc(book) });
+    let pos = -1;
+    state.doc.descendants((n, p) => { if (n.isText && n.text === text) pos = p + 1; });
+    expect(pos).toBeGreaterThan(0);
+    return state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)));
+  };
+
+  // Availability must agree with the content model: the old name lists let a <table> into an
+  // <epigraph> and refused a <cite> there, the reverse of what the schema allows.
+  const cases: [string, Command, string, boolean][] = [
+    ["cite in a section", insertCite, "plain", true],
+    ["cite in an epigraph", insertCite, "epigraph text", true],
+    ["cite in a cite", insertCite, "cited", false],
+    ["cite in a verse", insertCite, "verse", false],
+    ["poem in a cite", insertPoem, "cited", true],
+    ["poem in a verse", insertPoem, "verse", false],
+    ["table in a section", insertTableCmd(), "plain", true],
+    ["table in a cite", insertTableCmd(), "cited", true],
+    ["table in an epigraph", insertTableCmd(), "epigraph text", false],
+  ];
+
+  it.each(cases)("%s", (_name, cmd, text, allowed) => {
+    const state = caretIn(text);
+    expect(cmd(state)).toBe(allowed);
+    if (allowed) apply(state, cmd).check(); // throws on a schema violation
   });
 });
 

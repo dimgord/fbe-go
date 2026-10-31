@@ -8,50 +8,45 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"fmt"
 	"net/http"
+	"io"
 	"os"
 
-	"log"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime"
-	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/adrg/sysfont"
-	"github.com/adrg/xdg"
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
+	"github.com/dimgord/fbe-go/internal/fb2/fsutil"
 	"github.com/dimgord/fbe-go/internal/fb2/parser"
+	"github.com/dimgord/fbe-go/internal/fb2/roundtrip"
+	"github.com/dimgord/fbe-go/internal/fb2/session"
 	"github.com/dimgord/fbe-go/internal/fb2/settings"
 	"github.com/dimgord/fbe-go/internal/fb2/thumb"
 	"github.com/dimgord/fbe-go/internal/fb2/updates"
 	"github.com/dimgord/fbe-go/internal/fb2/writer"
 	"github.com/dimgord/fbe-go/internal/fb2/xsd"
-	"github.com/dimgord/fbe-go/internal/fb2/zipfb2"
 
-	"archive/zip"
+	"github.com/dimgord/fbe-go/internal/sysfonts"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App holds per-session state.
 type App struct {
-	ctx     context.Context
-	current *doc.FictionBook // currently-open document
-	path    string           // current file path, empty if untitled
+	ctx      context.Context
+	doc      session.Session
+	settings *settings.Store
 
 	// forceClose is set after the user has explicitly chosen "Discard" /
 	// "Save" via the unsaved-changes dialog. The next OnBeforeClose call
 	// (triggered by the wailsrt.Quit() that follows a Save) checks this
 	// flag and skips the dialog so the app actually exits instead of
 	// re-prompting forever.
-	forceClose bool
+	forceClose atomic.Bool
 
 	// systemFonts is populated asynchronously on startup by walking the
 	// OS font directories via `sysfont`. Cached as a sorted, deduped
@@ -68,15 +63,17 @@ type App struct {
 }
 
 // NewApp constructs the app.
-func NewApp() *App { return &App{} }
+func NewApp() *App { return &App{settings: settings.UserStore()} }
 
 // OnStartup is called by Wails once the webview is ready. It restores the
 // last-seen window position from settings.json (size is already applied via
 // options.App in main.go — position can't be, per Wails v2's API).
 func (a *App) OnStartup(ctx context.Context) {
+	a.launchMu.Lock()
 	a.ctx = ctx
+	a.launchMu.Unlock()
 
-	if s, err := settings.Load(); err == nil && s != nil {
+	if s, err := a.settings.Load(); err == nil {
 		// Only restore a non-zero, non-negative position. First-run (zeros)
 		// keeps the OS default.
 		if s.Window.X != 0 || s.Window.Y != 0 {
@@ -150,219 +147,12 @@ func launchArg(args []string) string {
 	return ""
 }
 
-// populateSystemFonts walks the OS font registry, dedupes by family, and
-// caches a sorted slice. Runs once per app launch — fonts rarely change
-// during a session, and the dialog can happily show a stale list if the
-// user installs a family mid-session (they can still type it in the
-// free-text fallback).
-//
-// Augments `xdg.FontDirs` with NixOS-typical locations (`/run/current-system/...`,
-// nix user profiles) and with every `$XDG_DATA_DIRS` entry's `/fonts`
-// subdir, so the Wails flake's reduced XDG_DATA_DIRS on NixOS doesn't
-// leave the finder staring at an empty /usr/share/fonts. No-op on systems
-// where those paths don't exist.
-//
-// For fonts sysfont's filename registry doesn't recognize — common on
-// NixOS because the store-path filenames carry hashes / versions not in
-// the registry — falls back to a filename-to-family heuristic so the
-// user still sees a reasonable label.
+// populateSystemFonts caches the installed font families for the Settings dialog.
 func (a *App) populateSystemFonts() {
-	// On Linux, fontconfig is the source of truth. `fc-list : family` returns
-	// every font the user has configured — system packages, home-manager,
-	// nix profiles, user ~/.fonts, the lot — indexed in a single pass, with
-	// proper family names (not filenames). Filesystem walkers like sysfont
-	// can't match fontconfig's visibility on NixOS: fonts live in dozens of
-	// nix-store paths joined by opaque symlink trees, and nixpkgs-packaged
-	// filenames carry hashes / versions that sysfont's registry doesn't
-	// recognize. Try fontconfig first; fall back to sysfont on macOS (where
-	// fc-list usually isn't installed) or if the command fails.
-	if runtime.GOOS == "linux" {
-		if families, err := listFontsViaFontconfig(); err == nil && len(families) > 0 {
-			log.Printf("[fbe] system fonts: %d families via fontconfig", len(families))
-			a.systemFontsMu.Lock()
-			a.systemFonts = families
-			a.systemFontsMu.Unlock()
-			return
-		}
-	}
-
-	extendFontDirsForNix()
-
-	finder := sysfont.NewFinder(nil)
-	all := finder.List()
-
-	seen := make(map[string]struct{}, len(all))
-	families := make([]string, 0, len(all))
-	recognized := 0
-	heuristic := 0
-	for _, f := range all {
-		if f == nil {
-			continue
-		}
-		family := f.Family
-		if family != "" {
-			recognized++
-		} else if f.Filename != "" {
-			family = familyFromFilename(f.Filename)
-			if family == "" {
-				continue
-			}
-			heuristic++
-		} else {
-			continue
-		}
-		if _, dup := seen[family]; dup {
-			continue
-		}
-		seen[family] = struct{}{}
-		families = append(families, family)
-	}
-	sort.Strings(families)
-
-	log.Printf("[fbe] system fonts: %d files scanned, %d recognized, %d via filename heuristic, %d unique families (sysfont)",
-		len(all), recognized, heuristic, len(families))
-
+	families := sysfonts.List()
 	a.systemFontsMu.Lock()
+	defer a.systemFontsMu.Unlock()
 	a.systemFonts = families
-	a.systemFontsMu.Unlock()
-}
-
-// listFontsViaFontconfig runs `fc-list : family` and parses the output. Each
-// line may be a comma-separated list of family aliases (fontconfig groups
-// equivalents like localized names); we take the first as the canonical
-// display name. Dedupes + sorts the result. Returns an error if the command
-// isn't installed or exits non-zero.
-func listFontsViaFontconfig() ([]string, error) {
-	path, err := exec.LookPath("fc-list")
-	if err != nil {
-		return nil, err
-	}
-	out, err := exec.Command(path, ":", "family").Output()
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]struct{})
-	families := make([]string, 0, 128)
-	for _, raw := range strings.Split(string(out), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		// "Noto Serif,Noto Serif Regular" → "Noto Serif"
-		first := strings.TrimSpace(strings.SplitN(line, ",", 2)[0])
-		if first == "" {
-			continue
-		}
-		if _, dup := seen[first]; dup {
-			continue
-		}
-		seen[first] = struct{}{}
-		families = append(families, first)
-	}
-	sort.Strings(families)
-	return families, nil
-}
-
-// familyFromFilename extracts a human-readable family name from a font
-// file path by stripping the extension, common weight / style suffixes,
-// and replacing separators with spaces. Best-effort heuristic; caller
-// dedupes against already-recognized names.
-//
-//	/nix/store/abc-dejavu-fonts-2.37/share/fonts/truetype/DejaVuSans-Bold.ttf
-//	→ "DejaVu Sans"
-func familyFromFilename(path string) string {
-	base := filepath.Base(path)
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-
-	// Strip well-known style tokens. Order matters — longer first so
-	// "BoldItalic" matches before "Bold".
-	suffixes := []string{
-		"BoldItalic", "BoldOblique", "LightItalic", "LightOblique",
-		"MediumItalic", "MediumOblique", "ExtraBold", "SemiBold", "Thin",
-		"Light", "Medium", "Regular", "Bold", "Italic", "Oblique",
-	}
-	for _, s := range suffixes {
-		// Match `-Bold`, `_Bold`, or ` Bold` at the end.
-		for _, sep := range []string{"-", "_", " "} {
-			token := sep + s
-			if strings.HasSuffix(base, token) {
-				base = strings.TrimSuffix(base, token)
-				break
-			}
-		}
-	}
-
-	// Convert CamelCase / snake / kebab into space-separated words.
-	base = strings.ReplaceAll(base, "_", " ")
-	base = strings.ReplaceAll(base, "-", " ")
-	base = splitCamelCase(base)
-	base = strings.TrimSpace(strings.Join(strings.Fields(base), " "))
-	return base
-}
-
-// splitCamelCase inserts spaces before uppercase letters in camelCase
-// sequences: "DejaVuSans" → "DejaVu Sans". Preserves runs of uppercase
-// (e.g. "PTSans" stays "PTSans" rather than "P T Sans").
-func splitCamelCase(s string) string {
-	var b strings.Builder
-	runes := []rune(s)
-	for i, r := range runes {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			prev := runes[i-1]
-			next := rune(0)
-			if i+1 < len(runes) {
-				next = runes[i+1]
-			}
-			prevLower := prev >= 'a' && prev <= 'z'
-			nextLower := next >= 'a' && next <= 'z'
-			if prevLower || (prev >= 'A' && prev <= 'Z' && nextLower) {
-				b.WriteRune(' ')
-			}
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-// extendFontDirsForNix appends additional font directories to xdg.FontDirs
-// that sysfont would otherwise miss on NixOS and nix-darwin setups:
-//
-//   - `/run/current-system/sw/share/fonts` — system-wide NixOS packages.
-//   - `$HOME/.nix-profile/share/fonts`     — user-installed via nix profile.
-//   - `/etc/profiles/per-user/<user>/share/fonts` — home-manager style.
-//   - Each entry in `$XDG_DATA_DIRS` joined with `fonts` — this picks up
-//     any activation-script-managed paths a Nix dev shell might inject.
-//
-// Only existing directories are appended. Idempotent per process — the
-// package-level xdg.FontDirs can be mutated multiple times without harm
-// beyond extra duplicate checks inside sysfont's walker.
-func extendFontDirsForNix() {
-	seen := make(map[string]struct{}, len(xdg.FontDirs))
-	for _, p := range xdg.FontDirs {
-		seen[p] = struct{}{}
-	}
-	add := func(p string) {
-		if p == "" {
-			return
-		}
-		if _, dup := seen[p]; dup {
-			return
-		}
-		if info, err := os.Stat(p); err == nil && info.IsDir() {
-			seen[p] = struct{}{}
-			xdg.FontDirs = append(xdg.FontDirs, p)
-		}
-	}
-	add("/run/current-system/sw/share/fonts")
-	if home, err := os.UserHomeDir(); err == nil {
-		add(filepath.Join(home, ".nix-profile/share/fonts"))
-	}
-	if xdgDataDirs := os.Getenv("XDG_DATA_DIRS"); xdgDataDirs != "" {
-		for _, d := range strings.Split(xdgDataDirs, ":") {
-			add(filepath.Join(d, "fonts"))
-		}
-	}
-	log.Printf("[fbe] font dirs: %v", xdg.FontDirs)
 }
 
 // ListSystemFonts returns the sorted, deduped list of family names the
@@ -380,39 +170,6 @@ func (a *App) ListSystemFonts() []string {
 	return out
 }
 
-// askFrontendIsDirty asks the webview whether the in-memory document
-// differs from its last clean snapshot (the JSON-stringified merged
-// FictionBook captured at open / save). The frontend owns the source
-// of truth — body edits live in ProseMirror and only flow into `fb`
-// via `editor.currentFB()`, so a server-side flag would always be
-// stale or racy. Round-trip:
-//
-//   1. Subscribe once for "app:dirty-response".
-//   2. Emit "app:check-dirty" to the frontend.
-//   3. Wait up to 2s for the response.
-//
-// On timeout we conservatively return true so an unresponsive webview
-// can't silently drop user data on quit.
-func (a *App) askFrontendIsDirty(ctx context.Context) bool {
-	ch := make(chan bool, 1)
-	wailsrt.EventsOnce(ctx, "app:dirty-response", func(args ...any) {
-		if len(args) > 0 {
-			if d, ok := args[0].(bool); ok {
-				ch <- d
-				return
-			}
-		}
-		ch <- true
-	})
-	wailsrt.EventsEmit(ctx, "app:check-dirty")
-	select {
-	case d := <-ch:
-		return d
-	case <-time.After(2 * time.Second):
-		return true
-	}
-}
-
 // ConfirmUnsavedChanges shows a native 3-button "Save / Discard / Cancel"
 // dialog and returns "save", "discard", or "cancel". Used by the frontend
 // before File→Open / File→New flows replace the in-memory document.
@@ -421,25 +178,8 @@ func (a *App) askFrontendIsDirty(ctx context.Context) bool {
 // stays gated behind explicit user intent — unknown dialog state should
 // not silently advance the workflow.
 func (a *App) ConfirmUnsavedChanges() string {
-	resp, err := wailsrt.MessageDialog(a.ctx, wailsrt.MessageDialogOptions{
-		Type:          wailsrt.QuestionDialog,
-		Title:         "Unsaved changes",
-		Message:       "You have unsaved changes in the current document. What would you like to do?",
-		Buttons:       []string{"Save", "Discard", "Cancel"},
-		DefaultButton: "Save",
-		CancelButton:  "Cancel",
-	})
-	if err != nil {
-		return "cancel"
-	}
-	switch resp {
-	case "Save":
-		return "save"
-	case "Discard":
-		return "discard"
-	default:
-		return "cancel"
-	}
+	return wailsShell{a.ctx}.AskSaveDiscardCancel(
+		"You have unsaved changes in the current document. What would you like to do?")
 }
 
 // OnBeforeClose is called by Wails when the user attempts to close the
@@ -456,39 +196,7 @@ func (a *App) ConfirmUnsavedChanges() string {
 //     a frontend event (the document lives in the PM editor, not Go), then
 //     re-quits. "Discard" sets forceClose and re-quits. "Cancel" stays.
 func (a *App) OnBeforeClose(ctx context.Context) bool {
-	if a.forceClose {
-		return false
-	}
-	if !a.askFrontendIsDirty(ctx) {
-		return false
-	}
-	resp, err := wailsrt.MessageDialog(ctx, wailsrt.MessageDialogOptions{
-		Type:          wailsrt.QuestionDialog,
-		Title:         "Unsaved changes",
-		Message:       "You have unsaved changes. Save them before closing?",
-		Buttons:       []string{"Save", "Discard", "Cancel"},
-		DefaultButton: "Save",
-		CancelButton:  "Cancel",
-	})
-	if err != nil {
-		// On dialog error, stay open — losing user data on a corner-case
-		// runtime hiccup is the worse failure mode.
-		return true
-	}
-	switch resp {
-	case "Discard":
-		a.forceClose = true
-		return false
-	case "Save":
-		// The document lives in the PM editor. Hand off to the frontend
-		// to run its Save flow (which respects untitled vs. titled,
-		// triggers SaveAs picker if needed) and re-trigger Quit on
-		// success. ForceQuit() unblocks the next OnBeforeClose call.
-		wailsrt.EventsEmit(ctx, "app:save-and-quit")
-		return true
-	default:
-		return true
-	}
+	return a.stayOpen(wailsShell{ctx})
 }
 
 // ForceQuit lets the frontend bypass the unsaved-changes dialog after
@@ -496,7 +204,7 @@ func (a *App) OnBeforeClose(ctx context.Context) bool {
 // dialog dispatches "app:save-and-quit", the frontend completes the save,
 // then calls this to actually exit).
 func (a *App) ForceQuit() {
-	a.forceClose = true
+	a.forceClose.Store(true)
 	wailsrt.Quit(a.ctx)
 }
 
@@ -507,15 +215,9 @@ func (a *App) ForceQuit() {
 func (a *App) OnShutdown(ctx context.Context) {
 	x, y := wailsrt.WindowGetPosition(ctx)
 	w, h := wailsrt.WindowGetSize(ctx)
-	s, err := settings.Load()
-	if err != nil || s == nil {
-		return
-	}
-	s.Window.X = x
-	s.Window.Y = y
-	s.Window.W = w
-	s.Window.H = h
-	_ = settings.Save(s)
+	_ = a.settings.Update(func(s *settings.Settings) {
+		s.Window.X, s.Window.Y, s.Window.W, s.Window.H = x, y, w, h
+	})
 }
 
 // --- Native dialogs (Wails' runtime.OpenFileDialog / SaveFileDialog are Go-only;
@@ -589,299 +291,77 @@ func (a *App) PickImageToUpload() (string, error) {
 // --- File operations exposed to the frontend ---
 
 // OpenFile reads an FB2 (or FB2.zip) file and returns the parsed document as JSON.
-// Panics are recovered so a bad document surfaces as a normal JS-side error
-// instead of killing the webview.
-//
-// Format detection peeks at the first 4 bytes: the zip local-file-header magic
-// is `PK\x03\x04`. On match we route through `zipfb2.Unpack` (which finds the
-// single `.fb2` entry inside the archive) before handing the stream to
-// `parser.Parse`. Without this auto-detect, dropping a `.fb2.zip` from Finder
-// hits `parser.Parse` with the zip's binary header and fails with
-// "XML syntax error on line 1: illegal character code U+0003" — U+0003 is the
-// `\x03` of the PK magic. The file dialog filter masked this for the Open menu
-// path (only `*.fb2` was offered), but the Wails OnFileDrop hook delivers
-// whatever the user actually drops, including archives.
-func (a *App) OpenFile(path string) (fb *doc.FictionBook, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			fb = nil
-			err = fmt.Errorf("OpenFile panic: %v", r)
-		}
-	}()
-	f, err := os.Open(path)
+func (a *App) OpenFile(path string) (*doc.FictionBook, error) {
+	fb, err := a.doc.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-
-	// Peek the magic; if zip, unwrap; otherwise rewind and parse as raw XML.
-	magic := make([]byte, 4)
-	if n, _ := f.Read(magic); n == 4 && magic[0] == 'P' && magic[1] == 'K' && magic[2] == 0x03 && magic[3] == 0x04 {
-		st, err := f.Stat()
-		if err != nil {
-			return nil, err
-		}
-		// zip.NewReader needs a ReaderAt + size; *os.File satisfies io.ReaderAt.
-		zr, err := zip.NewReader(f, st.Size())
-		if err != nil {
-			return nil, fmt.Errorf("fb2 open zip: %w", err)
-		}
-		rc, err := zipfb2.Unpack(zr)
-		if err != nil {
-			return nil, err
-		}
-		defer rc.Close()
-		fb, err = parser.Parse(rc)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		if _, err := f.Seek(0, 0); err != nil {
-			return nil, err
-		}
-		fb, err = parser.Parse(f)
-		if err != nil {
-			return nil, err
-		}
-	}
-	a.current = fb
-	a.path = path
-	recordRecentFile(path)
+	a.recordRecent(path)
 	return fb, nil
 }
 
 // SaveFile serializes the current document back to disk.
 func (a *App) SaveFile(path string) error {
-	if a.current == nil {
-		return fmt.Errorf("no document open")
-	}
-	if path == "" {
-		path = a.path
-	}
-	f, err := os.Create(path)
+	saved, err := a.doc.Save(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if err := writer.Write(f, a.current); err != nil {
-		return err
-	}
-	a.path = path
-	recordRecentFile(path)
+	a.recordRecent(saved)
 	return nil
 }
 
-// recentFilesCap is the maximum length of the Most-Recently-Used list.
-// Chosen to match what the original FBE used (see Settings.h::recentFiles).
-const recentFilesCap = 10
-
-// recordRecentFile prepends `path` to settings.RecentFiles, dedupes earlier
-// occurrences, caps the list at recentFilesCap, and persists. Silent on
-// error — recent-files tracking is a convenience, not a correctness path;
-// we'd rather continue the primary flow than fail Open/Save because
-// settings.json couldn't be written.
-func recordRecentFile(path string) {
-	if path == "" {
-		return
-	}
-	s, err := settings.Load()
-	if err != nil || s == nil {
-		return
-	}
-	out := make([]string, 0, len(s.RecentFiles)+1)
-	out = append(out, path)
-	for _, p := range s.RecentFiles {
-		if p == path {
-			continue
-		}
-		out = append(out, p)
-		if len(out) == recentFilesCap {
-			break
-		}
-	}
-	s.RecentFiles = out
-	_ = settings.Save(s)
+// recordRecent notes path in the MRU list. Silent on failure: a file that opened fine
+// is not worth an error just because the settings could not be written.
+func (a *App) recordRecent(path string) {
+	_ = a.settings.Update(func(s *settings.Settings) { s.AddRecent(path) })
 }
 
 // RecentFiles returns the persisted most-recently-used file paths
 // (most-recent first). On read error returns an empty list rather than
 // propagating — the frontend just shows no history in that case.
 func (a *App) RecentFiles() []string {
-	s, err := settings.Load()
-	if err != nil || s == nil {
-		return []string{}
-	}
-	if s.RecentFiles == nil {
+	s, err := a.settings.Load()
+	if err != nil || s.RecentFiles == nil {
 		return []string{}
 	}
 	return s.RecentFiles
 }
 
+// RecentSearches returns the search history, most recent first.
+func (a *App) RecentSearches() []string {
+	s, err := a.settings.Load()
+	if err != nil || s.RecentSearches == nil {
+		return []string{}
+	}
+	return s.RecentSearches
+}
+
+// AddRecentSearch records query and returns the updated history.
+func (a *App) AddRecentSearch(query string) []string {
+	_ = a.settings.Update(func(s *settings.Settings) { s.AddRecentSearch(query) })
+	return a.RecentSearches()
+}
+
+// ClearRecentSearches empties the search history.
+func (a *App) ClearRecentSearches() error {
+	return a.settings.Update(func(s *settings.Settings) { s.RecentSearches = nil })
+}
+
+// ClearRecentFiles empties the MRU list. SaveSettings cannot: Store.Replace keeps Go-owned fields.
+func (a *App) ClearRecentFiles() error {
+	return a.settings.Update(func(s *settings.Settings) { s.RecentFiles = nil })
+}
+
 // RemoveFromRecent drops a path from the MRU list (e.g. when it no longer
 // exists on disk). No-op if absent.
 func (a *App) RemoveFromRecent(path string) error {
-	s, err := settings.Load()
-	if err != nil || s == nil {
-		return err
-	}
-	out := s.RecentFiles[:0]
-	for _, p := range s.RecentFiles {
-		if p != path {
-			out = append(out, p)
-		}
-	}
-	s.RecentFiles = out
-	return settings.Save(s)
+	return a.settings.Update(func(s *settings.Settings) { s.RemoveRecent(path) })
 }
 
-// ParseXMLString parses an FB2 XML string (no zip support — that path
-// lives in OpenFile) and returns the parsed doc.FictionBook for the
-// frontend to validate before committing as the live document.
-//
-// Frontend's "Edit XML" feature uses this to confirm that user-edited
-// raw XML round-trips through the parser before mutating the in-memory
-// fb. On parse failure the JS-side keeps the user's text in the editor
-// and surfaces the error inline; on success the caller follows up with
-// UpdateDocument to swap a.current.
-//
-// `defer recover()` mirrors OpenFile — a malformed doc should surface
-// as a JS-side error, not a webview crash.
-//
-// Data-loss guard (critical): `parser.Parse` is lenient on purpose —
-// the Raw fallback (see `doc.Block.UnmarshalXML`) captures unknown
-// elements verbatim so existing well-formed FB2s round-trip losslessly.
-// But a user typo in the XML editor (e.g. `<autho>` instead of `<author>`)
-// is malformed: Go's encoding/xml `d.Skip()` reads tokens looking for the
-// matching close tag, doesn't find `</autho>`, and ends up greedy-eating
-// the rest of the document including the `<body>`. parser.Parse returns
-// no error in that case — just an FB struct that silently lost
-// everything past the typo. To prevent Apply from destroying content,
-// we round-trip the parsed FB through the writer and compare structural
-// tag counts (book-title, author, body, section, p, binary, etc.)
-// against the input. Any drop in a significant element is reported as
-// a parse error so the user keeps editing in CM6 instead of committing
-// a destructive change.
-func (a *App) ParseXMLString(xmlStr string) (fb *doc.FictionBook, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			fb = nil
-			err = fmt.Errorf("ParseXMLString panic: %v", r)
-		}
-	}()
-	fb, err = parser.Parse(strings.NewReader(xmlStr))
-	if err != nil {
-		return nil, err
-	}
-	var rt bytes.Buffer
-	if werr := writer.Write(&rt, fb); werr != nil {
-		// Writer failure on a freshly-parsed doc means we'd produce a
-		// non-saveable round-trip. Treat as parse failure for the
-		// purpose of Apply.
-		return nil, fmt.Errorf("round-trip serialize: %w", werr)
-	}
-	if msg := dataLossMessage(xmlStr, rt.String()); msg != "" {
-		return nil, fmt.Errorf("%s", msg)
-	}
-	return fb, nil
-}
-
-// unknownNameRE pulls the bare element name out of xsd's "Unknown FB2
-// element 'NAME' — ..." message format. Used by dataLossMessage to
-// reformat the message for the Apply-reject context.
-var unknownNameRE = regexp.MustCompile(`Unknown FB2 element '([^']+)'`)
-
-// dataLossMessage compares structurally significant FB2 element
-// openings between the user-provided `in` and the writer's round-trip
-// output `rt`, and returns ONE focused, actionable error string — or
-// "" if no loss.
-//
-// Strategy:
-//
-//  1. Scan `in` for unknown FB2 element names via xsd.FindUnknownElements.
-//     If any unknown tag appears (e.g. `<autho>` from a typo'd `<author>`),
-//     return a message that names the first one and its line number.
-//     This is the root cause in the vast majority of editor typos — every
-//     "missing element" downstream is just a cascading consequence.
-//
-//  2. Only when no unknown tag is found, fall back to lost-element count.
-//     Then report just the FIRST (and topmost-in-hierarchy) element that
-//     dropped, not the full cascade. Mentioning every consequence makes
-//     the message a wall of text that obscures the actual fix site.
-//
-// The caller (frontend Apply handler) keeps the user's CM6 text intact
-// on error, so a focused single-issue message lets them jump to the
-// problem and re-Apply.
-func dataLossMessage(in, rt string) string {
-	if unks := xsd.FindUnknownElements([]byte(in)); len(unks) > 0 {
-		u := unks[0]
-		// Extract the bare element name from xsd's message
-		// ("Unknown FB2 element 'NAME' — …"). Its trailing
-		// "Preserved verbatim on save" is wrong in the Apply-reject
-		// context — we're rejecting, not saving. Build a focused
-		// message that names the typo and its location.
-		name := unknownNameRE.FindStringSubmatch(u.Message)
-		bare := ""
-		if len(name) >= 2 {
-			bare = name[1]
-		}
-		if bare != "" {
-			return fmt.Sprintf(
-				"Unknown element <%s> at line %d — likely a typo. Check that tag and try Apply again.",
-				bare, u.Line,
-			)
-		}
-		// Fallback if the message format ever changes.
-		return fmt.Sprintf("Unknown element at line %d — likely a typo.", u.Line)
-	}
-	// Topmost-first ordering — a missing <body> is the root cause when
-	// everything below it also goes missing.
-	hierarchical := []string{
-		"FictionBook", "description", "title-info", "src-title-info",
-		"document-info", "publish-info", "body",
-		"author", "coverpage", "annotation",
-		"section", "epigraph", "cite", "poem", "stanza",
-		"table", "tr", "td", "th",
-		"p", "v", "image", "binary",
-	}
-	for _, name := range hierarchical {
-		inC := countOpen(in, name)
-		rtC := countOpen(rt, name)
-		if rtC < inC {
-			return fmt.Sprintf(
-				"after parse, <%s> count dropped from %d to %d. The most likely cause is a structural error (mismatched tags, missing close). Fix and try Apply again",
-				name, inC, rtC,
-			)
-		}
-	}
-	return ""
-}
-
-// countOpen counts `<NAME` occurrences where the byte right after the
-// name is a non-name char (space, `>`, `/`, newline, tab). Misses
-// nothing valid; over-counts only if the same prefix appears verbatim
-// inside a CDATA / comment — acceptable for a typo-detection heuristic.
-func countOpen(s, name string) int {
-	needle := "<" + name
-	count := 0
-	pos := 0
-	for {
-		i := strings.Index(s[pos:], needle)
-		if i < 0 {
-			return count
-		}
-		end := pos + i + len(needle)
-		if end >= len(s) {
-			return count
-		}
-		c := s[end]
-		// Name boundary: tag can be followed by space, `>`, `/`, or
-		// whitespace; not by another name char. Avoids `<p` matching
-		// `<publish-info` etc.
-		if c == ' ' || c == '>' || c == '/' || c == '\t' || c == '\n' || c == '\r' {
-			count++
-		}
-		pos = end
-	}
+// ParseXMLString parses user-edited XML for the "Edit XML" panel, refusing any result that lost
+// structure; on error the frontend keeps the user's text in the editor. See package roundtrip.
+func (a *App) ParseXMLString(xmlStr string) (*doc.FictionBook, error) {
+	return roundtrip.ParseVerified(xmlStr)
 }
 
 // UpdateDocument replaces the current document with a new version from the frontend.
@@ -899,56 +379,33 @@ func countOpen(s, name string) int {
 // `coverpage` to have at least one `<image>` child. Even though the Svelte
 // side has been fixed, this Go-side scrub ensures malformed data from any
 // future frontend regression still gets cleaned before reaching disk.
-func (a *App) UpdateDocument(fb *doc.FictionBook) {
-	if fb != nil {
-		normalizeFictionBook(fb)
-	}
-	a.current = fb
-}
-
-// normalizeFictionBook drops sub-elements that would round-trip as empty,
-// XSD-invalid placeholders. Currently only Coverpage{Images:nil}.
-func normalizeFictionBook(fb *doc.FictionBook) {
-	if fb.Description.TitleInfo != nil &&
-		fb.Description.TitleInfo.Coverpage != nil &&
-		len(fb.Description.TitleInfo.Coverpage.Images) == 0 {
-		fb.Description.TitleInfo.Coverpage = nil
-	}
-	if fb.Description.SrcTitleInfo != nil &&
-		fb.Description.SrcTitleInfo.Coverpage != nil &&
-		len(fb.Description.SrcTitleInfo.Coverpage.Images) == 0 {
-		fb.Description.SrcTitleInfo.Coverpage = nil
-	}
-}
+func (a *App) UpdateDocument(fb *doc.FictionBook) { a.doc.Replace(fb) }
 
 // CurrentDocument returns the in-memory document (useful after Open).
-func (a *App) CurrentDocument() *doc.FictionBook { return a.current }
+func (a *App) CurrentDocument() *doc.FictionBook { return a.doc.Document() }
 
 // --- Binary / image helpers ---
 
 // GetBinaryDataURL returns the binary payload as a data: URL for img src.
 func (a *App) GetBinaryDataURL(href string) (string, error) {
-	if a.current == nil {
-		return "", fmt.Errorf("no document open")
-	}
-	bin, err := binary.FindByHref(a.current, href)
+	fb, err := a.doc.Require()
 	if err != nil {
 		return "", err
 	}
-	return "data:" + bin.ContentType + ";base64," + bin.Data, nil
+	bin, err := binary.FindByHref(fb, href)
+	if err != nil {
+		return "", err
+	}
+	return binary.DataURL(bin), nil
 }
 
 // AddBinaryFromDisk reads a file and adds it as a <binary> entry.
 func (a *App) AddBinaryFromDisk(id, contentType, path string) error {
-	if a.current == nil {
-		return fmt.Errorf("no document open")
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	a.current.Binaries = append(a.current.Binaries, *binary.Encode(id, contentType, data))
-	return nil
+	return a.doc.AddBinary(*binary.Encode(id, contentType, data))
 }
 
 // ReadImageBinary reads an image file from disk and returns a *doc.Binary
@@ -1007,57 +464,46 @@ func mimeFromExt(ext string) string {
 
 // ExtractThumbnail returns coverpage bytes as a data: URL (for recent-files UI).
 func (a *App) ExtractThumbnail(path string) (string, error) {
-	f, err := os.Open(path)
+	fb, err := parser.ParseFile(path)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	fb, err := parser.Parse(f)
+	cover, err := thumb.Cover(fb)
 	if err != nil {
 		return "", err
 	}
-	data, ct, err := thumb.Extract(fb)
-	if err != nil {
-		return "", err
-	}
-	var buf bytes.Buffer
-	buf.WriteString("data:" + ct + ";base64,")
-	buf.WriteString(base64.StdEncoding.EncodeToString(data))
-	return buf.String(), nil
+	return binary.DataURL(cover), nil
 }
 
 // ExportHTML writes the currently-open document as a self-contained HTML file.
 func (a *App) ExportHTML(path string) error {
-	if a.current == nil {
-		return fmt.Errorf("no document open")
-	}
-	f, err := os.Create(path)
+	fb, err := a.doc.Require()
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return html.Export(f, a.current)
+	return fsutil.WriteAtomic(path, func(w io.Writer) error { return html.Export(w, fb) })
 }
 
 // Validate runs XSD validation on a file path and returns per-error messages.
 func (a *App) Validate(path string) ([]xsd.ValidationError, error) {
-	f, err := os.Open(path)
+	f, err := parser.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return xsd.Validate(f)
+	return xsd.ValidateAll(f)
 }
 
 // SerializeCurrent returns the canonical FB2 XML of the in-memory document as
 // a string. Frontend uses this for the read-only XML source panel — the
 // output reflects any unsaved edits that were pushed via UpdateDocument.
 func (a *App) SerializeCurrent() (string, error) {
-	if a.current == nil {
-		return "", fmt.Errorf("no document open")
+	fb, err := a.doc.Require()
+	if err != nil {
+		return "", err
 	}
 	var buf bytes.Buffer
-	if err := writer.Write(&buf, a.current); err != nil {
+	if err := writer.Write(&buf, fb); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
@@ -1081,31 +527,27 @@ func (a *App) SerializeCurrent() (string, error) {
 // Dedup is handled in xsd.MergeXSDAndUnknown: if both sources cover the same
 // element at the same line, only the validator's richer entry is kept.
 func (a *App) ValidateCurrent() ([]xsd.ValidationError, error) {
-	if a.current == nil {
-		return nil, fmt.Errorf("no document open")
-	}
-	var buf bytes.Buffer
-	if err := writer.Write(&buf, a.current); err != nil {
-		return nil, err
-	}
-	src := buf.Bytes()
-	xsdErrs, err := xsd.Validate(bytes.NewReader(src))
+	fb, err := a.doc.Require()
 	if err != nil {
 		return nil, err
 	}
-	return xsd.MergeXSDAndUnknown(xsdErrs, xsd.FindUnknownElements(src)), nil
+	var buf bytes.Buffer
+	if err := writer.Write(&buf, fb); err != nil {
+		return nil, err
+	}
+	return xsd.ValidateAll(&buf)
 }
 
 // --- Settings ---
 
 // LoadSettings returns the persisted settings (or defaults).
 func (a *App) LoadSettings() (*settings.Settings, error) {
-	return settings.Load()
+	return a.settings.Load()
 }
 
 // SaveSettings writes settings to disk.
 func (a *App) SaveSettings(s *settings.Settings) error {
-	return settings.Save(s)
+	return a.settings.Replace(s)
 }
 
 // --- Updates ---

@@ -7,18 +7,13 @@
  *
  * See docs/OPERATIONS.md for the FBE → command mapping.
  */
-import type { EditorState, Transaction } from "prosemirror-state";
+import type { Command, EditorState } from "prosemirror-state";
 import type { NodeType, Attrs } from "prosemirror-model";
 import {
   toggleMark as pmToggleMark,
   setBlockType as pmSetBlockType,
 } from "prosemirror-commands";
 import { fb2Schema } from "./schema";
-
-export type Command = (
-  state: EditorState,
-  dispatch?: (tr: Transaction) => void,
-) => boolean;
 
 // ── Inline mark toggles ─────────────────────────────────────────────────────
 
@@ -108,39 +103,22 @@ export function isBlockActive(state: EditorState, nodeType: NodeType, attrs?: At
 
 import type { Node as PMNode, ResolvedPos } from "prosemirror-model";
 
-/** Walk up the ancestor chain from $pos; return the first parent matching nodeName. */
-function findAncestor(
-  $pos: ResolvedPos,
-  nodeName: string,
-): { node: PMNode; depth: number; before: number; after: number } | null {
-  for (let d = $pos.depth; d > 0; d--) {
-    const node = $pos.node(d);
-    if (node.type.name === nodeName) {
-      return {
-        node,
-        depth: d,
-        before: $pos.before(d),
-        after: $pos.after(d),
-      };
-    }
+function hasChild(node: PMNode, name: string): boolean {
+  for (let i = 0; i < node.childCount; i++) {
+    if (node.child(i).type.name === name) return true;
   }
-  return null;
+  return false;
 }
 
-/** First ancestor whose name is in the given set. */
-function findAncestorAny(
+/** The nearest ancestor of $pos whose type is one of `names`. */
+function findAncestor(
   $pos: ResolvedPos,
-  names: string[],
+  ...names: string[]
 ): { node: PMNode; depth: number; before: number; after: number } | null {
   for (let d = $pos.depth; d > 0; d--) {
     const node = $pos.node(d);
     if (names.includes(node.type.name)) {
-      return {
-        node,
-        depth: d,
-        before: $pos.before(d),
-        after: $pos.after(d),
-      };
+      return { node, depth: d, before: $pos.before(d), after: $pos.after(d) };
     }
   }
   return null;
@@ -152,7 +130,7 @@ function findAncestorAny(
  */
 export const cloneContainer: Command = (state, dispatch) => {
   const { $from } = state.selection;
-  const target = findAncestorAny($from, ["section", "poem", "stanza", "cite", "epigraph"]);
+  const target = findAncestor($from, "section", "poem", "stanza", "cite", "epigraph");
   if (!target) return false;
   if (!dispatch) return true;
 
@@ -206,15 +184,11 @@ export const removeOuterContainer: Command = (state, dispatch) => {
  */
 export const addTitle: Command = (state, dispatch) => {
   const { $from } = state.selection;
-  const target = findAncestorAny($from, ["section", "body", "poem", "stanza"]);
+  const target = findAncestor($from, "section", "body", "poem", "stanza");
   if (!target) return false;
 
   // Check if a title already exists as the first (or second, after image in body) child.
-  let hasTitle = false;
-  target.node.forEach((child) => {
-    if (child.type.name === "title") hasTitle = true;
-  });
-  if (hasTitle) return false;
+  if (hasChild(target.node, "title")) return false;
 
   if (!dispatch) return true;
 
@@ -232,7 +206,7 @@ export const addTitle: Command = (state, dispatch) => {
  */
 export const addEpigraph: Command = (state, dispatch) => {
   const { $from } = state.selection;
-  const target = findAncestorAny($from, ["body", "section", "poem"]);
+  const target = findAncestor($from, "body", "section", "poem");
   if (!target) return false;
 
   if (!dispatch) return true;
@@ -255,11 +229,7 @@ export const addAnnotation: Command = (state, dispatch) => {
   if (!target) return false;
 
   // Don't add a second annotation.
-  let hasAnnotation = false;
-  target.node.forEach((child) => {
-    if (child.type.name === "annotation") hasAnnotation = true;
-  });
-  if (hasAnnotation) return false;
+  if (hasChild(target.node, "annotation")) return false;
 
   if (!dispatch) return true;
 
@@ -280,7 +250,7 @@ export const addAnnotation: Command = (state, dispatch) => {
  */
 export const addTextAuthor: Command = (state, dispatch) => {
   const { $from } = state.selection;
-  const target = findAncestorAny($from, ["poem", "epigraph", "cite"]);
+  const target = findAncestor($from, "poem", "epigraph", "cite");
   if (!target) return false;
 
   // Insert position: end of the container's content.
@@ -328,16 +298,10 @@ function firstInsertionPointAfterHeader(
 export const insertCite: Command = (state, dispatch) => {
   const { $from, $to } = state.selection;
 
-  // Parent must allow <cite>: section / annotation / history / poem.
-  const parent = findAncestorAny($from, ["section", "poem", "annotation", "history"]);
-  if (!parent) return false;
-
   const range = $from.blockRange($to);
   if (!range) return false;
-
-  // Must be at the parent's depth (not inside a nested poem/cite/etc.).
   const rangeParent = range.parent;
-  if (!["section", "poem", "annotation", "history"].includes(rangeParent.type.name)) return false;
+  if (!rangeParent.canReplaceWith(range.startIndex, range.endIndex, N.cite)) return false;
 
   if (!dispatch) return true;
 
@@ -375,14 +339,10 @@ export const insertCite: Command = (state, dispatch) => {
 export const insertPoem: Command = (state, dispatch) => {
   const { $from, $to } = state.selection;
 
-  const parent = findAncestorAny($from, ["section", "epigraph", "annotation", "history", "cite"]);
-  if (!parent) return false;
-
   const range = $from.blockRange($to);
   if (!range) return false;
-
   const rangeParent = range.parent;
-  if (!["section", "epigraph", "annotation", "history", "cite"].includes(rangeParent.type.name)) return false;
+  if (!rangeParent.canReplaceWith(range.startIndex, range.endIndex, N.poem)) return false;
 
   if (!dispatch) return true;
 
@@ -426,18 +386,11 @@ export function insertTableCmd(rows = 3, cols = 3, header = true): Command {
     if (rows < 1 || cols < 1) return false;
 
     const { $from, $to } = state.selection;
-    const parent = findAncestorAny($from, [
-      "section", "epigraph", "annotation", "history", "cite",
-    ]);
-    if (!parent) return false;
-
-    // Make sure the insertion point is at the block level of a valid container,
-    // not inside an inline run where a <table> would be invalid.
     const range = $from.blockRange($to);
     if (!range) return false;
-    if (!["section", "epigraph", "annotation", "history", "cite"].includes(range.parent.type.name)) {
-      return false;
-    }
+    // A caret inserts after its block; a selection replaces the covered blocks.
+    const from = state.selection.empty ? range.endIndex : range.startIndex;
+    if (!range.parent.canReplaceWith(from, range.endIndex, N.table)) return false;
 
     if (!dispatch) return true;
 
@@ -499,7 +452,7 @@ function buildTableNode(rows: number, cols: number, header: boolean): PMNode {
  */
 export const mergeContainers: Command = (state, dispatch) => {
   const { $from } = state.selection;
-  const target = findAncestorAny($from, ["section", "stanza", "cite"]);
+  const target = findAncestor($from, "section", "stanza", "cite");
   if (!target) return false;
 
   // Locate cp's index within its parent; find next sibling of same type.
@@ -584,14 +537,7 @@ function mergeSections(cp: PMNode, nx: PMNode): PMNode {
     nx.forEach((c) => {
       const n = c.type.name;
       if (n === "title") {
-        // Title paragraphs become subtitles.
-        c.forEach((p) => {
-          if (p.type.name === "paragraph") {
-            children.push(N.subtitle.create(null, p.content));
-          } else {
-            children.push(p);
-          }
-        });
+        unwrapTitleInto(c, children);
       } else if (n === "epigraph" || n === "annotation") {
         // Unwrap: promote inner blocks as-is.
         c.forEach((inner) => children.push(inner));
@@ -607,16 +553,20 @@ function mergeSections(cp: PMNode, nx: PMNode): PMNode {
   return N.section.create(cp.attrs, children);
 }
 
+/** A title's paragraphs become subtitles when the title dissolves into body text. */
+function unwrapTitleInto(title: PMNode, out: PMNode[]): void {
+  title.forEach((p) => {
+    out.push(p.type.name === "paragraph" ? N.subtitle.create(null, p.content) : p);
+  });
+}
+
 /** For a flat-style merge where we're absorbing a nested section: promote its
  * nested blocks (and recurse for sub-sections) so the result stays flat. */
 function flattenSectionInto(section: PMNode, out: PMNode[]): void {
   section.forEach((c) => {
     const n = c.type.name;
     if (n === "title") {
-      c.forEach((p) => {
-        if (p.type.name === "paragraph") out.push(N.subtitle.create(null, p.content));
-        else out.push(p);
-      });
+      unwrapTitleInto(c, out);
     } else if (n === "epigraph" || n === "annotation") {
       c.forEach((inner) => out.push(inner));
     } else if (n === "section") {

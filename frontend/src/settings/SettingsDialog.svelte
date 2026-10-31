@@ -1,5 +1,7 @@
 <script lang="ts">
+  import Modal from "../ui/Modal.svelte";
   import { createEventDispatcher, onMount } from "svelte";
+  import { backend } from "../runtime/backend";
   import type { settings as SettingsNS } from "../../wailsjs/go/models";
   import {
     HOTKEY_ACTIONS,
@@ -7,6 +9,7 @@
     accelFromEvent,
     formatAccel,
     findConflicts,
+    type HotkeyAction,
     type HotkeyCategory,
   } from "./hotkeys";
 
@@ -26,9 +29,9 @@
   // Grouped action list — stable order per category.
   const CATEGORIES: HotkeyCategory[] = ["File", "Edit", "Format", "Paragraph", "Blocks", "Dialogs"];
   const ACTIONS_BY_CATEGORY = CATEGORIES.reduce((acc, c) => {
-    acc[c] = HOTKEY_ACTIONS.filter((a) => a.category === c);
+    acc[c] = (HOTKEY_ACTIONS as readonly HotkeyAction[]).filter((a) => a.category === c);
     return acc;
-  }, {} as Record<HotkeyCategory, typeof HOTKEY_ACTIONS>);
+  }, {} as Record<HotkeyCategory, readonly HotkeyAction[]>);
 
   // Draft state. Loaded on open (watched via $:) and mutated by inputs;
   // committed to disk only on Apply. Cancel discards without saving.
@@ -87,12 +90,8 @@
   // we've applied live (reset panes / clear recent); Apply writes `draft`.
   let loaded = false;
 
-  async function wailsApp() {
-    return await import("../../wailsjs/go/main/App").catch(() => null);
-  }
-
   async function load() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try {
       const s = await App.LoadSettings();
@@ -144,7 +143,7 @@
       cancel();
       return;
     }
-    const App = await wailsApp();
+    const App = backend();
     if (App) {
       try {
         await App.SaveSettings(draft);
@@ -166,7 +165,7 @@
   //     sticks — documented inline below.
 
   async function resetPanes() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try {
       const s = await App.LoadSettings();
@@ -182,12 +181,10 @@
   }
 
   async function clearRecent() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App) return;
     try {
-      const s = await App.LoadSettings();
-      s.recentFiles = [];
-      await App.SaveSettings(s);
+      await App.ClearRecentFiles();
       await load();
     } catch (e) {
       console.warn("[fbe] clear recent failed:", e);
@@ -249,7 +246,7 @@
   }
 
   async function resetAllHotkeys() {
-    const App = await wailsApp();
+    const App = backend();
     if (!App || !draft) return;
     try {
       // Trip defaults-merge on the Go side: save an empty map, then reload —
@@ -286,22 +283,7 @@
   });
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="button"
-    tabindex="-1"
-    aria-label="Dismiss settings"
-    on:click={cancel}
-    on:keydown={(e) => e.key === "Escape" && cancel()}>
-    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-    <div
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sd-title"
-      on:click|stopPropagation
-      on:keydown|stopPropagation>
+<Modal {open} labelledBy="sd-title" style="padding: 1rem 1.4rem 1.2rem; min-width: 32rem; max-width: 40rem; max-height: 85vh; overflow: auto; font-family: var(--font-ui); font-size: 0.9rem;" on:close={cancel}>
       <header>
         <h3 id="sd-title">Settings</h3>
         <button type="button" class="close" on:click={cancel} title="Close without saving">×</button>
@@ -466,33 +448,9 @@
           <button type="button" class="primary" on:click={apply}>Apply</button>
         </div>
       {/if}
-    </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--backdrop);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .dialog {
-    background: var(--bg-card);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 1rem 1.4rem 1.2rem;
-    min-width: 32rem;
-    max-width: 40rem;
-    max-height: 85vh;
-    overflow: auto;
-    box-shadow: 0 8px 24px var(--shadow);
-    font-family: -apple-system, "Segoe UI", sans-serif;
-    font-size: 0.9rem;
-  }
   header {
     display: flex;
     align-items: center;
@@ -615,7 +573,7 @@
     font-style: italic;
   }
   .row input.mono {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     width: 3rem;
     text-align: center;
   }
@@ -706,7 +664,7 @@
     border-radius: 3px;
     cursor: pointer;
     font: inherit;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85rem;
     text-align: center;
   }

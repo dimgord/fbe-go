@@ -2,6 +2,9 @@ package settings
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -60,5 +63,98 @@ func TestDefaultHotkeysJSONRoundTrip(t *testing.T) {
 		if s2.Hotkeys[k] != v {
 			t.Errorf("hotkey %q: %q → %q", k, v, s2.Hotkeys[k])
 		}
+	}
+}
+
+func TestStoreUpdateAndMRU(t *testing.T) {
+	st := NewStore(filepath.Join(t.TempDir(), "fbe", "config.json"))
+	for i := 0; i < recentFilesCap+3; i++ {
+		if err := st.Update(func(s *Settings) { s.AddRecent(fmt.Sprintf("/b%d.fb2", i)) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.Update(func(s *Settings) { s.AddRecent("/b5.fb2") }); err != nil {
+		t.Fatal(err)
+	}
+	s, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.RecentFiles) != recentFilesCap || s.RecentFiles[0] != "/b5.fb2" {
+		t.Fatalf("recents: %v", s.RecentFiles)
+	}
+	s.RemoveRecent("/b5.fb2")
+	if len(s.RecentFiles) != recentFilesCap-1 {
+		t.Fatalf("recents after remove: %v", s.RecentFiles)
+	}
+}
+
+// The frontend's settings draft must not roll back what Go wrote since it was loaded.
+func TestReplaceKeepsGoOwnedFields(t *testing.T) {
+	st := NewStore(filepath.Join(t.TempDir(), "config.json"))
+	draft, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(s *Settings) { s.AddRecent("/new.fb2"); s.AddRecentSearch("q"); s.Window.W = 900 }); err != nil {
+		t.Fatal(err)
+	}
+	draft.Theme = "dark"
+	if err := st.Replace(draft); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Theme != "dark" || len(got.RecentFiles) != 1 || len(got.RecentSearches) != 1 || got.Window.W != 900 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// Run with -race: recents and window geometry update from different goroutines.
+func TestConcurrentUpdatesAllLand(t *testing.T) {
+	st := NewStore(filepath.Join(t.TempDir(), "config.json"))
+	var wg sync.WaitGroup
+	for i := 0; i < recentFilesCap; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := st.Update(func(s *Settings) { s.AddRecent(fmt.Sprintf("/b%d.fb2", i)) }); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	s, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.RecentFiles) != recentFilesCap {
+		t.Fatalf("lost updates: %v", s.RecentFiles)
+	}
+}
+
+func TestRecentSearches(t *testing.T) {
+	var s Settings
+	s.AddRecentSearch("")
+	if len(s.RecentSearches) != 0 {
+		t.Fatal("empty query recorded")
+	}
+	for i := 0; i < recentSearchesCap+5; i++ {
+		s.AddRecentSearch(fmt.Sprintf("q%d", i))
+	}
+	s.AddRecentSearch("q10")
+	if len(s.RecentSearches) != recentSearchesCap || s.RecentSearches[0] != "q10" {
+		t.Fatalf("history: %v", s.RecentSearches)
+	}
+	n := 0
+	for _, q := range s.RecentSearches {
+		if q == "q10" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("q10 appears %d times", n)
 	}
 }

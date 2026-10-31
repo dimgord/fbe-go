@@ -97,7 +97,7 @@
   }
   .wide { flex: 1; }
   .short { flex: 0 0 6rem; }
-  .mono { flex: 1; font-family: "SF Mono", Menlo, monospace; font-size: 0.88rem; }
+  .mono { flex: 1; font-family: var(--font-mono); font-size: 0.88rem; }
   .aux {
     background: var(--bg-surface);
     border: 1px solid var(--border-button);

@@ -1,0 +1,113 @@
+version: '3'
+
+vars:
+  APP: fbe-go.app
+  CLI: build/fbe
+  # Override to try the install elsewhere: task deploy INSTALL_DIR=/tmp/apps PREFIX=/tmp/local
+  INSTALL_DIR: /Applications  # macOS
+  PREFIX: "{{.HOME}}/.local"  # Linux
+  LSREGISTER: /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  run:
+    desc: Run the desktop app in hot-reload dev mode
+    cmds:
+      - wails dev -tags webkit2_41
+
+  frontend:
+    desc: Generate Wails bindings and build the frontend into frontend/dist
+    cmds:
+      # go:embed needs a file in frontend/dist before the bindings can compile on a fresh clone.
+      - mkdir -p frontend/dist && touch frontend/dist/.keep
+      - wails generate module
+      # npm ci, not wails' npm install: npm 11 prunes the lock file and CI's npm ci then rejects it.
+      - cd frontend && npm ci --no-audit --no-fund
+      - cd frontend && npm run build
+
+  build:
+    desc: Build the desktop app → build/bin/{{.APP}}
+    deps: [frontend]
+    cmds:
+      - wails build -s -tags webkit2_41
+
+  build-cli:
+    desc: Build the fbe command-line tool → {{.CLI}}
+    cmds:
+      - go build -o {{.CLI}} ./cmd/fbe
+
+  test:
+    desc: Run Go and frontend unit tests
+    cmds:
+      - go test ./...
+      - cd frontend && npm test
+
+  fmt:
+    desc: Format the Go code
+    cmds:
+      - gofmt -w .
+
+  lint:
+    desc: go vet, svelte-check and the theme-hygiene lint
+    cmds:
+      - go vet ./internal/... ./cmd/...
+      - cd frontend && npm run check
+      - cd frontend && npm run check:theme
+
+  check:
+    desc: The gate before a commit — lint, then tests
+    cmds:
+      - task: lint
+      - task: test
+
+  deploy:
+    desc: Build and install on this machine (macOS {{.INSTALL_DIR}}, Linux {{.PREFIX}}; local unsigned build)
+    cmds:
+      - task: deploy-mac
+      - task: deploy-linux
+
+  deploy-mac:
+    internal: true
+    platforms: [darwin]
+    preconditions:
+      - sh: '! pgrep -f "{{.INSTALL_DIR}}/{{.APP}}/" >/dev/null'
+        msg: "{{.APP}} is running from {{.INSTALL_DIR}} — quit it first (it may hold unsaved edits)"
+    cmds:
+      - task: build
+      - mkdir -p "{{.INSTALL_DIR}}"
+      # Copy beside the old app, then swap, so a failed copy leaves the installed one intact.
+      - ditto build/bin/{{.APP}} "{{.INSTALL_DIR}}/{{.APP}}.new"
+      - rm -rf "{{.INSTALL_DIR}}/{{.APP}}"
+      - mv "{{.INSTALL_DIR}}/{{.APP}}.new" "{{.INSTALL_DIR}}/{{.APP}}"
+      # Refresh the .fb2 association so double-click opens this build.
+      - '"{{.LSREGISTER}}" -f "{{.INSTALL_DIR}}/{{.APP}}"'
+      - echo "installed {{.INSTALL_DIR}}/{{.APP}}"
+
+  deploy-linux:
+    internal: true
+    platforms: [linux]
+    cmds:
+      - task: build
+      - install -Dm755 build/bin/fbe "{{.PREFIX}}/bin/fbe"
+      - install -Dm644 build/appicon-linux.png "{{.PREFIX}}/share/icons/hicolor/512x512/apps/fbe-go.png"
+      - install -Dm644 packaging/fbe-go-mime.xml "{{.PREFIX}}/share/mime/packages/fbe-go-mime.xml"
+      # Absolute Exec: ~/.local/bin is often not on a desktop session's PATH.
+      - mkdir -p "{{.PREFIX}}/share/applications"
+      - sed 's|^Exec=fbe |Exec={{.PREFIX}}/bin/fbe |' packaging/fbe-go.desktop > "{{.PREFIX}}/share/applications/fbe-go.desktop"
+      # Refresh the .fb2 association; these tools are absent on some minimal systems.
+      - cmd: update-mime-database "{{.PREFIX}}/share/mime"
+        ignore_error: true
+      - cmd: update-desktop-database "{{.PREFIX}}/share/applications"
+        ignore_error: true
+      - cmd: xdg-mime default fbe-go.desktop application/x-fictionbook+xml
+        ignore_error: true
+      - echo "installed {{.PREFIX}}/bin/fbe"
+
+  clean:
+    desc: Remove build output
+    cmds:
+      - rm -rf build/bin {{.CLI}} frontend/dist
