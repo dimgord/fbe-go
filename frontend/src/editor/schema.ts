@@ -5,7 +5,7 @@
  * The schema intentionally stays close to the FB2 element model so that
  * serialize.ts / parse.ts can be near 1:1 translations.
  */
-import { Schema, type NodeSpec, type MarkSpec } from "prosemirror-model";
+import { Schema, type MarkSpec, type Node as PMNode, type NodeSpec } from "prosemirror-model";
 
 const nodes: Record<string, NodeSpec> = {
   // Top of the editable document: one or more <body> containers.
@@ -32,7 +32,7 @@ const nodes: Record<string, NodeSpec> = {
     content: "(title | epigraph | image_block | annotation)* (section | block)+",
     group: "structural",
     attrs: { id: { default: null } },
-    toDOM: (n) => ["div", { class: "section", id: n.attrs.id }, 0],
+    toDOM: (n) => ["div", sectionAttrs(n), 0],
     parseDOM: [{ tag: "div.section" }],
   },
 
@@ -257,5 +257,42 @@ const marks: Record<string, MarkSpec> = {
     inclusive: false,
   },
 };
+
+// Layout guesses at the default font and column width. They need only be right on average: a
+// section is measured for real once it has been on screen.
+const CHARS_PER_LINE = 90;
+const LINE_PX = 26;
+const BLOCK_GAP_PX = 10;
+const IMAGE_PX = 300;
+
+/**
+ * Estimated rendered height of a section. Off-screen sections use `content-visibility: auto`, so
+ * the browser takes their height on trust; without this every one counts as the same placeholder
+ * and the scrollbar stops meaning anything. Exported for the tests.
+ */
+function sectionAttrs(n: PMNode): Record<string, string | null> {
+  let leaf = true;
+  n.forEach((child) => {
+    if (child.type.name === "section") leaf = false;
+  });
+  // Only leaf sections are lazily rendered. A wrapper's height is the sum of its children: the
+  // browser remembers a skipped wrapper's size from before they were laid out, and it collapses.
+  return leaf
+    ? { class: "section leaf", id: n.attrs.id, style: `contain-intrinsic-size: auto ${estimateHeight(n)}px` }
+    : { class: "section", id: n.attrs.id };
+}
+
+export function estimateHeight(section: PMNode): number {
+  let px = 0;
+  section.descendants((n) => {
+    if (n.isTextblock) {
+      px += Math.max(1, Math.ceil(n.textContent.length / CHARS_PER_LINE)) * LINE_PX + BLOCK_GAP_PX;
+      return false;
+    }
+    if (n.type.name === "image_block") px += IMAGE_PX;
+    return true;
+  });
+  return px;
+}
 
 export const fb2Schema = new Schema({ nodes, marks });

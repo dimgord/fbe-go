@@ -6,6 +6,43 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 112 — 2026-10-30 — The scrollbar tells the truth; the position bar shows the chapter → v3.17.0 [dev]
+
+User report with screenshots: the scrollbar thumb sat mid-track while the bar said 9%.
+
+Measured on two books, `scrollHeight` was 16,948px for a whole illustrated book: 75% of the
+scrollbar read as 100% of the text. Two causes:
+
+1. Every off-screen section used the same 600px placeholder, whatever its length.
+2. `content-visibility` also applied to wrapper sections. A skipped wrapper keeps a size
+   remembered from before its children were laid out, so a section estimated at 307,034px measured
+   245px and the book collapsed to a few screens. This is what estimates alone did not fix: they
+   looked right after a few jumps and failed on a fresh open, which a wheel test exposed.
+
+Now only leaf sections are lazy (`section leaf`), each with `contain-intrinsic-size:
+auto <estimate>`, computed from its text and images in `schema.ts`. Wrappers measure as the sum of
+their children. The resize speedup survives, because the leaves are where the text is. The fix also
+removes what `scroll.ts` had to work around, though forcing sections around a target stays: an
+estimate is not an exact height.
+
+After: scrollbar → text is 10→9, 25→23, 50→46, 75→73, 90→89 on the illustrated book and 10→10,
+25→25, 50→51, 76→77, 91→91 on the larger one; wheel scrolling is steady, with `scrollHeight`
+moving under 1%. Far jumps in Find still miss nothing.
+
+`Editor` also re-measures 150 ms after scrolling stops, since a jump lands on sections still rendering.
+
+**Position bar.** A long book title filled the line and the chapter fell off the end. It now shows
+the two nearest levels, with the full path in the tooltip.
+
+### Files Modified
+
+- `frontend/src/editor/schema.ts` — `estimateHeight`, `sectionAttrs`; `schema.test.ts` (new).
+- `frontend/src/editor/Editor.svelte` — leaf-only `content-visibility`, settle re-measure.
+- `frontend/src/tree/PositionBar.svelte` — two levels.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.16.0 → 3.17.0.
+
+---
+
 ## Rev 111 — 2026-10-30 — Wails 2.12.0 → 2.16.0 → v3.16.0 [dev]
 
 `task build` warned that `go.mod` was behind the CLI, and CI installs `wails@latest`, so the

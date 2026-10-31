@@ -42,6 +42,8 @@
   const POSITION_PROBE_Y = 40;
   let positionFrame = 0;
   let lastPosition = "";
+  const POSITION_SETTLE_MS = 150;
+  let positionSettle: ReturnType<typeof setTimeout> | undefined;
 
   function schedulePosition(): void {
     if (!positionFrame) positionFrame = requestAnimationFrame(reportPosition);
@@ -62,7 +64,11 @@
   }
 
   function onAnyScroll(e: Event): void {
-    if (view && e.target instanceof Node && e.target.contains(view.dom)) schedulePosition();
+    if (!view || !(e.target instanceof Node) || !e.target.contains(view.dom)) return;
+    schedulePosition();
+    // A jump lands on sections that are only just rendering: measure again once it settles.
+    clearTimeout(positionSettle);
+    positionSettle = setTimeout(schedulePosition, POSITION_SETTLE_MS);
   }
 
   onMount(() => {
@@ -70,6 +76,7 @@
     return () => {
       window.removeEventListener("scroll", onAnyScroll, true);
       cancelAnimationFrame(positionFrame);
+      clearTimeout(positionSettle);
     };
   });
 
@@ -264,11 +271,10 @@
      on every mousemove of the window edge.
      1. `contain: layout style` — children can't affect outer layout, so
         the reflow walk stops at the section boundary.
-     2. `content-visibility: auto` — actively skip rendering of off-screen
-        sections entirely until they scroll into view. Combined with
-        `contain-intrinsic-size`, the browser reserves a placeholder
-        height so the scrollbar stays accurate without paying for layout
-        on hidden content. This is where the big win comes from on
+     2. `content-visibility: auto` on leaf sections — skip rendering them
+        off-screen. Each carries an estimated `contain-intrinsic-size`
+        (schema.ts), so the scrollbar stays accurate without paying for
+        layout on hidden content. This is where the big win comes from on
         large books — Облачный атлас (~7 000 lines XML, ~3 000 PM
         blocks) goes from "the resize handle drags with a 500 ms lag"
         to "drags at 60 fps".
@@ -281,8 +287,9 @@
        positions, not DOM rect coordinates. */
   :global(.ProseMirror div.section) {
     contain: layout style;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 600px;
+  }
+  :global(.ProseMirror div.section.leaf) {
+    content-visibility: auto; /* height estimate: schema.ts, estimateHeight */
   }
   :global(.ProseMirror div.section.cv-visible) {
     content-visibility: visible;

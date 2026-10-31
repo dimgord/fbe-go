@@ -3,12 +3,15 @@
 
   export let position: BookPosition | null = null;
 
-  $: where = position?.trail.join(" › ") ?? "";
+  // The nearest levels matter most: the book's own long title would push the chapter off the bar.
+  const SHOWN_LEVELS = 2;
+  $: trail = position?.trail ?? [];
+  $: where = trail.slice(-SHOWN_LEVELS).join(" › ");
 </script>
 
 {#if position}
   <div class="position-bar" role="status" aria-label="Current position in the book">
-    <span class="where" title={where}>{where}</span>
+    <span class="where" title={trail.join(" › ")}>{where}</span>
     <span class="percent">{position.percent}%</span>
   </div>
 {/if}
