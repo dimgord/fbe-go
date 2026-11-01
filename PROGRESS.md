@@ -8,10 +8,20 @@ project must add an entry here and bump the version in `wails.json` and
 
 ## Rev 126 — 2026-11-01 — The XML falls behind the text only with unapplied XML edits, and says so → v3.31.0 [dev]
 
-User report with a screenshot: outline with two CHAPTER 15, XML with one, Apply grey. The header's 8094
-lines is the book without any copy, so the XML had never held this copy; the "Last Apply succeeded" banner
-was left from an earlier Apply. Apply itself is fine: with a mock returning a changed book, the outline
-went from 43 to 42 entries. Rev 125's reading of the previous report was wrong as an account of this one.
+User report with an annotated screenshot, after Apply: outline and text with two CHAPTER 15, XML with one,
+Apply grey. The user's sequence: Clone with Edit XML open, delete the copy by hand in the XML, Apply. This
+sequence is not fully explained, see below.
+
+Real app, real Go parser, 337419.fb2, driven by a temporary probe that cuts the copy from the XML and calls
+`session.applyXml`, two cycles each:
+
+- 3.30.0, Clone with the XML read-only, then Edit, cut, Apply: outline back to 1, XML 8094 lines. Clean.
+- 3.30.0, Clone with Edit XML open: outline 2, XML 1, 8094 lines, for as long as it was watched. This is
+  the state in the screenshot, and it is the bug fixed here. The probe had no copy to cut, so it stopped.
+- This Rev, Clone with Edit XML open: XML gets the copy (8439 lines); cut and Apply: outline 1, 8094. Clean.
+
+Not reproduced: a real Apply leaving the copy in the text. The probe bypasses the Apply button, which is
+disabled when the buffer equals the baseline, so that path is not ruled out on 3.30.0.
 
 **Root cause, from Rev 120.** The XML pane refreshed only outside edit mode, so a Clone with Edit XML open
 left it behind, with nothing shown. Worse, a later Apply would have replaced the text with that older XML,
