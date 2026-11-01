@@ -128,6 +128,11 @@ wails dev      # hot-reload dev mode
 wails build    # production bundle
 ```
 
+## Debug log
+
+The app keeps a small rolling log of what it did, `debug.log` next to `config.json` (2 MiB at most; counts
+and states, no book text). `task log` shows the end of it. Attach it to a bug report.
+
 ## Docs
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — module map, how pieces fit together

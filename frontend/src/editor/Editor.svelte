@@ -12,12 +12,13 @@
   import { cleanPastedHTML, cleanPastedText } from "./paste";
   import { searchPlugin } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
-  import { scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
-  import { blockPos, positionAt, type BookPosition } from "../tree/position";
-  import { findNodePos } from "../tree/outline";
+  import { debugLog } from "../runtime/debug";
+  import { blockMarkPlugin, blockMarkTr, scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
+  import { blockIndexAt, blockPos, positionAt, type BookPosition } from "../tree/position";
+  import { buildOutline, findNodePos, type OutlineNode } from "../tree/outline";
   import { dirtyPlugin, markClean } from "./dirtyTracker";
   import { createImageViews } from "./imageView";
-  import { toggleLink, insertTableCmd } from "./commands";
+  import { NOTICE, toggleLink, insertTableCmd } from "./commands";
   import { EDITOR_COMMANDS, type CommandId } from "./commandRegistry";
   import { HOTKEY_ACTIONS, toPMKey } from "../settings/hotkeys";
   import type { Command } from "prosemirror-state";
@@ -37,7 +38,16 @@
   /** Inferred from the document's title-info <lang> for native spellcheck routing. */
   $: lang = fb?.Description?.TitleInfo?.Lang || "en";
 
-  const dispatch = createEventDispatcher<{ dirty: boolean; position: BookPosition }>();
+  const dispatch = createEventDispatcher<{
+    dirty: boolean;
+    position: BookPosition;
+    notice: string;
+    outline: OutlineNode[];
+    /** The document, after a pause in editing. */
+    docchange: PMNode;
+    /** Index of the text block holding the caret; null for a newly loaded document. */
+    caret: number | null;
+  }>();
   // What sits at the top of the visible text, reported once per frame at most.
   const POSITION_PROBE_Y = 40;
   let positionFrame = 0;
@@ -47,6 +57,26 @@
 
   function schedulePosition(): void {
     if (!positionFrame) positionFrame = requestAnimationFrame(reportPosition);
+  }
+
+  // The outline changes with the document, in the same update; only a real change reaches the
+  // tree, so typing in a paragraph costs a comparison and no re-render.
+  let lastOutline = "";
+  function reportOutline(doc: PMNode): void {
+    const outline = buildOutline(doc);
+    const key = JSON.stringify(outline);
+    if (key !== lastOutline) {
+      lastOutline = key;
+      dispatch("outline", outline);
+    }
+  }
+
+  // Serializing the book is too slow for every keystroke, so this waits for a pause.
+  const DOC_CHANGE_PAUSE_MS = 800;
+  let docChangeTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleDocChange(doc: PMNode): void {
+    clearTimeout(docChangeTimer);
+    docChangeTimer = setTimeout(() => dispatch("docchange", doc), DOC_CHANGE_PAUSE_MS);
   }
 
   /** The document position at the top of the visible text. */
@@ -64,6 +94,14 @@
   export function scrollToBlock(index: number): void {
     const pos = view && blockPos(view.state.doc, index);
     if (view && pos) scrollPosIntoView(view, pos, "top", POSITION_PROBE_Y);
+  }
+
+  /** Mark text block `index`, bringing it on screen only if it is not; null clears the mark. */
+  export function markBlock(index: number | null): void {
+    if (!view) return;
+    const pos = index === null ? null : blockPos(view.state.doc, index);
+    view.dispatch(blockMarkTr(view.state, pos === null ? null : pos - 1));
+    if (pos !== null) scrollPosIntoView(view, pos, "nearest");
   }
 
   export function holdPosition(): void {
@@ -105,6 +143,7 @@
       window.removeEventListener("scroll", onAnyScroll, true);
       cancelAnimationFrame(positionFrame);
       clearTimeout(positionSettle);
+      clearTimeout(docChangeTimer);
     };
   });
 
@@ -162,7 +201,7 @@
       const raw = hk[action.id];
       if (!raw) continue;
       const pmKey = toPMKey(raw);
-      if (pmKey) bindings[pmKey] = EDITOR_COMMANDS[action.id];
+      if (pmKey) bindings[pmKey] = revealing(EDITOR_COMMANDS[action.id]);
     }
     // F3 / Shift-F3 stay hardcoded as Windows-convention aliases — users can
     // still rebind FindNext to something else without losing these.
@@ -183,12 +222,19 @@
         keymap(baseKeymap),
         searchPlugin(),
         scrollForcePlugin(),
+        blockMarkPlugin(),
         noteLinksPlugin(),
         dirtyPlugin((dirty) => dispatch("dirty", dirty)),
         new Plugin({
           view: () => ({
             update(v, prev) {
-              if (v.state.doc !== prev.doc) schedulePosition();
+              if (!v.state.selection.eq(prev.selection)) {
+                dispatch("caret", blockIndexAt(v.state.doc, v.state.selection.head));
+              }
+              if (v.state.doc === prev.doc) return;
+              schedulePosition();
+              reportOutline(v.state.doc);
+              scheduleDocChange(v.state.doc);
             },
           }),
         }),
@@ -196,12 +242,37 @@
     });
     view = new EditorView(container, {
       state,
+      handleDOMEvents: {
+        // Coming back makes this caret current again, even at the very spot it left, where no
+        // selection change would say so. A frame later, because a click sets the caret after focus.
+        focus: (v) => {
+          requestAnimationFrame(() => {
+            if (v.isDestroyed || !v.hasFocus()) return;
+            v.dispatch(blockMarkTr(v.state, null));
+            dispatch("caret", blockIndexAt(v.state.doc, v.state.selection.head));
+          });
+          return false;
+        },
+      },
+      dispatchTransaction(this: EditorView, tr) {
+        this.updateState(this.state.apply(tr));
+        const notice = tr.getMeta(NOTICE);
+        if (notice) {
+          debugLog("notice", { text: notice });
+          dispatch("notice", notice);
+        }
+      },
       attributes: { spellcheck: "true", lang },
       transformPastedHTML: cleanPastedHTML,
       transformPastedText: cleanPastedText,
       nodeViews: images.nodeViews,
     });
     schedulePosition();
+    dispatch("caret", null);
+    lastOutline = "";
+    reportOutline(view.state.doc);
+    debugLog("editor.mount", { size: view.state.doc.content.size, outline: lastOutline.split('"kind"').length - 1 });
+    dispatch("docchange", view.state.doc);
   }
 
   /** Settings → Apply swaps the bindings here. Never `reconfigure` for this: PM destroys every
@@ -253,10 +324,20 @@
     lastMountedFB = null;
   });
 
+  /** A command, followed to wherever it moved the selection (see scrollPosIntoView for why PM's
+      own scrollIntoView is not enough). */
+  const revealing = (cmd: Command): Command => (state, dispatch, v) => {
+    const handled = cmd(state, dispatch, v);
+    if (handled && dispatch && v && v.state.selection.from !== state.selection.from) {
+      scrollPosIntoView(v, v.state.selection.from, "nearest");
+    }
+    return handled;
+  };
+
   /** Run a command from outside the editor, such as a toolbar button. */
   export function run(id: CommandId): void {
     if (!view) return;
-    EDITOR_COMMANDS[id](view.state, view.dispatch, view);
+    revealing(EDITOR_COMMANDS[id])(view.state, view.dispatch, view);
     view.focus();
   }
 
@@ -282,6 +363,11 @@
 <TableDialog bind:open={tableDialogOpen} on:insert={onTableInsert} />
 
 <style>
+  .editor :global(.xml-caret) {
+    background: var(--highlight);
+    box-shadow: 0 0 0 4px var(--highlight);
+    border-radius: 2px;
+  }
   .editor {
     padding: 1rem 2rem;
     max-width: 820px;

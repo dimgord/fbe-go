@@ -1,16 +1,14 @@
 /**
- * Build an outline tree from a FictionBook value.
+ * The outline, built from the live ProseMirror document so that it can never disagree with
+ * what is being edited.
  *
  * Each node has:
- *  - label: displayed text (extracted from section's <title>, or a placeholder)
- *  - path:  index array ([body, section, ...subsections]) that lets the editor
- *           navigate to the matching ProseMirror node
+ *  - label: displayed text (the section's <title>, or a placeholder)
+ *  - path:  index array ([body, section, ...subsections]) of the matching PM node
  *  - kind:  which FB2 element the node corresponds to
  *  - children: nested outline nodes
  */
 import type { Node as PMNode } from "prosemirror-model";
-import type { FictionBook, Section, Title } from "../fb2/types";
-import { plainText } from "../editor/markCodec";
 
 export type OutlineKind = "body" | "section";
 
@@ -21,50 +19,44 @@ export interface OutlineNode {
   children: OutlineNode[];
 }
 
-export function buildOutline(fb: FictionBook | null): OutlineNode[] {
-  if (!fb) return [];
-  const out: OutlineNode[] = [];
-  const bodies = fb.Bodies ?? [];
-  for (let bi = 0; bi < bodies.length; bi++) {
-    const body = bodies[bi];
-    out.push({
-      kind: "body",
-      label: titleText(body.Title) || (body.Name ? `body[${body.Name}]` : `body ${bi + 1}`),
-      path: [bi],
-      children: (body.Sections ?? []).map((s, si) => buildSection(s, [bi, si], si + 1)),
-    });
+function titleText(node: PMNode): string {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child.type.name === "title") return child.textBetween(0, child.content.size, " ").trim();
   }
+  return "";
+}
+
+function sections(parent: PMNode, path: number[]): OutlineNode[] {
+  const out: OutlineNode[] = [];
+  parent.forEach((child) => {
+    if (child.type.name !== "section") return;
+    const childPath = [...path, out.length];
+    out.push({
+      kind: "section",
+      label: titleText(child) || `section ${out.length + 1}`,
+      path: childPath,
+      children: sections(child, childPath),
+    });
+  });
   return out;
 }
 
-function buildSection(s: Section, path: number[], index: number): OutlineNode {
-  const label = titleText(s.Title) || `section ${index}`;
-  // Rev 37: subsections now live inside Section.Body as Block entries with
-  // a non-null Section variant. Filter them out and keep their index within
-  // the subsection-only sequence so the outline path still maps to the
-  // editor's PM section children.
-  let subIdx = 0;
-  const subs: OutlineNode[] = [];
-  for (const b of s.Body ?? []) {
-    if (!b.Section) continue;
-    subs.push(buildSection(b.Section, [...path, subIdx], subIdx + 1));
-    subIdx++;
-  }
-  return {
-    kind: "section",
-    label,
-    path,
-    children: subs,
-  };
-}
-
-function titleText(t: Title | null | undefined): string {
-  if (!t) return "";
-  const parts: string[] = [];
-  for (const block of t.Children ?? []) {
-    if (block.Paragraph) parts.push(plainText(block.Paragraph.Children ?? []));
-  }
-  return parts.join(" ").trim();
+export function buildOutline(doc: PMNode | null): OutlineNode[] {
+  if (!doc) return [];
+  const out: OutlineNode[] = [];
+  doc.forEach((body) => {
+    if (body.type.name !== "body") return;
+    const path = [out.length];
+    const name = body.attrs.name as string;
+    out.push({
+      kind: "body",
+      label: titleText(body) || (name ? `body[${name}]` : `body ${out.length + 1}`),
+      path,
+      children: sections(body, path),
+    });
+  });
+  return out;
 }
 
 /** The position of the body or section at an outline path, counting same-type siblings. */

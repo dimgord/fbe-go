@@ -6,6 +6,355 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 127 — 2026-11-01 — A debug log for reports that cannot be reproduced later → v3.32.0 [dev]
+
+The user confirmed both Clone flows on 3.31.0, but the one case of Apply leaving a copy on 3.30.0 stayed
+unexplained, and nothing recorded what had happened. The user asked for a debug log for next time.
+
+`internal/fb2/debuglog` appends timestamped lines to `debug.log` next to `config.json`, rolling over to
+`debug.log.1` at 1 MiB, so at most 2 MiB stays on disk. It is always on, since the point is the session
+nobody planned to debug. Events hold counts and states only, never book text. A failed write is dropped.
+
+Events: `app.start`, `apply.start`, `apply.done`, `apply.failed`, `apply.undo`, `xml.refresh`, `xml.dirty`,
+`xml.editMode`, `xml.textAhead`, `editor.mount`, `notice`. For the open question, compare `sections` in
+`apply.start` with `outline` in the next `editor.mount` (the outline also counts each body, so 42 sections
+in one body is `outline=43`): a missing mount means the text was not rebuilt.
+A click on a disabled Apply leaves no event, and its absence is the evidence.
+
+The log found a bug on its first run: Apply's own rebuild raised `xml.textAhead`, a brief false warning.
+`App.onApply` now holds that off while Apply runs.
+
+`task log` shows the tail. Verified in the real app with the real buttons; three Go tests.
+
+### Files Modified
+
+- `internal/fb2/debuglog/` (new), `app.go` — `DebugLog`, `app.start`.
+- `frontend/src/runtime/debug.ts` (new), `document/session.ts`, `editor/Editor.svelte`, `App.svelte`.
+- `Taskfile.yml` — `log`. `README.md`, `CLAUDE.md` — note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.31.0 → 3.32.0.
+
+---
+
+## Rev 126 — 2026-11-01 — The XML falls behind the text only with unapplied XML edits, and says so → v3.31.0 [dev]
+
+User report with an annotated screenshot, after Apply: outline and text with two CHAPTER 15, XML with one,
+Apply grey. The user's sequence: Clone with Edit XML open, delete the copy by hand in the XML, Apply. This
+sequence is not fully explained, see below.
+
+Real app, real Go parser, 337419.fb2, driven by a temporary probe that cuts the copy from the XML and calls
+`session.applyXml`, two cycles each:
+
+- 3.30.0, Clone with the XML read-only, then Edit, cut, Apply: outline back to 1, XML 8094 lines. Clean.
+- 3.30.0, Clone with Edit XML open: outline 2, XML 1, 8094 lines, for as long as it was watched. This is
+  the state in the screenshot, and it is the bug fixed here. The probe had no copy to cut, so it stopped.
+- This Rev, Clone with Edit XML open: XML gets the copy (8439 lines); cut and Apply: outline 1, 8094. Clean.
+
+Not reproduced: a real Apply leaving the copy in the text. The user saw two copies in the XML and removed one
+by hand, so the state above does not account for that report by itself. A second probe used the real Clone,
+Edit XML and Apply buttons and a real CM6 change, two cycles in one session: on both 3.30.0 and this Rev the
+outline returned to 1 and the XML to 8094 lines. Apply was enabled each time. On 3.30.0 a further Clone after
+Apply, with edit mode still open, gives the screenshot's state, but nothing confirms that happened.
+Untested: real key presses, deleting inside a fold, deleting the original rather than the copy.
+
+**Root cause, from Rev 120.** The XML pane refreshed only outside edit mode, so a Clone with Edit XML open
+left it behind, with nothing shown. Worse, a later Apply would have replaced the text with that older XML,
+silently dropping the Clone or any typing.
+
+- The pane now holds still only while it has unapplied edits (`xmlDirty`), not for the whole edit mode.
+- In that state a text change raises a banner: "The text changed after these XML edits began. Apply replaces
+  those changes." Merging the two is not attempted. Applying or discarding clears it.
+- Leaving the dirty state refreshes the pane.
+- `ValidationPanel` sets `editedXml` with the new source: since Rev 121 `setDoc` emits no `change`, so a
+  refresh, or Apply normalizing the text, would have left the dirty mark on.
+
+A refresh replaces the whole XML, so folds and the pane's own caret do not survive it.
+
+Verified in WebKit: Clone with clean Edit XML refreshes, no dirty mark; dirty plus Clone holds and warns;
+Apply and Done clear it; matrix 0 failures; delete-and-follow, Apply, dirty-tracking flows unchanged.
+
+### Files Modified
+
+- `frontend/src/App.svelte` — `xmlDirty`, `textAhead`.
+- `frontend/src/validation/ValidationPanel.svelte` — banner, `editedXml`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.30.0 → 3.31.0.
+
+---
+
+## Rev 125 — 2026-11-01 — Text and XML stay linked through unapplied XML edits → v3.30.0 [dev]
+
+User report with a screenshot, after Clone and deleting the copy by hand: the outline still had two
+CHAPTER 24, the text was in chapter 25, the XML in chapter 26, and the header still said 8094 lines. The
+report did not say what was expected; this entry assumes the copy was deleted in the XML pane and not
+yet applied, which is what the dirty mark and the Apply button show. So the outline and the text keeping
+the copy are correct until Apply. What was wrong:
+
+1. **The link stopped.** `editDirty` switched off both follow directions, so the panes drifted as soon as
+   the XML changed. It no longer does: Rev 121's `sinceLoad` mapping now covers `scrollToLine` and
+   `scrollline`, so lines keep their meaning through edits.
+2. **A folded line showed no mark.** `markLine` now unfolds around the line (the screenshot had a fold).
+3. **The line count** came from the XML as loaded. It now comes from the editor (`lines` event).
+
+A paragraph deleted from the XML has no line of its own: its mark lands on the deletion point.
+
+Verified in WebKit: delete 39 lines, then text jumps land 39 lines earlier than the loaded line, the same
+paragraphs as a control run without the deletion; XML jump moves the text; click into a folded section
+unfolds and marks it; the 50-step matrix still has 0 failures; Apply and follow flows unchanged. Not
+verified: the outline after a real Apply; the mock parser returns the same book.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `loadedLine`, `currentPos`, unfolding, `lines`.
+- `frontend/src/validation/ValidationPanel.svelte` — no `editDirty` gates, `liveLines`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.29.0 → 3.30.0.
+
+---
+
+## Rev 124 — 2026-11-01 — Going back and forth between text and XML keeps one correct mark → v3.29.0 [dev]
+
+User report with a screenshot: two lines lit again, in the reverse order to Rev 123, plus the question
+why it had not been checked. It had not: Revs 121-123 were tested in one click order, on different lines.
+
+1. **Returning to the same XML line.** `reportCaret` skips an unchanged line, so X, text, X on one line
+   said nothing, and the text caret's mark stayed beside the active line. The pane now forgets its last
+   line on blur and reports the caret on focus, a frame later because a click sets the caret after focus.
+2. **Returning to the same spot in the text.** The same hole: an unchanged selection emits nothing. `Editor`
+   now clears the block mark and reports the caret on focus.
+3. **A regression from Rev 123**, found only by the new matrix: its CSS also hid `.cm-text-caret` when
+   that line was the pane's stale active line, so nothing was lit. Excluded with `:not(.cm-text-caret)`.
+
+Verified with `/tmp/fbe-repro/matrix.mjs`: 50 steps over 13 click sequences on two XML lines and two
+paragraphs, covering the same and different places and focus without a click. Each step asserts exactly one
+lit line, of the right kind, matching the paragraph. 9 failures before the third fix, 0 after. WebKit only.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `onFocusChange`, CSS.
+- `frontend/src/editor/Editor.svelte` — `handleDOMEvents.focus`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.28.0 → 3.29.0.
+
+---
+
+## Rev 123 — 2026-11-01 — One current line in the XML → v3.28.0 [dev]
+
+User report with a screenshot: lines 4781 and 4786 were highlighted at once. 4781 was the text caret;
+4786 was the XML pane's own caret, left from an earlier click. The two have the same colour, so Rev
+122's "only one mark at a time" was wrong: it held for the text and XML marks, not for CM6's active line,
+which never clears. The active line and its gutter now show only while the pane has focus.
+
+Verified in WebKit: click in XML, then text, then XML; exactly one line lit each time.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — CSS.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.27.0 → 3.28.0.
+
+---
+
+## Rev 122 — 2026-10-31 — The XML shows where the text caret is → v3.27.0 [dev]
+
+The reverse of Rev 121, at the user's request: a caret in the text marks the matching XML line and
+brings it on screen if it is not, leaving the XML pane's own caret and focus alone.
+
+`Editor` emits `caret` (block index) on every selection change, which also covers Find and Clone. `App`
+keeps `caretBlock` and passes `caretLine` to the panel as `blockLines[caretBlock]`, so the line follows
+when the XML is re-serialized. `XmlEditor.markLine` uses a line decoration in a `StateField`, separate from
+the active line, in the same colour; the line maps forward through `sinceLoad` for unapplied XML edits.
+
+- For `SCROLL_LEAD_MS` after a text caret move the pane ignores `scrollToLine`: the text may scroll with
+  the caret, and following its top line could push the marked line out of a short pane.
+- `setDoc` drops decorations, so the panel re-marks after it; the prop alone would not fire, the line
+  often being unchanged.
+- A caret in the XML clears `caretBlock`, so only one mark exists at a time.
+
+Verified in WebKit: clicks at three depths, 25 arrow presses, typing, split, XML click clears, unapplied
+XML edits, panel opened after the click. The mock's XML is fixed, so the mark surviving a refresh was seen,
+but not a line number changing in it. Not measured in the real app.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `textCaretField`, `markLine`.
+- `frontend/src/validation/ValidationPanel.svelte` — `caretLine`.
+- `frontend/src/editor/Editor.svelte` — `caret` event.
+- `frontend/src/tree/position.ts` — exports `blockIndexAt`.
+- `frontend/src/App.svelte` — `caretBlock`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.26.0 → 3.27.0.
+
+---
+
+## Rev 121 — 2026-10-31 — The text shows where the XML caret is → v3.26.0 [dev]
+
+User request with an annotated screenshot: with the caret on XML line 5579, the text showed lines around
+5568 and nothing said which paragraph matched. The text followed only the top line of the XML pane; the
+caret reached nothing.
+
+`XmlEditor` now emits `caretline`, and `App` marks the matching block through `Editor.markBlock`: the
+paragraph gets the same highlight as the active XML line, and the text scrolls only if it is off-screen.
+The mark goes when a caret is placed in the text or the panel closes. Above the first block (the
+description) nothing matches, so the mark clears.
+
+- Works in both read-only and edit mode, including after unapplied edits: `sinceLoad` composes the edits
+  since the XML was loaded and maps the caret back through them, because `blockLines` describes the
+  XML as loaded. Enter three times, and the marks below still land on the right paragraph.
+- A caret move makes CM6 scroll, which must not read as a user scroll; otherwise 120 ms later the text
+  would jump to the XML's top line and lose the mark. `reportCaret` claims `followingUntil` for that.
+- `setDoc` sets `replacing`, so the load itself is neither an edit nor a caret move.
+- Known: a caret in the `<binary>` section past the last paragraph marks the last paragraph.
+
+Verified in WebKit on a 2199-line book: clicks at three depths, edit mode, after adding 3 lines, 40 arrow
+presses, click in the text clears; the marked text equals the XML line each time. Follow, Apply flows
+unchanged. Two new unit tests.
+
+### Files Modified
+
+- `frontend/src/editor/scroll.ts`, `scroll.test.ts` (new) — `blockMarkPlugin`, `blockMarkTr`.
+- `frontend/src/editor/Editor.svelte` — `markBlock`, `.xml-caret` style.
+- `frontend/src/validation/XmlEditor.svelte` — `caretline`, `sinceLoad`, `reportCaret`.
+- `frontend/src/validation/ValidationPanel.svelte`, `frontend/src/App.svelte` — wiring.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.25.0 → 3.26.0.
+
+---
+
+## Rev 120 — 2026-10-31 — The outline and the XML pane follow the live document → v3.25.0 [dev]
+
+User report with a screenshot: after Clone, reading Chapter 1 highlighted Chapter 5. Rev 119 listed
+this as a known limit; it was a bug. The outline was built from the `doc` snapshot while positions came
+from the live editor, so one cloned part shifted every path after it, and clicks went to the wrong
+place too.
+
+- `buildOutline` now takes the PM doc, so it has one source and cannot disagree with positions.
+  `Editor` rebuilds it in the same update as a document change and emits it only if it differs, so
+  typing in a paragraph costs a comparison. Clone reaches the tree in 33 ms, and a retyped title
+  updates live. The mapping from FictionBook (`plainText`, `titleText`) is gone.
+- The XML pane no longer goes stale: 800 ms after the last edit, `session.refreshXml` re-serializes
+  and re-validates while the panel is open. It waits while the user edits the XML, whose buffer is
+  theirs until Apply or Done, and catches up on Done. `setDoc` marks itself as following, so
+  replacing the text is not taken for a user scroll and the text does not jump.
+
+Verified in WebKit: Clone, then both CHAPTER 1 entries in the tree, highlight on the right one, a click on
+CHAPTER 5 landing on it; XML refreshed within about a second of typing, not at all in edit mode, and
+again after Done; earlier flows unchanged. New session test.
+
+### Files Modified
+
+- `frontend/src/tree/outline.ts`, `DocumentTree.svelte`, `outline.test.ts`, `position.test.ts`.
+- `frontend/src/editor/Editor.svelte` — `outline` and `docchange` events.
+- `frontend/src/editor/markCodec.ts` — `plainText` removed.
+- `frontend/src/document/session.ts`, `session.test.ts` — `refreshXml`.
+- `frontend/src/validation/XmlEditor.svelte`, `ValidationPanel.svelte`, `frontend/src/App.svelte`.
+- `CLAUDE.md` — note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.24.0 → 3.25.0.
+
+---
+
+## Rev 119 — 2026-10-31 — Clone shows what it did → v3.24.0 [dev]
+
+User report: clicking Clone several times, in both views, changed nothing visible. It had worked each
+time: every click appended a full copy of the chapter right after the original, off-screen, with the
+caret and the screen staying put. 3 clicks added 687 paragraphs to the book silently, which is a
+real risk of saving a bloated file, and may have fed the sluggishness reported in Rev 118. The zero-width
+text column reported alongside it was the Rev 118 layout bug: width stayed 1218px across clones.
+
+Clone now moves the caret to the copy and says what happened: "Cloned section: 224 paragraphs. Undo
+removes it." A command reports through a `NOTICE` transaction meta, surfaced by `dispatchTransaction`.
+`revealing()` wraps toolbar and hotkey commands so that the screen follows the selection whenever a
+command moves it, because PM's `tr.scrollIntoView()` picks the wrong container here.
+
+Known and left: the outline is built from the `doc` snapshot, so a clone appears there only after a view
+switch; the XML pane stays a snapshot until the next Validate.
+
+Verified in WebKit: three clones and Undo; toolbar, hotkeys and F3 as before. New unit test.
+
+### Files Modified
+
+- `frontend/src/editor/commands.ts`, `commands.test.ts` — `NOTICE`, selection, `countBlocks`.
+- `frontend/src/editor/Editor.svelte` — `revealing`, `dispatchTransaction`.
+- `frontend/src/App.svelte`, `document/session.ts` — shows the notice.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.23.0 → 3.24.0.
+
+---
+
+## Rev 118 — 2026-10-31 — Panes can no longer squeeze the text away; the text follows XML once it stops → v3.23.0 [dev]
+
+User report: while scrolling the XML, the lower part of the pane stays blank for a few seconds; the
+screenshot also showed no text column at all and Apply/Done cut off.
+
+**Layout, reproduced and fixed.** A saved `validationWidth` of 1039 plus an outline of 500 did not fit a
+1484px window. Columns were fixed widths, so the text went to zero and the page slid sideways; the
+`.layout` grid also grew with its content. Saved widths are now upper limits (`minmax`), the text keeps
+240px, `.layout` cannot exceed the window, and the panel's drag limit accounts for the other columns.
+
+**Scroll delay, not reproduced.** Rev 115 moved the text on every frame of an XML scroll, rendering
+sections and images. It now moves once scrolling stops (120 ms), which is the cheaper behaviour in any
+case. But a frame-by-frame probe in the real app found no problem even before that: about 20 ms a frame
+and no undrawn lines at 120-1200px steps. That probe scrolls from JS, while a trackpad scrolls in
+WebKit's UI process, so it may not see the report. This fix is a reasoned change, not a confirmed cure.
+
+### Files Modified
+
+- `frontend/src/App.svelte` — grid columns, `.layout`, panel bounds.
+- `frontend/src/validation/XmlEditor.svelte` — settle timer.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.22.0 → 3.23.0.
+
+---
+
+## Rev 117 — 2026-10-31 — `document/session.ts` owns the document → v3.22.0 [dev]
+
+The review's central finding: no object owned the document. `fb`, the path, dirty state, XML state and
+every flow (open, save, export, validate, Apply, Undo Apply) lived in `App.svelte`, needing a browser to
+run and with no tests at all.
+
+`createDocumentSession({ liveBody, onSaved })` now holds them, as stores plus functions, with no DOM.
+`liveBody` is the one rule for the two-copies problem: the current text is the editor's if one is
+mounted, otherwise `doc`. `App.svelte` keeps layout and wiring. 16 tests run the flows against a fake
+`Backend`: unsaved-edit prompts (Save, Discard, Cancel, and a cancelled save), a recent file that no
+longer opens, the sample fallback, saving with and without an editor, Save As, a failed write staying
+dirty, description and XML dirtiness, validate, Apply and its refusal, Undo Apply, export naming, and the
+launch order.
+
+`App.svelte` is 527 lines against 1,442 at the review. This closes the OOP/DRY review's frontend
+items, with these left on purpose: `parse.ts`/`serialize.ts` stay explicit, as the review advised, and
+`FontCombobox` and the settings dialog's internals were not worth the churn.
+
+Verified: 140 unit tests; in WebKit Apply, Undo Apply, Done, closing the panel, search, annotation save,
+dirty tracking, resizers, dialogs, both-way XML following; the built `.app` opening a file.
+
+### Files Modified
+
+- `frontend/src/document/session.ts`, `session.test.ts` (new).
+- `frontend/src/App.svelte` — uses the session.
+- `CLAUDE.md` — architecture note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.21.0 → 3.22.0.
+
+---
+
+## Rev 116 — 2026-10-31 — App.svelte split, part 1: palette, theme, settings, header, one main → v3.21.0 [dev]
+
+- `styles/theme.css` holds the palette and base rules, imported from `main.ts`; `check-theme-hygiene.sh`
+  now treats that file as the palette.
+- `ui/theme.ts`: `theme`, `effectiveTheme` (following the OS through a store), `nextTheme`, `themeIcon`,
+  `applyEditorFont`.
+- `settings/store.ts`: typed `patchSettings`, `persistPane`.
+- `ui/AppHeader.svelte`: header markup, recent-files menu and their CSS; it only emits events.
+- **One `<main>` for both views.** The body and description views each had their own wrapper and their
+  own copy of `Resizer` + `ValidationPanel` (11 props and 6 events kept equal by hand). There is now one
+  panel in one grid, so it stays mounted across a view switch, keeping its scroll and any XML edits.
+
+**`Modal` swallowed keys.** Its `on:keydown|stopPropagation` kept keystrokes from the window listeners all
+four dialogs use, so Esc and Enter did nothing while focus was in a field (reproduced on Insert table).
+Dialogs handle their own keys, so `Modal` now lets them bubble.
+
+`App.svelte` is 838 lines. Verified in WebKit: search and history, annotation save from Description,
+dirty tracking, images, all three resizers in both views, four dialogs with Esc and backdrop, hotkey
+capture, text and XML following each other; light and dark themes and the recent menu by screenshot.
+
+### Files Modified
+
+- `frontend/src/styles/theme.css`, `ui/theme.ts`, `settings/store.ts`, `ui/AppHeader.svelte` (new).
+- `frontend/src/App.svelte`, `main.ts`, `ui/Modal.svelte`, `scripts/check-theme-hygiene.sh`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.20.0 → 3.21.0.
+
+---
+
 ## Rev 115 — 2026-10-31 — Scrolling the XML moves the text → v3.20.0 [dev]
 
 The other half of Rev 114. Scrolling the XML pane brings the matching block to the reading line.

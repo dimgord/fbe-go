@@ -22,6 +22,10 @@
   export let initialErrorsHeight: number | null = null;
   /** XML line of the text being read; the pane follows it. */
   export let followLine: number | null = null;
+  /** The text changed while this XML had unapplied edits. */
+  export let textAhead = false;
+  /** XML line of the caret in the text; the pane marks it. */
+  export let caretLine: number | null = null;
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -37,6 +41,8 @@
     "xml-dirty": { dirty: boolean };
     /** The user scrolled the XML; payload is the line at the top. */
     "scroll-line": number;
+    /** The XML caret moved; payload is its line. */
+    "caret-line": number;
   }>();
 
   let panelEl: HTMLDivElement | undefined;
@@ -60,7 +66,10 @@
   $: if (xmlSource !== shownXml) {
     shownXml = xmlSource;
     lastBaselineXml = xmlSource;
+    editedXml = xmlSource;
     xmlEditor?.setDoc(xmlSource);
+    if (followLine) xmlEditor?.scrollToLine(followLine);
+    xmlEditor?.markLine(caretLine);
   }
   let prevEditMode = false;
   $: {
@@ -73,8 +82,10 @@
     prevEditMode = editMode;
   }
 
+  $: xmlEditor?.markLine(caretLine);
+
   // Keep the XML on the line being read, unless the user is working in it.
-  $: if (xmlEditor && followLine && !editDirty && !xmlEditor.hasFocus()) {
+  $: if (xmlEditor && followLine && !xmlEditor.hasFocus()) {
     xmlEditor.scrollToLine(followLine);
   }
 
@@ -109,7 +120,8 @@
     : null;
   let dragging = false;
 
-  $: lineCount = xmlSource ? xmlSource.split("\n").length : 0;
+  let liveLines = 0;
+  $: lineCount = liveLines || (xmlSource ? xmlSource.split("\n").length : 0);
 
   function panelBounds() {
     if (!panelEl) return null;
@@ -169,6 +181,9 @@
           <div class="apply-error-msg">{applyError}</div>
         </div>
       {/if}
+      {#if textAhead}
+        <div class="text-ahead" role="status">The text changed after these XML edits began. Apply replaces those changes.</div>
+      {/if}
       {#if canUndoApply}
         <div class="undo-banner">
           <span>Last Apply succeeded. Lost something?</span>
@@ -183,7 +198,9 @@
         readOnly={!editMode}
         {theme}
         on:change={onEditorChange}
-        on:scrollline={(e) => !editDirty && dispatch("scroll-line", e.detail)}
+        on:scrollline={(e) => dispatch("scroll-line", e.detail)}
+        on:caretline={(e) => dispatch("caret-line", e.detail)}
+        on:lines={(e) => (liveLines = e.detail)}
       />
     </div>
   </div>
@@ -334,6 +351,15 @@
     font-family: var(--font-mono);
     font-size: 0.74rem;
     white-space: pre-wrap;
+  }
+  .text-ahead {
+    padding: 0.35rem 0.7rem;
+    background: var(--highlight);
+    border-bottom: 1px solid var(--border);
+    color: var(--warn-fg, var(--fg));
+    font-family: var(--font-ui);
+    font-size: 0.8rem;
+    flex: 0 0 auto;
   }
   .undo-banner {
     display: flex;

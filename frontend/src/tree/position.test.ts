@@ -64,14 +64,14 @@ describe("positionAt", () => {
   });
 
   it("only produces paths the outline knows", () => {
-    const known = outlinePaths(buildOutline(book));
+    const known = outlinePaths(buildOutline(fb2ToPMDoc(book)));
     for (const text of ["in one", "lead", "in two a", "in two b", "a note"]) {
       expect(known).toContain(positionAt(doc, posOf(doc, text)).path.join("."));
     }
   });
 
   it("round-trips through findNodePos for every outline node", () => {
-    for (const path of outlinePaths(buildOutline(book))) {
+    for (const path of outlinePaths(buildOutline(fb2ToPMDoc(book)))) {
       const nums = path.split(".").map(Number);
       const pos = findNodePos(doc, nums);
       expect(pos).not.toBeNull();

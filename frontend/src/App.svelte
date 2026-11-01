@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import DocumentTree from "./tree/DocumentTree.svelte";
   import Editor from "./editor/Editor.svelte";
   import Toolbar from "./editor/Toolbar.svelte";
@@ -8,19 +8,22 @@
   import HelpDialog from "./help/HelpDialog.svelte";
   import SettingsDialog from "./settings/SettingsDialog.svelte";
   import { backend } from "./runtime/backend";
-  import { descriptionSnapshot } from "./document/dirty";
-  import { basename, dirname } from "./lib/path";
+  import { applyEditorFont, effectiveTheme, isTheme, nextTheme, theme, type Theme } from "./ui/theme";
+  import { patchSettings, persistPane } from "./settings/store";
+  import { createDocumentSession } from "./document/session";
+  import AppHeader from "./ui/AppHeader.svelte";
   import SearchBar from "./editor/search/SearchBar.svelte";
   import Resizer from "./ui/Resizer.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
+  import { debugLog } from "./runtime/debug";
   import { blockAtLine, xmlBlockLines, type BookPosition } from "./tree/position";
+  import type { OutlineNode } from "./tree/outline";
+  import type { Node as PMNode } from "prosemirror-model";
   import BinaryManagerDialog from "./binary/BinaryManagerDialog.svelte";
   import UpdateBanner from "./updates/UpdateBanner.svelte";
   import type { updates as UpdatesNS } from "../wailsjs/go/models";
   import { installExternalLinkHandler } from "./runtime/externalLink";
   import { configurePaste } from "./editor/paste";
-  import { SAMPLE_BOOK } from "./fb2/sample";
-  import type { FictionBook } from "./fb2/types";
   import { HOTKEY_ACTIONS, matchesEvent } from "./settings/hotkeys";
 
   type View = "body" | "description";
@@ -29,54 +32,19 @@
   /** XML line per text block, for the panel to follow the reader. */
   let blockLines: number[] = [];
 
-  let fb: FictionBook | null = null;
-  let filename = "(untitled)";
-  let currentPath = "";
-  let status = "";
-  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+  let editor: Editor | undefined = undefined;
+  /** Bound to Editor.view so SearchBar (and any other sibling) gets a
+      reactive reference to the live PM EditorView. */
+  let editorView: import("prosemirror-view").EditorView | undefined = undefined;
 
-  /** A transient message. A newer one cancels the older one's timer, so it is not cut short. */
-  function showStatus(message: string, ms: number): void {
-    clearTimeout(statusTimer);
-    status = message;
-    statusTimer = setTimeout(() => (status = ""), ms);
-  }
-  let error = "";
-
-  // Dirty-tracking is hybrid because the body editor and the description
-  // form have fundamentally different shapes:
-  //   - Body lives in ProseMirror; the parser and PM serializer build
-  //     STRUCTURALLY DIFFERENT FictionBook.Bodies trees for the same
-  //     content (Section.Image vs inline image inside Section.Body[],
-  //     Body.Title field vs no-Title-field, etc.). Stringifying both
-  //     and comparing diverges even with no edits, so we can't snapshot
-  //     the body. Track via PM's undo stack instead — Editor's
-  //     dirtyPlugin emits `dirty: true|false` based on undo depth vs a
-  //     baseline captured at mount / save.
-  //   - Description has no PM involvement; both clean and current
-  //     readings come straight from `fb.Description`. The parser /
-  //     defaulters / mutations differ only in empty fields, which the
-  //     canonical snapshot ignores (see document/dirty.ts).
-  //
-  // isDirty = bodyDirty (from PM) OR description snapshot mismatch. Cleared on
-  // open / save / sample fallback.
-  let bodyDirty = false;
-  let cleanDescSnapshot: string | null = null;
-
-  function isCurrentlyDirty(): boolean {
-    if (bodyDirty) return true;
-    if (xmlDirty) return true;
-    if (cleanDescSnapshot === null) return false;
-    return descriptionSnapshot(fb) !== cleanDescSnapshot;
-  }
-  /** The current description becomes the clean baseline, and body edits count as saved. */
-  function captureCleanSnapshot() {
-    cleanDescSnapshot = descriptionSnapshot(fb);
-    bodyDirty = false;
-  }
-  function onEditorDirty(e: CustomEvent<boolean>) {
-    bodyDirty = e.detail;
-  }
+  const session = createDocumentSession({
+    liveBody: () => (view === "body" && editor ? editor.currentFB() : null),
+    onSaved: () => editor?.markSaved(),
+  });
+  const {
+    doc, filename, status, error, recentFiles,
+    panelOpen, xmlSource, xmlErrors, applyError, canUndoApply,
+  } = session;
 
   /** When the user leaves the "body" view (tab-switch to description, or
    *  any other reason `view` changes), serialize the live PM doc back
@@ -89,7 +57,7 @@
   $: {
     if (prevView === "body" && view !== "body" && editor) {
       const synced = editor.currentFB();
-      if (synced) fb = synced;
+      if (synced) $doc = synced;
     }
     prevView = view;
   }
@@ -113,117 +81,64 @@
     if (!on) editor?.releasePosition();
   }
 
-  $: blockLines = editorView && xmlSource ? xmlBlockLines(editorView.state.doc, xmlSource) : [];
-
-  // --- XML editing (raw FB2 source pane) ---
-  // editMode is shared between the body-view and description-view
-  // ValidationPanel instances (only one is mounted at a time).
-  // xmlDirty is true while the CM6 editor has unsaved edits — feeds
-  // into isCurrentlyDirty() so Save / Cmd-Q honour it.
-  let xmlEditMode = false;
+  // The XML pane keeps up with the document while it is open, except while the user edits the XML
+  // itself: that buffer is theirs until Apply or Done.
+  let outline: OutlineNode[] = [];
+  let settledDoc: PMNode | null = null;
+  let caretBlock: number | null = null;
+  function onDocChange(e: CustomEvent<PMNode>) {
+    settledDoc = e.detail;
+    if (applying) return;
+    if (!xmlDirty) void session.refreshXml();
+    else {
+      textAhead = true;
+      debugLog("xml.textAhead");
+    }
+  }
+  // Unapplied XML cannot take in text edits: they wait, and the panel warns that Apply replaces them.
   let xmlDirty = false;
-  let xmlApplyError = "";
-  // One-deep Apply undo. Captured pre-Apply so the user can roll back
-  // a single commit if it turns out the parsed FB lost content despite
-  // the data-loss guard. Cleared on next Apply or on panel close.
-  let xmlUndoFb: FictionBook | null = null;
-  let xmlUndoXml = "";
-  function onXmlDirty(e: CustomEvent<{ dirty: boolean }>) {
-    xmlDirty = e.detail.dirty;
-    // Note: NOT clearing xmlApplyError on every keystroke — the user
-    // is actively fixing the typo and needs the error as context.
-    // It clears at the start of the next Apply attempt (success or
-    // failure both reset the message) and on editMode transitions.
+  let textAhead = false;
+  let applying = false; // Apply rebuilds the text from this very XML
+  async function onApply(xml: string) {
+    applying = true;
+    await session.applyXml(xml);
+    applying = false;
   }
 
-  // editMode-transition mirror. Clears any stale Apply error whenever
-  // the editor opens or closes — covers "Done → Edit XML" re-entry
-  // (where the banner would otherwise show the previous attempt's
-  // error) and Edit XML → Done → ... cycles.
+  // Above the first block is the description: nothing in the text matches it.
+  function onXmlCaret(line: number) {
+    if (view !== "body" || !blockLines.length) return;
+    caretBlock = null;
+    editor?.markBlock(line < blockLines[0] ? null : blockAtLine(blockLines, line));
+  }
+  $: if (!$panelOpen) editor?.markBlock(null);
+  $: blockLines = settledDoc && $xmlSource ? xmlBlockLines(settledDoc, $xmlSource) : [];
+
+  // XML panel. editMode lives here so that a Done in the panel and closing it agree.
+  let xmlEditMode = false;
+  function onXmlDirty(e: CustomEvent<{ dirty: boolean }>) {
+    session.setXmlDirty(e.detail.dirty);
+    xmlDirty = e.detail.dirty;
+    debugLog("xml.dirty", { dirty: xmlDirty, textAhead });
+    if (!xmlDirty) {
+      textAhead = false;
+      void session.refreshXml();
+    }
+  }
+  // A stale Apply error must not greet the user on the next edit session.
   let prevXmlEditMode = false;
-  $: if (xmlEditMode !== prevXmlEditMode) {
-    xmlApplyError = "";
+  $: {
+    if (xmlEditMode !== prevXmlEditMode) {
+      $applyError = "";
+      debugLog("xml.editMode", { on: xmlEditMode });
+    }
     prevXmlEditMode = xmlEditMode;
   }
-  /** Close handler for ValidationPanel. Unconditional close — Wails
-   *  WKWebView silently swallows `window.confirm()` returns under
-   *  some configurations, so a prompt-guarded close ended up never
-   *  actually closing (bug-reported as "× doesn't exit"). The
-   *  document state isn't touched by closing the panel — only the
-   *  CM6 working buffer is discarded, which the user can re-open via
-   *  Validate. The global Cmd-Q unsaved-changes guard still catches
-   *  any genuine in-memory FB changes via isCurrentlyDirty(). */
   function onPanelClose() {
-    showPanel = false;
     xmlEditMode = false;
-    xmlDirty = false;
-    xmlApplyError = "";
-    xmlUndoFb = null;
-    xmlUndoXml = "";
-  }
-  async function onApplyXml(e: CustomEvent<{ xml: string }>) {
-    xmlApplyError = "";
-    const App = backend();
-    if (!App) {
-      xmlApplyError = "Wails bindings unavailable";
-      return;
-    }
-    try {
-      // Go-side ParseXMLString now parses + round-trips + checks for
-      // structurally significant element loss. A typo like `<autho>`
-      // instead of `<author>` would have wiped the body silently under
-      // the original parser.Parse; now it throws back here with a
-      // descriptive error and the user's CM6 text is preserved.
-      const parsed = await App.ParseXMLString(e.detail.xml);
-      if (!parsed) throw new Error("parser returned null");
-      // SNAPSHOT for one-deep Apply-undo — captured BEFORE we touch fb
-      // so we can roll back even if the data-loss guard missed
-      // something subtler than a structural drop.
-      xmlUndoFb = fb ? structuredClone(fb) : null;
-      xmlUndoXml = xmlSource;
-      // Wails generates doc.FictionBook structurally identical to our FB.
-      fb = parsed;
-      await App.UpdateDocument(fb);
-      try { xmlSource = await App.SerializeCurrent(); } catch { /* leave as-is */ }
-      try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* leave as-is */ }
-      captureCleanSnapshot();
-      // Explicit re-clear post-success. The clear at the top of this
-      // function happens BEFORE the await chain; if Svelte reactivity
-      // races with the panel's re-render, an explicit set here pins
-      // the empty state once the success path is committed.
-      xmlApplyError = "";
-      showStatus("XML applied — Undo Apply is available in the panel", 5000);
-    } catch (err) {
-      xmlApplyError = (err as Error).message || String(err);
-    }
-  }
-  /** One-deep Apply undo. Restores fb + xmlSource to the snapshot
-   *  taken right before the last successful Apply. Snapshot is cleared
-   *  after Undo so a stale double-undo isn't possible. */
-  async function onUndoApplyXml() {
-    if (!xmlUndoFb) return;
-    fb = xmlUndoFb;
-    xmlSource = xmlUndoXml;
-    xmlUndoFb = null;
-    xmlUndoXml = "";
-    const App = backend();
-    if (App) {
-      try { await App.UpdateDocument(fb); } catch { /* ignore */ }
-      try { validationErrors = (await App.ValidateCurrent()) ?? []; } catch { /* ignore */ }
-    }
-    captureCleanSnapshot();
-    showStatus("Apply undone", 3000);
+    session.closePanel();
   }
 
-  let editor: Editor | undefined = undefined;
-  /** Bound to Editor.view so SearchBar (and any other sibling) gets a
-      reactive reference to the live PM EditorView. */
-  let editorView: import("prosemirror-view").EditorView | undefined = undefined;
-
-  // Validation / XML-source panel state.
-  let showPanel = false;
-  let xmlSource = "";
-  let validationErrors: { line: number; column: number; message: string }[] = [];
   // Initial errors-pane height in px (null = CSS default 45%). Populated
   // from settings.panes.validationErrorsHeight on mount; updated when
   // ValidationPanel dispatches `resize`.
@@ -234,7 +149,6 @@
   let outlineWidth: number | null = null;
   let panelWidth: number | null = null;
   let mainEl: HTMLElement | undefined;
-  let descWrapEl: HTMLElement | undefined;
   let draggingOutline = false;
   let draggingPanel = false;
 
@@ -277,7 +191,7 @@
     }>
   ) {
     // Sync live runtime state with what the dialog just wrote to disk.
-    theme = e.detail.theme;
+    theme.set(e.detail.theme);
     applyEditorFont(e.detail.settings.font);
     configurePaste({ nbspChar: e.detail.settings.nbspChar });
     // Fresh object identity so Editor's reactive reconfigure fires.
@@ -285,64 +199,18 @@
       hotkeys = { ...e.detail.settings.hotkeys };
     }
     // Refresh recent-files list in case the dialog cleared it.
-    void refreshRecent();
+    void session.refreshRecent();
   }
 
-  // applyEditorFont sets CSS custom properties on <html> so the editor's
-  // `:global(.ProseMirror) { font-family: var(--editor-font-family); … }`
-  // picks them up. Empty / invalid values fall through to the
-  // var()-declared defaults in Editor.svelte.
-  function applyEditorFont(font: { family?: string; size?: number }) {
-    if (typeof document === "undefined") return;
-    const root = document.documentElement;
-    if (font.family && font.family.trim()) {
-      root.style.setProperty("--editor-font-family", font.family);
-    } else {
-      root.style.removeProperty("--editor-font-family");
-    }
-    if (typeof font.size === "number" && font.size >= 8 && font.size <= 48) {
-      root.style.setProperty("--editor-font-size", `${font.size}px`);
-    } else {
-      root.style.removeProperty("--editor-font-size");
-    }
-  }
 
-  // Most-recently-used files, fed from settings.json on the Go side.
-  let recentFiles: string[] = [];
-  let recentMenuOpen = false;
-
-  // Theme: "system" follows prefers-color-scheme, "light"/"dark" pin it.
-  // Stored in settings.Theme on the Go side; defaults to "system".
-  type Theme = "system" | "light" | "dark";
-  let theme: Theme = "system";
-  // Track the OS preference so "system" effective theme updates live.
-  let systemDark = typeof window !== "undefined" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches;
-
-  $: effectiveTheme = theme === "system" ? (systemDark ? "dark" : "light") : theme;
   $: if (typeof document !== "undefined") {
-    document.documentElement.setAttribute("data-theme", effectiveTheme);
+    document.documentElement.setAttribute("data-theme", $effectiveTheme);
   }
 
-  async function cycleTheme() {
-    const next: Theme = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
-    theme = next;
-    await patchSettings((s) => { s.theme = next; });
-  }
-
-  // patchSettings: load, mutate, save. Used by theme cycle, view toggle,
-  // and validation-pane resize. Silent on error — persistence is a
-  // convenience, not correctness.
-  async function patchSettings(mutate: (s: any) => void) {
-    const App = backend();
-    if (!App) return;
-    try {
-      const s = await App.LoadSettings();
-      mutate(s);
-      await App.SaveSettings(s);
-    } catch (e) {
-      console.warn("[fbe] settings save failed:", e);
-    }
+  function cycleTheme() {
+    const next = nextTheme($theme);
+    theme.set(next);
+    void patchSettings((s) => { s.theme = next; });
   }
 
   function switchView(v: View) {
@@ -350,190 +218,26 @@
     void patchSettings((s) => { s.lastView = v; });
   }
 
-  // --- Pane resizers. The validation panel's parent depends on the view. ---
+  // --- Pane resizers. ---
   const DEFAULT_OUTLINE_WIDTH = 260;
-  const panelParentWidth = () =>
-    (view === "body" ? mainEl : descWrapEl)?.getBoundingClientRect().width ?? 0;
+  const RESIZER_PX = 6;
+  const TEXT_MIN = 240;
+  const mainBox = () => mainEl?.getBoundingClientRect();
 
   const outlineResizer = {
     current: () => outlineWidth ?? DEFAULT_OUTLINE_WIDTH,
     bounds: () => ({ min: OUTLINE_MIN, max: OUTLINE_MAX }),
-    fromPointer: (e: PointerEvent) => e.clientX - (mainEl?.getBoundingClientRect().left ?? 0),
+    fromPointer: (e: PointerEvent) => e.clientX - (mainBox()?.left ?? 0),
   };
   const panelResizer = {
-    current: () => panelWidth ?? Math.round(panelParentWidth() * 0.3),
-    // Capped so the editor surface cannot collapse to nothing.
-    bounds: () => ({ min: PANEL_MIN, max: panelParentWidth() * 0.7 }),
-    fromPointer: (e: PointerEvent) =>
-      ((view === "body" ? mainEl : descWrapEl)?.getBoundingClientRect().right ?? 0) - e.clientX,
+    current: () => panelWidth ?? Math.round((mainBox()?.width ?? 0) * 0.3),
+    // Stops where the grid would start taking width from the text.
+    bounds: () => {
+      const outline = view === "body" ? (outlineWidth ?? DEFAULT_OUTLINE_WIDTH) + RESIZER_PX : 0;
+      return { min: PANEL_MIN, max: Math.max(PANEL_MIN, (mainBox()?.width ?? 0) - outline - RESIZER_PX - TEXT_MIN) };
+    },
+    fromPointer: (e: PointerEvent) => (mainBox()?.right ?? 0) - e.clientX,
   };
-
-  function persistPane(key: "outlineWidth" | "validationWidth" | "validationErrorsHeight", size: number) {
-    void patchSettings((s) => {
-      if (!s.panes) s.panes = { outlineWidth: 0, validationWidth: 0, validationErrorsHeight: 0 };
-      s.panes[key] = Math.round(size);
-    });
-  }
-
-  function themeIcon(t: Theme): string {
-    switch (t) {
-      case "light":  return "☀";
-      case "dark":   return "☾";
-      default:       return "◐";
-    }
-  }
-
-  async function refreshRecent() {
-    const App = backend();
-    if (!App) return;
-    try { recentFiles = (await App.RecentFiles()) ?? []; } catch { /* ignore */ }
-  }
-
-  // `preset` lets the Recent-files menu call openFile with a specific path
-  // (skipping the native file-picker). When omitted we fall back to
-  // `App.PickFB2ToOpen()` as before.
-  async function openFile(preset?: string) {
-    error = ""; status = "";
-    recentMenuOpen = false;
-    try {
-      const App = backend();
-      if (!App) throw new Error("Wails bindings not available — running in plain vite dev. Loaded bundled sample.");
-      // Guard the in-memory replacement: if the current document has
-      // unsaved edits, prompt before discarding them. The native Save /
-      // Discard / Cancel dialog lives on the Go side
-      // (App.ConfirmUnsavedChanges) so it matches the OS look exactly.
-      if (isCurrentlyDirty()) {
-        const choice = await App.ConfirmUnsavedChanges();
-        if (choice === "cancel") return;
-        if (choice === "save") {
-          await save(false);
-          if (isCurrentlyDirty()) return; // save failed or was cancelled at file picker
-        }
-        // discard: fall through, the next fb assignment overwrites the doc
-      }
-      const path = preset ?? await App.PickFB2ToOpen();
-      if (!path) return;
-      console.log(`[fbe] opening ${path}`);
-      status = `Opening ${basename(path)}…`;
-      const parsed: FictionBook = await App.OpenFile(path);
-      console.log(
-        `[fbe] parsed: ${parsed.Bodies?.length ?? 0} bodies, ` +
-        `${parsed.Binaries?.length ?? 0} binaries, ` +
-        `title "${parsed.Description?.TitleInfo?.BookTitle ?? ""}"`,
-      );
-      // Defer to next tick so the status update renders before we potentially
-      // block the UI thread converting a huge doc into ProseMirror nodes.
-      await new Promise((r) => setTimeout(r, 0));
-      fb = parsed;
-      currentPath = path;
-      filename = basename(path);
-      showStatus(`Opened ${filename}`, 3000);
-      captureCleanSnapshot();
-      void refreshRecent();
-    } catch (e) {
-      const msg = (e as Error).message || String(e);
-      console.error("[fbe] openFile failed:", e);
-      error = `Open failed: ${msg}`;
-      if (preset) {
-        // Recent-file pointed at something that no longer exists (or is
-        // unreadable) — purge it so the menu doesn't keep offering a dead
-        // entry.
-        const App = backend();
-        try { await App?.RemoveFromRecent(preset); } catch { /* ignore */ }
-        void refreshRecent();
-      } else {
-        fb = SAMPLE_BOOK;
-        currentPath = "";
-        filename = "blank.fb2 (sample)";
-        captureCleanSnapshot();
-      }
-    }
-  }
-
-  /** The document as it stands now: the live editor in body view, `fb` otherwise (the switch away
-   *  from body flushed into it, and the description forms edit it directly). */
-  function liveDoc(): FictionBook | null {
-    return (view === "body" && editor) ? editor.currentFB() : fb;
-  }
-
-  async function save(saveAs: boolean) {
-    error = ""; status = "";
-    try {
-      const App = backend();
-      if (!App) throw new Error("Wails bindings not available — save works only in the desktop app.");
-      const current = liveDoc();
-      if (!current) throw new Error("No document loaded.");
-
-      let path = currentPath;
-      if (saveAs || !path) {
-        const suggested = filename.endsWith(".fb2") ? filename : "untitled.fb2";
-        path = await App.PickFB2ToSave(suggested);
-        if (!path) return;
-      }
-      await App.UpdateDocument(current);
-      await App.SaveFile(path);
-      currentPath = path;
-      filename = basename(path);
-      showStatus(`Saved ${filename}`, 3000);
-      captureCleanSnapshot();
-      // Re-baseline PM's undo stack so subsequent undos that return to
-      // this just-saved point are recognised as clean.
-      editor?.markSaved();
-      void refreshRecent();
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
-  async function exportHTML() {
-    error = ""; status = "";
-    try {
-      const App = backend();
-      if (!App) throw new Error("Wails bindings not available.");
-      const current = liveDoc();
-      if (current) {
-        await App.UpdateDocument(current);
-      }
-      const suggested = (filename || "untitled").replace(/\.fb2(\.zip)?$/i, "") + ".html";
-      const path = await App.PickHTMLToSave(suggested);
-      if (!path) return;
-      await App.ExportHTML(path);
-      showStatus(`Exported ${basename(path)}`, 3000);
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
-  async function validate() {
-    error = ""; status = "";
-    try {
-      const App = backend();
-      if (!App) throw new Error("Wails bindings not available.");
-      if (!fb) throw new Error("No document loaded.");
-
-      // Push the latest editor state to Go (if we're in body view) so the
-      // serialized XML and the validation result reflect unsaved edits.
-      const current = liveDoc();
-      if (current) {
-        await App.UpdateDocument(current);
-      }
-
-      const [xml, errs] = await Promise.all([
-        App.SerializeCurrent(),
-        App.ValidateCurrent(),
-      ]);
-
-      xmlSource = xml ?? "";
-      validationErrors = errs ?? [];
-      showPanel = true;
-
-      showStatus(errs && errs.length > 0
-        ? `XSD: ${errs.length} error(s)`
-        : "XSD valid ✓", 4000);
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
 
   // Table of app-level actions that need a window-level keyboard listener:
   // either they sit outside the editor DOM (SearchBar, dialogs) or they
@@ -541,8 +245,8 @@
   // are handled by ProseMirror's keymap inside Editor.svelte, built from
   // the same hotkeys map — see Editor.svelte::buildKeymap.
   const APP_ACTIONS: Record<string, () => void> = {
-    Save:         () => save(false),
-    SaveAs:       () => save(true),
+    Save:         () => session.save(false),
+    SaveAs:       () => session.save(true),
     Find:         () => { if (view === "body") openSearch("find"); },
     Replace:      () => { if (view === "body") openSearch("replace"); },
     InsertTable:  () => { if (view === "body") editor?.openTableDialog(); },
@@ -604,7 +308,7 @@
     // Route every external <a href> click (editor content, Help, …) through
     // Wails runtime so the webview doesn't navigate away from the editor.
     const detachExternalLinks = installExternalLinkHandler();
-    void refreshRecent();
+    void session.refreshRecent();
 
     // Wire the unsaved-changes plumbing:
     //   - "app:check-dirty" — Go OnBeforeClose asks whether the live doc
@@ -621,32 +325,32 @@
       const App = backend();
       if (!App) { launchReady(""); return; }
       const offCheck = App.on("app:check-dirty", () => {
-        App.emit("app:dirty-response", isCurrentlyDirty());
+        App.emit("app:dirty-response", session.isDirty());
       });
       const offSave = App.on("app:save-and-quit", async () => {
         try {
-          await save(false);
+          await session.save(false);
         } catch (e) {
           console.error("[fbe] save-and-quit: save failed", e);
           return;
         }
-        if (!isCurrentlyDirty()) {
+        if (!session.isDirty()) {
           try { await App.ForceQuit(); } catch { /* app is exiting */ }
         }
       });
       // File drop: Go's OnFileDrop forwards the first dropped path; we
-      // reuse the existing openFile() flow so the unsaved-changes guard,
+      // reuse the normal open flow so the unsaved-changes guard,
       // status text, and recent-files update all behave identically to
       // a regular File→Open. Without this listener the drop would be
       // silently swallowed (WebView drop is disabled in main.go).
       const offDrop = App.on("app:file-drop", (path: string) => {
-        if (typeof path === "string" && path) void openFile(path);
+        if (typeof path === "string" && path) void session.open(path);
       });
       if (typeof offCheck === "function") detachListeners.push(offCheck);
       if (typeof offSave === "function") detachListeners.push(offSave);
       // OS "open this file" (double-click / Open With) while the app is already running.
       const offOpen = App.on("app:open-file", (path: string) => {
-        if (typeof path === "string" && path) void openFile(path);
+        if (typeof path === "string" && path) void session.open(path);
       });
       if (typeof offDrop === "function") detachListeners.push(offDrop);
       if (typeof offOpen === "function") detachListeners.push(offOpen);
@@ -654,11 +358,6 @@
       try { p = (await App.TakeLaunchFile()) ?? ""; } catch { /* older backend */ }
       launchReady(p);
     })();
-
-    // Live-follow OS color-scheme changes while theme === "system".
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onSystemChange = (e: MediaQueryListEvent) => { systemDark = e.matches; };
-    mq.addEventListener("change", onSystemChange);
 
     // Load persisted preferences: theme, last-open view, validation-pane
     // errors-height. Settings-read errors are swallowed — we'd rather use
@@ -668,10 +367,7 @@
       if (!App) return;
       try {
         const s = await App.LoadSettings();
-        const t = s?.theme;
-        if (t === "light" || t === "dark" || t === "system") {
-          theme = t;
-        }
+        if (isTheme(s?.theme)) theme.set(s.theme);
         if (s?.lastView === "body" || s?.lastView === "description") {
           view = s.lastView;
         }
@@ -717,39 +413,11 @@
         console.info("[fbe] update check failed:", e);
       }
     }, 800);
-    // Pick up whatever Go already has open (so opening :34115 in a browser
-    // tab while a file is loaded in the native window shows that file
-    // instead of the sample). Path is intentionally NOT synced — Save in
-    // the dev-tab should land in Save-As to avoid two contexts racing on
-    // the same path.
-    void (async () => {
-      const launched = await launchFile;
-      if (launched) {
-        await openFile(launched);
-        if (fb) return;
-        // open failed (error is shown) — fall through to the sample
-      }
-      const App = backend();
-      if (App) {
-        try {
-          const current = await App.CurrentDocument();
-          if (current && current.Bodies && current.Bodies.length > 0) {
-            fb = current as FictionBook;
-            filename = "(opened in native window)";
-            captureCleanSnapshot();
-            return;
-          }
-        } catch { /* fall through to sample */ }
-      }
-      fb = SAMPLE_BOOK;
-      filename = "blank.fb2 (sample)";
-      captureCleanSnapshot();
-    })();
+    void launchFile.then(session.loadInitial);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("resize", onWindowResize);
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
-      mq.removeEventListener("change", onSystemChange);
       detachExternalLinks();
       window.clearTimeout(updateTimer);
       detachListeners.forEach((off) => off());
@@ -759,64 +427,22 @@
 
 <div class="layout">
   <UpdateBanner info={updateInfo} on:dismiss={() => (updateInfo = null)} />
-  <header>
-    <div class="open-group">
-      <button on:click={() => openFile()}>Open…</button>
-      <button
-        class="recent-toggle"
-        title="Recent files"
-        disabled={recentFiles.length === 0}
-        on:click={() => (recentMenuOpen = !recentMenuOpen)}
-      >▾</button>
-      {#if recentMenuOpen}
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="recent-backdrop" on:click={() => (recentMenuOpen = false)}></div>
-        <ul class="recent-menu" role="menu">
-          {#each recentFiles as path}
-            <li role="menuitem">
-              <button
-                type="button"
-                class="recent-item"
-                on:click={() => openFile(path)}
-                title={path}
-              >
-                <span class="basename">{basename(path)}</span>
-                <span class="dir">{dirname(path)}</span>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
-    <button on:click={() => save(false)} disabled={!fb}>Save</button>
-    <button on:click={() => save(true)} disabled={!fb}>Save As…</button>
-    <button on:click={validate} disabled={!fb}>Validate</button>
-    <button on:click={exportHTML} disabled={!fb}>Export HTML…</button>
-    <button on:click={() => (showSettings = true)} title="Settings" aria-label="Open settings">⚙</button>
-    <button on:click={() => (showHelp = true)} title="Keyboard shortcuts and about">Help</button>
-    <button
-      class="theme-toggle"
-      on:click={cycleTheme}
-      title={`Theme: ${theme}${theme === "system" ? ` (effective: ${effectiveTheme})` : ""} — click to cycle`}
-      aria-label="Cycle theme (system → light → dark)"
-    >{themeIcon(theme)}</button>
-    <div class="view-toggle" role="tablist" aria-label="View">
-      <button
-        class:active={view === "body"}
-        on:click={() => switchView("body")}
-        role="tab"
-        aria-selected={view === "body"}>Body</button>
-      <button
-        class:active={view === "description"}
-        on:click={() => switchView("description")}
-        role="tab"
-        aria-selected={view === "description"}>Description</button>
-    </div>
-    <span class="title">FictionBook Editor · <em>{filename}</em></span>
-    {#if status}<span class="status">{status}</span>{/if}
-    {#if error}<span class="err">{error}</span>{/if}
-  </header>
+  <AppHeader
+    hasDocument={!!$doc}
+    filename={$filename}
+    status={$status}
+    error={$error}
+    recentFiles={$recentFiles}
+    {view}
+    on:open={(e) => session.open(e.detail)}
+    on:save={(e) => session.save(e.detail)}
+    on:validate={session.validate}
+    on:export={session.exportHtml}
+    on:settings={() => (showSettings = true)}
+    on:help={() => (showHelp = true)}
+    on:theme={cycleTheme}
+    on:view={(e) => switchView(e.detail)}
+  />
 
   {#if view === "body"}
     <Toolbar {editor} {hotkeys} on:openBinaries={() => (showBinaries = true)} />
@@ -827,13 +453,18 @@
         on:close={() => (searchOpen = false)}
       />
     {/if}
-    <main
-      bind:this={mainEl}
-      class:with-panel={showPanel}
-      style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}`}
-    >
+  {:else}
+    <div class="spacer" />
+  {/if}
+  <main
+    bind:this={mainEl}
+    class:description={view !== "body"}
+    class:with-panel={$panelOpen}
+    style={`${outlineWidth !== null ? `--outline-w: ${outlineWidth}px;` : ""}${panelWidth !== null && $panelOpen ? `--panel-w: ${panelWidth}px;` : ""}`}
+  >
+    {#if view === "body"}
       <aside>
-        <DocumentTree {fb} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
+        <DocumentTree tree={outline} activePath={position?.path ?? null} on:navigate={(e) => editor?.scrollToPath(e.detail.path)} />
       </aside>
       <Resizer
         label="Resize outline sidebar"
@@ -843,76 +474,46 @@
         on:commit={(e) => persistPane("outlineWidth", e.detail)}
       />
       <section>
-        <Editor bind:this={editor} bind:view={editorView} {fb} {hotkeys} on:dirty={onEditorDirty} on:position={(e) => (position = e.detail)} />
+        <Editor bind:this={editor} bind:view={editorView} fb={$doc} {hotkeys} on:dirty={(e) => session.setBodyDirty(e.detail)} on:position={(e) => (position = e.detail)} on:notice={(e) => session.showStatus(e.detail, 6000)} on:caret={(e) => (caretBlock = e.detail)} on:outline={(e) => (outline = e.detail)} on:docchange={onDocChange} />
         <PositionBar {position} />
       </section>
-      {#if showPanel}
-        <Resizer
-          label="Resize validation panel"
-          {...panelResizer}
-          bind:dragging={draggingPanel}
-          on:change={(e) => (panelWidth = e.detail)}
-          on:commit={(e) => persistPane("validationWidth", e.detail)}
-        />
-        <ValidationPanel
-          {xmlSource}
-          followLine={position ? blockLines[position.block] ?? null : null}
-          errors={validationErrors}
-          {initialErrorsHeight}
-          theme={effectiveTheme}
-          applyError={xmlApplyError}
-          canUndoApply={xmlUndoFb !== null}
-          bind:editMode={xmlEditMode}
-          on:close={onPanelClose}
-          on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
-          on:apply={onApplyXml}
-          on:undo-apply={onUndoApplyXml}
-          on:xml-dirty={onXmlDirty}
-          on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
-        />
-      {/if}
-    </main>
-  {:else if fb}
-    <div class="spacer" />
-    <div
-      bind:this={descWrapEl}
-      class="description-wrap with-panel-maybe"
-      class:with-panel={showPanel}
-      style={panelWidth !== null && showPanel ? `--panel-w: ${panelWidth}px;` : ""}
-    >
-      <DescriptionPanel bind:fb />
-      {#if showPanel}
-        <Resizer
-          label="Resize validation panel"
-          {...panelResizer}
-          bind:dragging={draggingPanel}
-          on:change={(e) => (panelWidth = e.detail)}
-          on:commit={(e) => persistPane("validationWidth", e.detail)}
-        />
-        <ValidationPanel
-          {xmlSource}
-          followLine={position ? blockLines[position.block] ?? null : null}
-          errors={validationErrors}
-          {initialErrorsHeight}
-          theme={effectiveTheme}
-          applyError={xmlApplyError}
-          canUndoApply={xmlUndoFb !== null}
-          bind:editMode={xmlEditMode}
-          on:close={onPanelClose}
-          on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
-          on:apply={onApplyXml}
-          on:undo-apply={onUndoApplyXml}
-          on:xml-dirty={onXmlDirty}
-          on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
-        />
-      {/if}
-    </div>
-  {/if}
+    {:else if $doc}
+      <DescriptionPanel bind:fb={$doc} />
+    {/if}
+    {#if $panelOpen}
+      <Resizer
+        label="Resize validation panel"
+        {...panelResizer}
+        bind:dragging={draggingPanel}
+        on:change={(e) => (panelWidth = e.detail)}
+        on:commit={(e) => persistPane("validationWidth", e.detail)}
+      />
+      <ValidationPanel
+        xmlSource={$xmlSource}
+        followLine={view === "body" && position ? blockLines[position.block] ?? null : null}
+        {textAhead}
+        caretLine={view === "body" && caretBlock !== null ? blockLines[caretBlock] ?? null : null}
+        errors={$xmlErrors}
+        {initialErrorsHeight}
+        theme={$effectiveTheme}
+        applyError={$applyError}
+        canUndoApply={$canUndoApply}
+        bind:editMode={xmlEditMode}
+        on:close={onPanelClose}
+        on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
+        on:apply={(e) => onApply(e.detail.xml)}
+        on:undo-apply={session.undoApply}
+        on:xml-dirty={onXmlDirty}
+        on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
+        on:caret-line={(e) => onXmlCaret(e.detail)}
+      />
+    {/if}
+  </main>
 </div>
 
 <HelpDialog bind:open={showHelp} />
 <SettingsDialog bind:open={showSettings} on:apply={onSettingsApplied} />
-<BinaryManagerDialog bind:open={showBinaries} bind:fb view={editorView} />
+<BinaryManagerDialog bind:open={showBinaries} bind:fb={$doc} view={editorView} />
 
 <style>
   /* Resize-burst damping (see onWindowResize + the dragging reactive
@@ -936,241 +537,28 @@
     display: none !important;
   }
 
-  /* Theme palette. Applied via [data-theme="light|dark"] on <html>; the
-     default (no attribute) also resolves to light so server-rendered
-     previews look right. Components reference these vars; hard-coded
-     hex should stay rare and documented. */
-  :global(:root),
-  :global([data-theme="light"]) {
-    color-scheme: light;
-    --bg-app:          #fafaf7;
-    --bg-surface:      #ffffff;   /* editor paper */
-    --font-mono: "SF Mono", Menlo, Consolas, monospace;
-    --font-ui: -apple-system, "Segoe UI", sans-serif;
-    --bg-chrome:       #f1f1ec;   /* header, panel-title, toolbar */
-    --bg-sidebar:      #f5f5f0;
-    --bg-card:         #fffdf8;   /* dialogs, menus */
-    --bg-hover:        #fff8e5;
-    --bg-active:       #fce6a0;
-    --bg-active-hover: #f5da7c;
-    --bg-errors:       #fffaf0;
-    --bg-errors-title: #fdecec;
-    --bg-ok:           #f2faf4;
-
-    --fg:              #222;
-    --fg-strong:       #111;
-    --fg-secondary:    #444;
-    --fg-muted:        #888;
-    --fg-muted-soft:   #aaa;
-    --fg-link:         #1a5490;
-
-    --border:          #d5d5cb;
-    --border-strong:   #bfbfb2;
-    --border-input:    #ccc;
-    --border-button:   #bbb;
-
-    --danger:          #a33;
-    --danger-border:   #edc7c7;
-    --ok:              #2a7;
-    --ok-border:       #cfe7d6;
-    --warn:            #b58f00;   /* raw-block accent */
-    --warn-fg:         #7a5a10;
-    --warn-bg-a:       #fef7d8;
-    --warn-bg-b:       #fcebad;
-    --warn-bg-inline:  #fef0bc;
-
-    --highlight:       #fce6a0;
-    --shadow:          rgba(0, 0, 0, 0.25);
-    --backdrop:        rgba(0, 0, 0, 0.35);   /* modal dim */
-
-    /* Search/replace match highlighting — light wash on inactive hits,
-       saturated orange on the currently-focused one (matches VS Code). */
-    --search-match-bg:            #ffe89a;
-    --search-match-active-bg:     #ffb347;
-    --search-match-active-border: #d07b0a;
-  }
-
-  :global([data-theme="dark"]) {
-    color-scheme: dark;
-    --bg-app:          #1a1a1a;
-    --bg-surface:      #242422;
-    --bg-chrome:       #2a2a27;
-    --bg-sidebar:      #242422;
-    --bg-card:         #2a2a27;
-    --bg-hover:        #3a3630;
-    --bg-active:       #5a4a10;
-    --bg-active-hover: #6b5814;
-    --bg-errors:       #2a2420;
-    --bg-errors-title: #3a2222;
-    --bg-ok:           #1a2a22;
-
-    --fg:              #e4e4de;
-    --fg-strong:       #f5f5ef;
-    --fg-secondary:    #c0c0ba;
-    --fg-muted:        #8a8a82;
-    --fg-muted-soft:   #5a5a52;
-    --fg-link:         #7fb6e6;
-
-    --border:          #3a3a35;
-    --border-strong:   #4a4a42;
-    --border-input:    #4a4a42;
-    --border-button:   #4a4a42;
-
-    --danger:          #e88;
-    --danger-border:   #5a2a2a;
-    --ok:              #7ec99f;
-    --ok-border:       #2a4a38;
-    --warn:            #ebc550;
-    --warn-fg:         #f5d878;
-    --warn-bg-a:       #3a2e10;
-    --warn-bg-b:       #4a3818;
-    --warn-bg-inline:  #3a2e10;
-
-    --highlight:       #5a4a10;
-    --shadow:          rgba(0, 0, 0, 0.6);
-    --backdrop:        rgba(0, 0, 0, 0.55);   /* modal dim — stronger in dark mode */
-
-    --search-match-bg:            #6b5814;
-    --search-match-active-bg:     #c88420;
-    --search-match-active-border: #e8a850;
-  }
-
-  :global(body), :global(html) {
-    margin: 0;
-    height: 100%;
-    background: var(--bg-app);
-    color: var(--fg);
-  }
   .layout {
     display: grid;
     grid-template-rows: 2.5rem auto 1fr;
+    grid-template-columns: minmax(0, 1fr); /* never wider than the window, whatever the content */
     height: 100vh;
     font-family: var(--font-ui);
   }
-  header {
-    display: flex;
-    align-items: center;
-    padding: 0 0.75rem;
-    gap: 0.5rem;
-    background: var(--bg-chrome);
-    border-bottom: 1px solid var(--border);
-  }
-  header button {
-    padding: 0.25rem 0.7rem;
-    border: 1px solid var(--border-button);
-    background: var(--bg-surface);
-    color: var(--fg);
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  header button:hover:not(:disabled) { background: var(--bg-hover); }
-  header button:disabled { opacity: 0.5; cursor: default; }
-
-  /* Theme cycle icon-button (lives on the right edge, near Help). */
-  header button.theme-toggle {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.95rem;
-    line-height: 1;
-  }
-
-  /* Recent-files split-button: Open…<dropdown-caret>. Visually the two
-     buttons share a border so they read as one control. */
-  .open-group {
-    position: relative;
-    display: inline-flex;
-    gap: 0;
-  }
-  .open-group > button:first-child {
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
-  }
-  .open-group > button.recent-toggle {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
-    border-left-width: 0;
-    padding: 0.25rem 0.45rem;
-    font-size: 0.7rem;
-    line-height: 1;
-  }
-  .recent-backdrop {
-    position: fixed;
-    inset: 0;
-    background: transparent;
-    z-index: 49;
-  }
-  .recent-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    z-index: 50;
-    list-style: none;
-    margin: 2px 0 0;
-    padding: 0.25rem 0;
-    min-width: 22rem;
-    max-width: 38rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    box-shadow: 0 6px 18px var(--shadow);
-    font-size: 0.85rem;
-  }
-  .recent-menu li { margin: 0; padding: 0; }
-  button.recent-item {
-    all: unset;
-    display: block;
-    width: 100%;
-    padding: 0.3rem 0.7rem;
-    cursor: pointer;
-    box-sizing: border-box;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  button.recent-item:hover { background: var(--bg-hover); }
-  button.recent-item .basename { font-weight: 600; color: var(--fg); }
-  button.recent-item .dir {
-    color: var(--fg-muted);
-    font-size: 0.78rem;
-    margin-left: 0.4rem;
-  }
-
-  .view-toggle {
-    display: inline-flex;
-    gap: 0;
-    margin-left: 0.5rem;
-  }
-  .view-toggle button {
-    border-radius: 0;
-    border-right-width: 0;
-  }
-  .view-toggle button:first-child { border-radius: 4px 0 0 4px; }
-  .view-toggle button:last-child { border-radius: 0 4px 4px 0; border-right-width: 1px; }
-  .view-toggle button.active {
-    background: var(--bg-active);
-    font-weight: 600;
-  }
-  .description-wrap {
-    overflow: hidden;
-  }
   .spacer { height: 0; }
-  .title { font-size: 0.9rem; color: var(--fg-secondary); margin-left: 0.5rem; }
-  .status { color: var(--ok); font-size: 0.8rem; margin-left: auto; }
-  .err { color: var(--danger); font-size: 0.8rem; margin-left: auto; }
+  /* Saved widths are upper limits: if they no longer fit the window these columns give way
+     (the 1fr text column keeps its minimum), so a wide panel cannot squeeze the text to nothing. */
   main {
     display: grid;
-    /* outline | resizer | editor. Resizer is a 6px track so the cursor
-       target is big enough to grab comfortably. */
-    grid-template-columns: var(--outline-w, 260px) 6px 1fr;
+    grid-template-columns: minmax(150px, var(--outline-w, 260px)) 6px minmax(240px, 1fr);
     overflow: hidden;
   }
   main.with-panel {
-    /* outline | resizer | editor | resizer | validation-panel. */
     grid-template-columns:
-      var(--outline-w, 260px)
+      minmax(150px, var(--outline-w, 260px))
       6px
-      1fr
+      minmax(240px, 1fr)
       6px
-      var(--panel-w, minmax(320px, 30%));
+      minmax(260px, var(--panel-w, 30%));
   }
   aside {
     overflow: auto;
@@ -1181,8 +569,10 @@
     overflow: auto;
     background: var(--bg-surface);
   }
-  .description-wrap.with-panel-maybe.with-panel {
-    display: grid;
-    grid-template-columns: 1fr 6px var(--panel-w, minmax(320px, 30%));
+  main.description {
+    grid-template-columns: 1fr;
+  }
+  main.description.with-panel {
+    grid-template-columns: minmax(240px, 1fr) 6px minmax(260px, var(--panel-w, 30%));
   }
 </style>

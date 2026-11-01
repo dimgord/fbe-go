@@ -1,0 +1,108 @@
+/* Theme palette. Applied via [data-theme="light|dark"] on <html>; the
+   default (no attribute) also resolves to light so server-rendered
+   previews look right. Components reference these vars; hard-coded
+   hex should stay rare and documented. */
+:root {
+  --font-mono: "SF Mono", Menlo, Consolas, monospace;
+  --font-ui: -apple-system, "Segoe UI", sans-serif;
+}
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-app:          #fafaf7;
+  --bg-surface:      #ffffff;   /* editor paper */
+    --bg-chrome:       #f1f1ec;   /* header, panel-title, toolbar */
+  --bg-sidebar:      #f5f5f0;
+  --bg-card:         #fffdf8;   /* dialogs, menus */
+  --bg-hover:        #fff8e5;
+  --bg-active:       #fce6a0;
+  --bg-active-hover: #f5da7c;
+  --bg-errors:       #fffaf0;
+  --bg-errors-title: #fdecec;
+  --bg-ok:           #f2faf4;
+
+  --fg:              #222;
+  --fg-strong:       #111;
+  --fg-secondary:    #444;
+  --fg-muted:        #888;
+  --fg-muted-soft:   #aaa;
+  --fg-link:         #1a5490;
+
+  --border:          #d5d5cb;
+  --border-strong:   #bfbfb2;
+  --border-input:    #ccc;
+  --border-button:   #bbb;
+
+  --danger:          #a33;
+  --danger-border:   #edc7c7;
+  --ok:              #2a7;
+  --ok-border:       #cfe7d6;
+  --warn:            #b58f00;   /* raw-block accent */
+  --warn-fg:         #7a5a10;
+  --warn-bg-a:       #fef7d8;
+  --warn-bg-b:       #fcebad;
+  --warn-bg-inline:  #fef0bc;
+
+  --highlight:       #fce6a0;
+  --shadow:          rgba(0, 0, 0, 0.25);
+  --backdrop:        rgba(0, 0, 0, 0.35);   /* modal dim */
+
+  /* Search/replace match highlighting — light wash on inactive hits,
+     saturated orange on the currently-focused one (matches VS Code). */
+  --search-match-bg:            #ffe89a;
+  --search-match-active-bg:     #ffb347;
+  --search-match-active-border: #d07b0a;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-app:          #1a1a1a;
+  --bg-surface:      #242422;
+  --bg-chrome:       #2a2a27;
+  --bg-sidebar:      #242422;
+  --bg-card:         #2a2a27;
+  --bg-hover:        #3a3630;
+  --bg-active:       #5a4a10;
+  --bg-active-hover: #6b5814;
+  --bg-errors:       #2a2420;
+  --bg-errors-title: #3a2222;
+  --bg-ok:           #1a2a22;
+
+  --fg:              #e4e4de;
+  --fg-strong:       #f5f5ef;
+  --fg-secondary:    #c0c0ba;
+  --fg-muted:        #8a8a82;
+  --fg-muted-soft:   #5a5a52;
+  --fg-link:         #7fb6e6;
+
+  --border:          #3a3a35;
+  --border-strong:   #4a4a42;
+  --border-input:    #4a4a42;
+  --border-button:   #4a4a42;
+
+  --danger:          #e88;
+  --danger-border:   #5a2a2a;
+  --ok:              #7ec99f;
+  --ok-border:       #2a4a38;
+  --warn:            #ebc550;
+  --warn-fg:         #f5d878;
+  --warn-bg-a:       #3a2e10;
+  --warn-bg-b:       #4a3818;
+  --warn-bg-inline:  #3a2e10;
+
+  --highlight:       #5a4a10;
+  --shadow:          rgba(0, 0, 0, 0.6);
+  --backdrop:        rgba(0, 0, 0, 0.55);   /* modal dim — stronger in dark mode */
+
+  --search-match-bg:            #6b5814;
+  --search-match-active-bg:     #c88420;
+  --search-match-active-border: #e8a850;
+}
+
+body, html {
+  margin: 0;
+  height: 100%;
+  background: var(--bg-app);
+  color: var(--fg);
+}

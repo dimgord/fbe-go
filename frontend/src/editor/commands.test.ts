@@ -17,6 +17,7 @@ import {
   addEpigraph,
   addAnnotation,
   addTextAuthor,
+  NOTICE,
   insertCite,
   insertPoem,
   insertTableCmd,
@@ -439,6 +440,18 @@ describe("insertTable", () => {
     const state = EditorState.create({ schema: fb2Schema, doc });
     expect(insertTableCmd(0, 3, true)(state)).toBe(false);
     expect(insertTableCmd(3, -1, true)(state)).toBe(false);
+  });
+});
+
+describe("cloneContainer", () => {
+  it("copies the section, moves to the copy and says so", () => {
+    const state = inFirstSection();
+    let tr: Parameters<EditorState["apply"]>[0] | undefined;
+    expect(cloneContainer(state, (t) => { tr = t; })).toBe(true);
+    const after = state.apply(tr!);
+    expect(after.doc.nodeSize).toBeGreaterThan(state.doc.nodeSize);
+    expect(after.selection.from).toBeGreaterThan(state.selection.from);
+    expect(tr!.getMeta(NOTICE)).toMatch(/^Cloned section: \d+ paragraphs/);
   });
 });
 
