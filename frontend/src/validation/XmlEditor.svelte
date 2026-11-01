@@ -24,9 +24,11 @@
     bracketMatching,
     foldGutter,
     foldKeymap,
+    foldedRanges,
     indentOnInput,
     syntaxHighlighting,
     defaultHighlightStyle,
+    unfoldEffect,
   } from "@codemirror/language";
   import { oneDark } from "@codemirror/theme-one-dark";
 
@@ -43,10 +45,12 @@
     /** Fired on every edit; payload is the current full document.
      *  Parent uses this to track dirty state without polling. */
     change: string;
-    /** The user scrolled; payload is the 1-based line at the top. */
+    /** The user scrolled; payload is the top line, in the XML as loaded. */
     scrollline: number;
     /** The caret moved; payload is its 1-based line in the XML as last loaded. */
     caretline: number;
+    /** The line count changed. */
+    lines: number;
   }>();
 
   let host: HTMLDivElement | undefined;
@@ -89,6 +93,7 @@
         if (u.docChanged) {
           sinceLoad = sinceLoad.composeDesc(u.changes.desc);
           dispatch("change", u.state.doc.toString());
+          dispatch("lines", u.state.doc.lines);
         }
         if (u.docChanged || u.selectionSet) reportCaret(u.state.selection.main.head);
       }),
@@ -109,9 +114,14 @@
     sinceLoad = ChangeSet.empty(doc.length).desc;
   }
 
+  /** The line of the XML as loaded for a position now. */
+  const loadedLine = (pos: number) => loaded!.lineAt(sinceLoad.invertedDesc.mapPos(pos)).number;
+  /** Where a line of the XML as loaded is now. */
+  const currentPos = (line: number) => view!.state.doc.lineAt(sinceLoad.mapPos(loaded!.line(line).from)).from;
+
   function reportCaret(head: number) {
     if (!loaded) return;
-    const line = loaded.lineAt(sinceLoad.invertedDesc.mapPos(head)).number;
+    const line = loadedLine(head);
     // CM6 scrolls to a moving caret; that must not read as the user scrolling.
     followingUntil = performance.now() + SCROLL_LEAD_MS;
     leadingUntil = 0;
@@ -130,10 +140,14 @@
       view.dispatch({ effects: setTextCaret.of(null) });
       return;
     }
-    const from = view.state.doc.lineAt(sinceLoad.mapPos(loaded.line(n).from)).from;
+    const from = currentPos(n);
     followingUntil = textCaretUntil = performance.now() + SCROLL_LEAD_MS;
+    const unfold: StateEffect<{ from: number; to: number }>[] = [];
+    foldedRanges(view.state).between(from, from, (a, b) => {
+      unfold.push(unfoldEffect.of({ from: a, to: b }));
+    });
     view.dispatch({
-      effects: [setTextCaret.of(from), EditorView.scrollIntoView(from, { y: "nearest" })],
+      effects: [...unfold, setTextCaret.of(from), EditorView.scrollIntoView(from, { y: "nearest" })],
     });
   }
 
@@ -177,14 +191,14 @@
   const SCROLL_SETTLE_MS = 120;
   let scrollSettle: ReturnType<typeof setTimeout> | undefined;
 
-  /** Bring a 1-based line to the top without moving the caret or taking focus. */
+  /** Bring a line of the XML as loaded to the top without moving the caret or taking focus. */
   export function scrollToLine(n: number) {
-    if (!view || n < 1 || n > view.state.doc.lines) return;
+    if (!view || !loaded || n < 1 || n > loaded.lines) return;
     // A caret just moved in the text: its line stays on screen rather than the text's top line.
     if (performance.now() < Math.max(leadingUntil, textCaretUntil)) return;
     followingUntil = performance.now() + SCROLL_LEAD_MS;
     view.dispatch({
-      effects: EditorView.scrollIntoView(view.state.doc.line(n).from, { y: "start" }),
+      effects: EditorView.scrollIntoView(currentPos(n), { y: "start" }),
     });
   }
 
@@ -197,7 +211,7 @@
     scrollSettle = setTimeout(() => {
       if (!view) return;
       const top = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
-      dispatch("scrollline", view.state.doc.lineAt(top.from).number);
+      if (loaded) dispatch("scrollline", loadedLine(top.from));
     }, SCROLL_SETTLE_MS);
   }
 
@@ -223,6 +237,7 @@
     replacing = false;
     loadedDocIs(view.state.doc);
     lastCaretLine = 0;
+    dispatch("lines", view.state.doc.lines);
   }
 
   onMount(() => {

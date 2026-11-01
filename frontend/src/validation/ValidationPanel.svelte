@@ -82,7 +82,7 @@
   $: xmlEditor?.markLine(caretLine);
 
   // Keep the XML on the line being read, unless the user is working in it.
-  $: if (xmlEditor && followLine && !editDirty && !xmlEditor.hasFocus()) {
+  $: if (xmlEditor && followLine && !xmlEditor.hasFocus()) {
     xmlEditor.scrollToLine(followLine);
   }
 
@@ -117,7 +117,8 @@
     : null;
   let dragging = false;
 
-  $: lineCount = xmlSource ? xmlSource.split("\n").length : 0;
+  let liveLines = 0;
+  $: lineCount = liveLines || (xmlSource ? xmlSource.split("\n").length : 0);
 
   function panelBounds() {
     if (!panelEl) return null;
@@ -191,8 +192,9 @@
         readOnly={!editMode}
         {theme}
         on:change={onEditorChange}
-        on:scrollline={(e) => !editDirty && dispatch("scroll-line", e.detail)}
+        on:scrollline={(e) => dispatch("scroll-line", e.detail)}
         on:caretline={(e) => dispatch("caret-line", e.detail)}
+        on:lines={(e) => (liveLines = e.detail)}
       />
     </div>
   </div>

@@ -6,6 +6,35 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 125 — 2026-11-01 — Text and XML stay linked through unapplied XML edits → v3.30.0 [dev]
+
+User report with a screenshot, after Clone and deleting the copy by hand: the outline still had two
+CHAPTER 24, the text was in chapter 25, the XML in chapter 26, and the header still said 8094 lines. The
+report did not say what was expected; this entry assumes the copy was deleted in the XML pane and not
+yet applied, which is what the dirty mark and the Apply button show. So the outline and the text keeping
+the copy are correct until Apply. What was wrong:
+
+1. **The link stopped.** `editDirty` switched off both follow directions, so the panes drifted as soon as
+   the XML changed. It no longer does: Rev 121's `sinceLoad` mapping now covers `scrollToLine` and
+   `scrollline`, so lines keep their meaning through edits.
+2. **A folded line showed no mark.** `markLine` now unfolds around the line (the screenshot had a fold).
+3. **The line count** came from the XML as loaded. It now comes from the editor (`lines` event).
+
+A paragraph deleted from the XML has no line of its own: its mark lands on the deletion point.
+
+Verified in WebKit: delete 39 lines, then text jumps land 39 lines earlier than the loaded line, the same
+paragraphs as a control run without the deletion; XML jump moves the text; click into a folded section
+unfolds and marks it; the 50-step matrix still has 0 failures; Apply and follow flows unchanged. Not
+verified: the outline after a real Apply; the mock parser returns the same book.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `loadedLine`, `currentPos`, unfolding, `lines`.
+- `frontend/src/validation/ValidationPanel.svelte` — no `editDirty` gates, `liveLines`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.29.0 → 3.30.0.
+
+---
+
 ## Rev 124 — 2026-11-01 — Going back and forth between text and XML keeps one correct mark → v3.29.0 [dev]
 
 User report with a screenshot: two lines lit again, in the reverse order to Rev 123, plus the question
