@@ -88,6 +88,12 @@
     settledDoc = e.detail;
     if (!xmlEditMode) void session.refreshXml();
   }
+  // Above the first block is the description: nothing in the text matches it.
+  function onXmlCaret(line: number) {
+    if (view !== "body" || !blockLines.length) return;
+    editor?.markBlock(line < blockLines[0] ? null : blockAtLine(blockLines, line));
+  }
+  $: if (!$panelOpen) editor?.markBlock(null);
   $: blockLines = settledDoc && $xmlSource ? xmlBlockLines(settledDoc, $xmlSource) : [];
 
   // XML panel. editMode lives here so that a Done in the panel and closing it agree.
@@ -473,6 +479,7 @@
         on:undo-apply={session.undoApply}
         on:xml-dirty={onXmlDirty}
         on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}
+        on:caret-line={(e) => onXmlCaret(e.detail)}
       />
     {/if}
   </main>

@@ -17,7 +17,7 @@
    */
   import { onMount, onDestroy, createEventDispatcher } from "svelte";
   import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
-  import { EditorState, Compartment } from "@codemirror/state";
+  import { ChangeSet, Compartment, EditorState, type ChangeDesc, type Text } from "@codemirror/state";
   import { xml } from "@codemirror/lang-xml";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import {
@@ -45,6 +45,8 @@
     change: string;
     /** The user scrolled; payload is the 1-based line at the top. */
     scrollline: number;
+    /** The caret moved; payload is its 1-based line in the XML as last loaded. */
+    caretline: number;
   }>();
 
   let host: HTMLDivElement | undefined;
@@ -65,11 +67,40 @@
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       EditorView.lineWrapping,
       EditorView.updateListener.of((u) => {
-        if (u.docChanged) dispatch("change", u.state.doc.toString());
+        if (replacing) return;
+        if (u.docChanged) {
+          sinceLoad = sinceLoad.composeDesc(u.changes.desc);
+          dispatch("change", u.state.doc.toString());
+        }
+        if (u.docChanged || u.selectionSet) reportCaret(u.state.selection.main.head);
       }),
       themeCompartment.of(theme === "dark" ? oneDark : []),
       readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
     ];
+  }
+
+  // Line numbers elsewhere describe the XML as loaded, so the caret is mapped back through the
+  // edits made since: an added line must not shift every mark after it.
+  let loaded: Text | undefined;
+  let sinceLoad: ChangeDesc = ChangeSet.empty(0).desc;
+  let replacing = false;
+  let lastCaretLine = 0;
+
+  function loadedDocIs(doc: Text) {
+    loaded = doc;
+    sinceLoad = ChangeSet.empty(doc.length).desc;
+  }
+
+  function reportCaret(head: number) {
+    if (!loaded) return;
+    const line = loaded.lineAt(sinceLoad.invertedDesc.mapPos(head)).number;
+    // CM6 scrolls to a moving caret; that must not read as the user scrolling.
+    followingUntil = performance.now() + SCROLL_LEAD_MS;
+    leadingUntil = 0;
+    if (line !== lastCaretLine) {
+      lastCaretLine = line;
+      dispatch("caretline", line);
+    }
   }
 
   /** Read the current document out of CM6. Called by the parent on Apply. */
@@ -137,9 +168,13 @@
     // Replacing the text moves the scroller; that is not the user scrolling.
     followingUntil = performance.now() + SCROLL_LEAD_MS;
     leadingUntil = 0;
+    replacing = true;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: next },
     });
+    replacing = false;
+    loadedDocIs(view.state.doc);
+    lastCaretLine = 0;
   }
 
   onMount(() => {
@@ -151,6 +186,7 @@
       }),
       parent: host,
     });
+    loadedDocIs(view.state.doc);
     view.scrollDOM.addEventListener("scroll", onScroll, { passive: true });
   });
 

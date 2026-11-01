@@ -37,6 +37,8 @@
     "xml-dirty": { dirty: boolean };
     /** The user scrolled the XML; payload is the line at the top. */
     "scroll-line": number;
+    /** The XML caret moved; payload is its line. */
+    "caret-line": number;
   }>();
 
   let panelEl: HTMLDivElement | undefined;
@@ -185,6 +187,7 @@
         {theme}
         on:change={onEditorChange}
         on:scrollline={(e) => !editDirty && dispatch("scroll-line", e.detail)}
+        on:caretline={(e) => dispatch("caret-line", e.detail)}
       />
     </div>
   </div>

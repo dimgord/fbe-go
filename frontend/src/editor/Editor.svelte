@@ -12,7 +12,7 @@
   import { cleanPastedHTML, cleanPastedText } from "./paste";
   import { searchPlugin } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
-  import { scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
+  import { blockMarkPlugin, blockMarkTr, scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
   import { blockPos, positionAt, type BookPosition } from "../tree/position";
   import { buildOutline, findNodePos, type OutlineNode } from "../tree/outline";
   import { dirtyPlugin, markClean } from "./dirtyTracker";
@@ -91,6 +91,14 @@
   export function scrollToBlock(index: number): void {
     const pos = view && blockPos(view.state.doc, index);
     if (view && pos) scrollPosIntoView(view, pos, "top", POSITION_PROBE_Y);
+  }
+
+  /** Mark text block `index`, bringing it on screen only if it is not; null clears the mark. */
+  export function markBlock(index: number | null): void {
+    if (!view) return;
+    const pos = index === null ? null : blockPos(view.state.doc, index);
+    view.dispatch(blockMarkTr(view.state, pos === null ? null : pos - 1));
+    if (pos !== null) scrollPosIntoView(view, pos, "nearest");
   }
 
   export function holdPosition(): void {
@@ -211,6 +219,7 @@
         keymap(baseKeymap),
         searchPlugin(),
         scrollForcePlugin(),
+        blockMarkPlugin(),
         noteLinksPlugin(),
         dirtyPlugin((dirty) => dispatch("dirty", dirty)),
         new Plugin({
@@ -331,6 +340,11 @@
 <TableDialog bind:open={tableDialogOpen} on:insert={onTableInsert} />
 
 <style>
+  .editor :global(.xml-caret) {
+    background: var(--highlight);
+    box-shadow: 0 0 0 4px var(--highlight);
+    border-radius: 2px;
+  }
   .editor {
     padding: 1rem 2rem;
     max-width: 820px;

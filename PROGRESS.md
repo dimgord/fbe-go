@@ -6,6 +6,39 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 121 — 2026-10-31 — The text shows where the XML caret is → v3.26.0 [dev]
+
+User request with an annotated screenshot: with the caret on XML line 5579, the text showed lines around
+5568 and nothing said which paragraph matched. The text followed only the top line of the XML pane; the
+caret reached nothing.
+
+`XmlEditor` now emits `caretline`, and `App` marks the matching block through `Editor.markBlock`: the
+paragraph gets the same highlight as the active XML line, and the text scrolls only if it is off-screen.
+The mark goes when a caret is placed in the text or the panel closes. Above the first block (the
+description) nothing matches, so the mark clears.
+
+- Works in both read-only and edit mode, including after unapplied edits: `sinceLoad` composes the edits
+  since the XML was loaded and maps the caret back through them, because `blockLines` describes the
+  XML as loaded. Enter three times, and the marks below still land on the right paragraph.
+- A caret move makes CM6 scroll, which must not read as a user scroll; otherwise 120 ms later the text
+  would jump to the XML's top line and lose the mark. `reportCaret` claims `followingUntil` for that.
+- `setDoc` sets `replacing`, so the load itself is neither an edit nor a caret move.
+- Known: a caret in the `<binary>` section past the last paragraph marks the last paragraph.
+
+Verified in WebKit on a 2199-line book: clicks at three depths, edit mode, after adding 3 lines, 40 arrow
+presses, click in the text clears; the marked text equals the XML line each time. Follow, Apply flows
+unchanged. Two new unit tests.
+
+### Files Modified
+
+- `frontend/src/editor/scroll.ts`, `scroll.test.ts` (new) — `blockMarkPlugin`, `blockMarkTr`.
+- `frontend/src/editor/Editor.svelte` — `markBlock`, `.xml-caret` style.
+- `frontend/src/validation/XmlEditor.svelte` — `caretline`, `sinceLoad`, `reportCaret`.
+- `frontend/src/validation/ValidationPanel.svelte`, `frontend/src/App.svelte` — wiring.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.25.0 → 3.26.0.
+
+---
+
 ## Rev 120 — 2026-10-31 — The outline and the XML pane follow the live document → v3.25.0 [dev]
 
 User report with a screenshot: after Clone, reading Chapter 1 highlighted Chapter 5. Rev 119 listed

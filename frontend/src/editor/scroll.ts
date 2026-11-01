@@ -1,4 +1,4 @@
-import { Plugin, PluginKey } from "prosemirror-state";
+import { Plugin, PluginKey, type EditorState, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet, type EditorView } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 
@@ -24,6 +24,35 @@ export function scrollForcePlugin(): Plugin<DecorationSet> {
       decorations: (state) => forceKey.getState(state),
     },
   });
+}
+
+const markKey = new PluginKey<DecorationSet>("fbe-block-mark");
+
+/** Marks the block matching the XML caret, until the user places a caret in the text. */
+export function blockMarkPlugin(): Plugin<DecorationSet> {
+  return new Plugin<DecorationSet>({
+    key: markKey,
+    state: {
+      init: () => DecorationSet.empty,
+      apply(tr, prev) {
+        const next = tr.getMeta(markKey) as DecorationSet | undefined;
+        if (next) return next;
+        return tr.selectionSet ? DecorationSet.empty : prev.map(tr.mapping, tr.doc);
+      },
+    },
+    props: {
+      decorations: (state) => markKey.getState(state),
+    },
+  });
+}
+
+/** Mark the text block at `start`, or clear the mark. */
+export function blockMarkTr(state: EditorState, start: number | null): Transaction {
+  const node = start === null ? null : state.doc.nodeAt(start);
+  const marks = node
+    ? DecorationSet.create(state.doc, [Decoration.node(start!, start! + node.nodeSize, { class: "xml-caret" })])
+    : DecorationSet.empty;
+  return state.tr.setMeta(markKey, marks);
 }
 
 function sectionsAround(doc: PMNode, pos: number): DecorationSet {
