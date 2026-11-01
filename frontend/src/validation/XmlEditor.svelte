@@ -84,6 +84,7 @@
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       EditorView.lineWrapping,
       EditorView.updateListener.of((u) => {
+        if (u.focusChanged) onFocusChange(u.view);
         if (replacing) return;
         if (u.docChanged) {
           sinceLoad = sinceLoad.composeDesc(u.changes.desc);
@@ -133,6 +134,18 @@
     followingUntil = textCaretUntil = performance.now() + SCROLL_LEAD_MS;
     view.dispatch({
       effects: [setTextCaret.of(from), EditorView.scrollIntoView(from, { y: "nearest" })],
+    });
+  }
+
+  // Coming back to the pane makes its caret current again, even on the line it left. A frame later,
+  // because a click sets the caret after the focus arrives.
+  function onFocusChange(v: EditorView) {
+    if (!v.hasFocus) {
+      lastCaretLine = 0;
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (view === v && v.hasFocus) reportCaret(v.state.selection.main.head);
     });
   }
 
@@ -280,7 +293,7 @@
     color: var(--warn-fg, var(--fg));
   }
   /* Its own caret is only news while the pane has focus; otherwise two lines would look current. */
-  .xml-editor :global(.cm-editor:not(.cm-focused) .cm-activeLine),
+  .xml-editor :global(.cm-editor:not(.cm-focused) .cm-activeLine:not(.cm-text-caret)),
   .xml-editor :global(.cm-editor:not(.cm-focused) .cm-activeLineGutter) {
     background: transparent;
     color: inherit;

@@ -6,6 +6,31 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 124 — 2026-11-01 — Going back and forth between text and XML keeps one correct mark → v3.29.0 [dev]
+
+User report with a screenshot: two lines lit again, in the reverse order to Rev 123, plus the question
+why it had not been checked. It had not: Revs 121-123 were tested in one click order, on different lines.
+
+1. **Returning to the same XML line.** `reportCaret` skips an unchanged line, so X, text, X on one line
+   said nothing, and the text caret's mark stayed beside the active line. The pane now forgets its last
+   line on blur and reports the caret on focus, a frame later because a click sets the caret after focus.
+2. **Returning to the same spot in the text.** The same hole: an unchanged selection emits nothing. `Editor`
+   now clears the block mark and reports the caret on focus.
+3. **A regression from Rev 123**, found only by the new matrix: its CSS also hid `.cm-text-caret` when
+   that line was the pane's stale active line, so nothing was lit. Excluded with `:not(.cm-text-caret)`.
+
+Verified with `/tmp/fbe-repro/matrix.mjs`: 50 steps over 13 click sequences on two XML lines and two
+paragraphs, covering the same and different places and focus without a click. Each step asserts exactly one
+lit line, of the right kind, matching the paragraph. 9 failures before the third fix, 0 after. WebKit only.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `onFocusChange`, CSS.
+- `frontend/src/editor/Editor.svelte` — `handleDOMEvents.focus`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.28.0 → 3.29.0.
+
+---
+
 ## Rev 123 — 2026-11-01 — One current line in the XML → v3.28.0 [dev]
 
 User report with a screenshot: lines 4781 and 4786 were highlighted at once. 4781 was the text caret;

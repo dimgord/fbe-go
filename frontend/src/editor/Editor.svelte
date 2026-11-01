@@ -241,6 +241,18 @@
     });
     view = new EditorView(container, {
       state,
+      handleDOMEvents: {
+        // Coming back makes this caret current again, even at the very spot it left, where no
+        // selection change would say so. A frame later, because a click sets the caret after focus.
+        focus: (v) => {
+          requestAnimationFrame(() => {
+            if (v.isDestroyed || !v.hasFocus()) return;
+            v.dispatch(blockMarkTr(v.state, null));
+            dispatch("caret", blockIndexAt(v.state.doc, v.state.selection.head));
+          });
+          return false;
+        },
+      },
       dispatchTransaction(this: EditorView, tr) {
         this.updateState(this.state.apply(tr));
         const notice = tr.getMeta(NOTICE);
