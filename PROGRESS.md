@@ -20,8 +20,12 @@ Real app, real Go parser, 337419.fb2, driven by a temporary probe that cuts the 
   the state in the screenshot, and it is the bug fixed here. The probe had no copy to cut, so it stopped.
 - This Rev, Clone with Edit XML open: XML gets the copy (8439 lines); cut and Apply: outline 1, 8094. Clean.
 
-Not reproduced: a real Apply leaving the copy in the text. The probe bypasses the Apply button, which is
-disabled when the buffer equals the baseline, so that path is not ruled out on 3.30.0.
+Not reproduced: a real Apply leaving the copy in the text. The user saw two copies in the XML and removed one
+by hand, so the state above does not account for that report by itself. A second probe used the real Clone,
+Edit XML and Apply buttons and a real CM6 change, two cycles in one session: on both 3.30.0 and this Rev the
+outline returned to 1 and the XML to 8094 lines. Apply was enabled each time. On 3.30.0 a further Clone after
+Apply, with edit mode still open, gives the screenshot's state, but nothing confirms that happened.
+Untested: real key presses, deleting inside a fold, deleting the original rather than the copy.
 
 **Root cause, from Rev 120.** The XML pane refreshed only outside edit mode, so a Clone with Edit XML open
 left it behind, with nothing shown. Worse, a later Apply would have replaced the text with that older XML,
