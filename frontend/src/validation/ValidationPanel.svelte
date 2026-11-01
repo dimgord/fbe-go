@@ -22,6 +22,8 @@
   export let initialErrorsHeight: number | null = null;
   /** XML line of the text being read; the pane follows it. */
   export let followLine: number | null = null;
+  /** XML line of the caret in the text; the pane marks it. */
+  export let caretLine: number | null = null;
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -64,6 +66,7 @@
     lastBaselineXml = xmlSource;
     xmlEditor?.setDoc(xmlSource);
     if (followLine) xmlEditor?.scrollToLine(followLine);
+    xmlEditor?.markLine(caretLine);
   }
   let prevEditMode = false;
   $: {
@@ -75,6 +78,8 @@
     }
     prevEditMode = editMode;
   }
+
+  $: xmlEditor?.markLine(caretLine);
 
   // Keep the XML on the line being read, unless the user is working in it.
   $: if (xmlEditor && followLine && !editDirty && !xmlEditor.hasFocus()) {

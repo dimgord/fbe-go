@@ -16,8 +16,8 @@
    * scoped packages we actually use.
    */
   import { onMount, onDestroy, createEventDispatcher } from "svelte";
-  import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
-  import { ChangeSet, Compartment, EditorState, type ChangeDesc, type Text } from "@codemirror/state";
+  import { Decoration, EditorView, keymap, lineNumbers, highlightActiveLine, type DecorationSet } from "@codemirror/view";
+  import { ChangeSet, Compartment, EditorState, StateEffect, StateField, type ChangeDesc, type Text } from "@codemirror/state";
   import { xml } from "@codemirror/lang-xml";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import {
@@ -54,8 +54,25 @@
   const themeCompartment = new Compartment();
   const readOnlyCompartment = new Compartment();
 
+  // The line of the text caret. A decoration, so that this pane's own caret and focus stay put.
+  const setTextCaret = StateEffect.define<number | null>();
+  const textCaretLine = Decoration.line({ class: "cm-text-caret" });
+  const textCaretField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(marks, tr) {
+      for (const e of tr.effects) {
+        if (e.is(setTextCaret)) {
+          return e.value === null ? Decoration.none : Decoration.set(textCaretLine.range(e.value));
+        }
+      }
+      return marks.map(tr.changes);
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
+
   function buildExtensions() {
     return [
+      textCaretField,
       lineNumbers(),
       highlightActiveLine(),
       foldGutter(),
@@ -103,6 +120,22 @@
     }
   }
 
+  let textCaretUntil = 0;
+
+  /** Mark a line of the XML as loaded and bring it on screen if it is not; null clears the mark. */
+  export function markLine(n: number | null) {
+    if (!view) return;
+    if (n === null || !loaded || n < 1 || n > loaded.lines) {
+      view.dispatch({ effects: setTextCaret.of(null) });
+      return;
+    }
+    const from = view.state.doc.lineAt(sinceLoad.mapPos(loaded.line(n).from)).from;
+    followingUntil = textCaretUntil = performance.now() + SCROLL_LEAD_MS;
+    view.dispatch({
+      effects: [setTextCaret.of(from), EditorView.scrollIntoView(from, { y: "nearest" })],
+    });
+  }
+
   /** Read the current document out of CM6. Called by the parent on Apply. */
   export function getXml(): string {
     return view?.state.doc.toString() ?? initial;
@@ -133,7 +166,9 @@
 
   /** Bring a 1-based line to the top without moving the caret or taking focus. */
   export function scrollToLine(n: number) {
-    if (!view || n < 1 || n > view.state.doc.lines || performance.now() < leadingUntil) return;
+    if (!view || n < 1 || n > view.state.doc.lines) return;
+    // A caret just moved in the text: its line stays on screen rather than the text's top line.
+    if (performance.now() < Math.max(leadingUntil, textCaretUntil)) return;
     followingUntil = performance.now() + SCROLL_LEAD_MS;
     view.dispatch({
       effects: EditorView.scrollIntoView(view.state.doc.line(n).from, { y: "start" }),
@@ -236,7 +271,8 @@
     border-right: 1px solid var(--border);
     color: var(--fg-muted-soft);
   }
-  .xml-editor :global(.cm-activeLine) {
+  .xml-editor :global(.cm-activeLine),
+  .xml-editor :global(.cm-text-caret) {
     background: var(--highlight);
   }
   .xml-editor :global(.cm-activeLineGutter) {

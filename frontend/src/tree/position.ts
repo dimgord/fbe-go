@@ -33,7 +33,7 @@ function textBlocks(doc: PMNode): number[] {
 }
 
 /** Index of the last text block starting at or before pos. */
-function blockIndexAt(doc: PMNode, pos: number): number {
+export function blockIndexAt(doc: PMNode, pos: number): number {
   const starts = textBlocks(doc);
   let lo = 0;
   let hi = starts.length - 1;

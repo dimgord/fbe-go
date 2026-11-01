@@ -6,6 +6,37 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 122 — 2026-10-31 — The XML shows where the text caret is → v3.27.0 [dev]
+
+The reverse of Rev 121, at the user's request: a caret in the text marks the matching XML line and
+brings it on screen if it is not, leaving the XML pane's own caret and focus alone.
+
+`Editor` emits `caret` (block index) on every selection change, which also covers Find and Clone. `App`
+keeps `caretBlock` and passes `caretLine` to the panel as `blockLines[caretBlock]`, so the line follows
+when the XML is re-serialized. `XmlEditor.markLine` uses a line decoration in a `StateField`, separate from
+the active line, in the same colour; the line maps forward through `sinceLoad` for unapplied XML edits.
+
+- For `SCROLL_LEAD_MS` after a text caret move the pane ignores `scrollToLine`: the text may scroll with
+  the caret, and following its top line could push the marked line out of a short pane.
+- `setDoc` drops decorations, so the panel re-marks after it; the prop alone would not fire, the line
+  often being unchanged.
+- A caret in the XML clears `caretBlock`, so only one mark exists at a time.
+
+Verified in WebKit: clicks at three depths, 25 arrow presses, typing, split, XML click clears, unapplied
+XML edits, panel opened after the click. The mock's XML is fixed, so the mark surviving a refresh was seen,
+but not a line number changing in it. Not measured in the real app.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — `textCaretField`, `markLine`.
+- `frontend/src/validation/ValidationPanel.svelte` — `caretLine`.
+- `frontend/src/editor/Editor.svelte` — `caret` event.
+- `frontend/src/tree/position.ts` — exports `blockIndexAt`.
+- `frontend/src/App.svelte` — `caretBlock`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.26.0 → 3.27.0.
+
+---
+
 ## Rev 121 — 2026-10-31 — The text shows where the XML caret is → v3.26.0 [dev]
 
 User request with an annotated screenshot: with the caret on XML line 5579, the text showed lines around

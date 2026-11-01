@@ -84,6 +84,7 @@
   // itself: that buffer is theirs until Apply or Done.
   let outline: OutlineNode[] = [];
   let settledDoc: PMNode | null = null;
+  let caretBlock: number | null = null;
   function onDocChange(e: CustomEvent<PMNode>) {
     settledDoc = e.detail;
     if (!xmlEditMode) void session.refreshXml();
@@ -91,6 +92,7 @@
   // Above the first block is the description: nothing in the text matches it.
   function onXmlCaret(line: number) {
     if (view !== "body" || !blockLines.length) return;
+    caretBlock = null;
     editor?.markBlock(line < blockLines[0] ? null : blockAtLine(blockLines, line));
   }
   $: if (!$panelOpen) editor?.markBlock(null);
@@ -450,7 +452,7 @@
         on:commit={(e) => persistPane("outlineWidth", e.detail)}
       />
       <section>
-        <Editor bind:this={editor} bind:view={editorView} fb={$doc} {hotkeys} on:dirty={(e) => session.setBodyDirty(e.detail)} on:position={(e) => (position = e.detail)} on:notice={(e) => session.showStatus(e.detail, 6000)} on:outline={(e) => (outline = e.detail)} on:docchange={onDocChange} />
+        <Editor bind:this={editor} bind:view={editorView} fb={$doc} {hotkeys} on:dirty={(e) => session.setBodyDirty(e.detail)} on:position={(e) => (position = e.detail)} on:notice={(e) => session.showStatus(e.detail, 6000)} on:caret={(e) => (caretBlock = e.detail)} on:outline={(e) => (outline = e.detail)} on:docchange={onDocChange} />
         <PositionBar {position} />
       </section>
     {:else if $doc}
@@ -467,6 +469,7 @@
       <ValidationPanel
         xmlSource={$xmlSource}
         followLine={view === "body" && position ? blockLines[position.block] ?? null : null}
+        caretLine={view === "body" && caretBlock !== null ? blockLines[caretBlock] ?? null : null}
         errors={$xmlErrors}
         {initialErrorsHeight}
         theme={$effectiveTheme}

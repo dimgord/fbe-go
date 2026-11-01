@@ -13,7 +13,7 @@
   import { searchPlugin } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
   import { blockMarkPlugin, blockMarkTr, scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
-  import { blockPos, positionAt, type BookPosition } from "../tree/position";
+  import { blockIndexAt, blockPos, positionAt, type BookPosition } from "../tree/position";
   import { buildOutline, findNodePos, type OutlineNode } from "../tree/outline";
   import { dirtyPlugin, markClean } from "./dirtyTracker";
   import { createImageViews } from "./imageView";
@@ -44,6 +44,8 @@
     outline: OutlineNode[];
     /** The document, after a pause in editing. */
     docchange: PMNode;
+    /** Index of the text block holding the caret; null for a newly loaded document. */
+    caret: number | null;
   }>();
   // What sits at the top of the visible text, reported once per frame at most.
   const POSITION_PROBE_Y = 40;
@@ -225,6 +227,9 @@
         new Plugin({
           view: () => ({
             update(v, prev) {
+              if (!v.state.selection.eq(prev.selection)) {
+                dispatch("caret", blockIndexAt(v.state.doc, v.state.selection.head));
+              }
               if (v.state.doc === prev.doc) return;
               schedulePosition();
               reportOutline(v.state.doc);
@@ -247,6 +252,7 @@
       nodeViews: images.nodeViews,
     });
     schedulePosition();
+    dispatch("caret", null);
     lastOutline = "";
     reportOutline(view.state.doc);
     dispatch("docchange", view.state.doc);
