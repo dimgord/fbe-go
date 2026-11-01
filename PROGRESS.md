@@ -6,6 +6,37 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 126 — 2026-11-01 — The XML falls behind the text only with unapplied XML edits, and says so → v3.31.0 [dev]
+
+User report with a screenshot: outline with two CHAPTER 15, XML with one, Apply grey. The header's 8094
+lines is the book without any copy, so the XML had never held this copy; the "Last Apply succeeded" banner
+was left from an earlier Apply. Apply itself is fine: with a mock returning a changed book, the outline
+went from 43 to 42 entries. Rev 125's reading of the previous report was wrong as an account of this one.
+
+**Root cause, from Rev 120.** The XML pane refreshed only outside edit mode, so a Clone with Edit XML open
+left it behind, with nothing shown. Worse, a later Apply would have replaced the text with that older XML,
+silently dropping the Clone or any typing.
+
+- The pane now holds still only while it has unapplied edits (`xmlDirty`), not for the whole edit mode.
+- In that state a text change raises a banner: "The text changed after these XML edits began. Apply replaces
+  those changes." Merging the two is not attempted. Applying or discarding clears it.
+- Leaving the dirty state refreshes the pane.
+- `ValidationPanel` sets `editedXml` with the new source: since Rev 121 `setDoc` emits no `change`, so a
+  refresh, or Apply normalizing the text, would have left the dirty mark on.
+
+A refresh replaces the whole XML, so folds and the pane's own caret do not survive it.
+
+Verified in WebKit: Clone with clean Edit XML refreshes, no dirty mark; dirty plus Clone holds and warns;
+Apply and Done clear it; matrix 0 failures; delete-and-follow, Apply, dirty-tracking flows unchanged.
+
+### Files Modified
+
+- `frontend/src/App.svelte` — `xmlDirty`, `textAhead`.
+- `frontend/src/validation/ValidationPanel.svelte` — banner, `editedXml`.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.30.0 → 3.31.0.
+
+---
+
 ## Rev 125 — 2026-11-01 — Text and XML stay linked through unapplied XML edits → v3.30.0 [dev]
 
 User report with a screenshot, after Clone and deleting the copy by hand: the outline still had two

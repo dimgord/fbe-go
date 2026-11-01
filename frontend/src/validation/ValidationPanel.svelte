@@ -22,6 +22,8 @@
   export let initialErrorsHeight: number | null = null;
   /** XML line of the text being read; the pane follows it. */
   export let followLine: number | null = null;
+  /** The text changed while this XML had unapplied edits. */
+  export let textAhead = false;
   /** XML line of the caret in the text; the pane marks it. */
   export let caretLine: number | null = null;
 
@@ -64,6 +66,7 @@
   $: if (xmlSource !== shownXml) {
     shownXml = xmlSource;
     lastBaselineXml = xmlSource;
+    editedXml = xmlSource;
     xmlEditor?.setDoc(xmlSource);
     if (followLine) xmlEditor?.scrollToLine(followLine);
     xmlEditor?.markLine(caretLine);
@@ -177,6 +180,9 @@
           <strong>Apply failed — your text is preserved.</strong>
           <div class="apply-error-msg">{applyError}</div>
         </div>
+      {/if}
+      {#if textAhead}
+        <div class="text-ahead" role="status">The text changed after these XML edits began. Apply replaces those changes.</div>
       {/if}
       {#if canUndoApply}
         <div class="undo-banner">
@@ -345,6 +351,15 @@
     font-family: var(--font-mono);
     font-size: 0.74rem;
     white-space: pre-wrap;
+  }
+  .text-ahead {
+    padding: 0.35rem 0.7rem;
+    background: var(--highlight);
+    border-bottom: 1px solid var(--border);
+    color: var(--warn-fg, var(--fg));
+    font-family: var(--font-ui);
+    font-size: 0.8rem;
+    flex: 0 0 auto;
   }
   .undo-banner {
     display: flex;

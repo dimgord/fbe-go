@@ -87,8 +87,13 @@
   let caretBlock: number | null = null;
   function onDocChange(e: CustomEvent<PMNode>) {
     settledDoc = e.detail;
-    if (!xmlEditMode) void session.refreshXml();
+    if (!xmlDirty) void session.refreshXml();
+    else textAhead = true;
   }
+  // Unapplied XML cannot take in text edits: they wait, and the panel warns that Apply replaces them.
+  let xmlDirty = false;
+  let textAhead = false;
+
   // Above the first block is the description: nothing in the text matches it.
   function onXmlCaret(line: number) {
     if (view !== "body" || !blockLines.length) return;
@@ -102,14 +107,16 @@
   let xmlEditMode = false;
   function onXmlDirty(e: CustomEvent<{ dirty: boolean }>) {
     session.setXmlDirty(e.detail.dirty);
+    xmlDirty = e.detail.dirty;
+    if (!xmlDirty) {
+      textAhead = false;
+      void session.refreshXml();
+    }
   }
   // A stale Apply error must not greet the user on the next edit session.
   let prevXmlEditMode = false;
   $: {
-    if (xmlEditMode !== prevXmlEditMode) {
-      $applyError = "";
-      if (!xmlEditMode) void session.refreshXml();
-    }
+    if (xmlEditMode !== prevXmlEditMode) $applyError = "";
     prevXmlEditMode = xmlEditMode;
   }
   function onPanelClose() {
@@ -469,6 +476,7 @@
       <ValidationPanel
         xmlSource={$xmlSource}
         followLine={view === "body" && position ? blockLines[position.block] ?? null : null}
+        {textAhead}
         caretLine={view === "body" && caretBlock !== null ? blockLines[caretBlock] ?? null : null}
         errors={$xmlErrors}
         {initialErrorsHeight}
