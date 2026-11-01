@@ -8,8 +8,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"net/http"
 	"io"
+	"net/http"
 	"os"
 
 	"path/filepath"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dimgord/fbe-go/internal/fb2/binary"
+	"github.com/dimgord/fbe-go/internal/fb2/debuglog"
 	"github.com/dimgord/fbe-go/internal/fb2/doc"
 	"github.com/dimgord/fbe-go/internal/fb2/export/html"
 	"github.com/dimgord/fbe-go/internal/fb2/fsutil"
@@ -60,15 +61,21 @@ type App struct {
 	launchMu      sync.Mutex
 	launchPath    string
 	frontendReady bool
+
+	debug *debuglog.Log
 }
 
 // NewApp constructs the app.
-func NewApp() *App { return &App{settings: settings.UserStore()} }
+func NewApp() *App { return &App{settings: settings.UserStore(), debug: debuglog.UserLog()} }
+
+// DebugLog appends one event line from the frontend to the debug log.
+func (a *App) DebugLog(line string) { a.debug.Write(line) }
 
 // OnStartup is called by Wails once the webview is ready. It restores the
 // last-seen window position from settings.json (size is already applied via
 // options.App in main.go — position can't be, per Wails v2's API).
 func (a *App) OnStartup(ctx context.Context) {
+	a.debug.Write("app.start version=" + Version)
 	a.launchMu.Lock()
 	a.ctx = ctx
 	a.launchMu.Unlock()

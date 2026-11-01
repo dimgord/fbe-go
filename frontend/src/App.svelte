@@ -15,6 +15,7 @@
   import SearchBar from "./editor/search/SearchBar.svelte";
   import Resizer from "./ui/Resizer.svelte";
   import PositionBar from "./tree/PositionBar.svelte";
+  import { debugLog } from "./runtime/debug";
   import { blockAtLine, xmlBlockLines, type BookPosition } from "./tree/position";
   import type { OutlineNode } from "./tree/outline";
   import type { Node as PMNode } from "prosemirror-model";
@@ -87,12 +88,22 @@
   let caretBlock: number | null = null;
   function onDocChange(e: CustomEvent<PMNode>) {
     settledDoc = e.detail;
+    if (applying) return;
     if (!xmlDirty) void session.refreshXml();
-    else textAhead = true;
+    else {
+      textAhead = true;
+      debugLog("xml.textAhead");
+    }
   }
   // Unapplied XML cannot take in text edits: they wait, and the panel warns that Apply replaces them.
   let xmlDirty = false;
   let textAhead = false;
+  let applying = false; // Apply rebuilds the text from this very XML
+  async function onApply(xml: string) {
+    applying = true;
+    await session.applyXml(xml);
+    applying = false;
+  }
 
   // Above the first block is the description: nothing in the text matches it.
   function onXmlCaret(line: number) {
@@ -108,6 +119,7 @@
   function onXmlDirty(e: CustomEvent<{ dirty: boolean }>) {
     session.setXmlDirty(e.detail.dirty);
     xmlDirty = e.detail.dirty;
+    debugLog("xml.dirty", { dirty: xmlDirty, textAhead });
     if (!xmlDirty) {
       textAhead = false;
       void session.refreshXml();
@@ -116,7 +128,10 @@
   // A stale Apply error must not greet the user on the next edit session.
   let prevXmlEditMode = false;
   $: {
-    if (xmlEditMode !== prevXmlEditMode) $applyError = "";
+    if (xmlEditMode !== prevXmlEditMode) {
+      $applyError = "";
+      debugLog("xml.editMode", { on: xmlEditMode });
+    }
     prevXmlEditMode = xmlEditMode;
   }
   function onPanelClose() {
@@ -486,7 +501,7 @@
         bind:editMode={xmlEditMode}
         on:close={onPanelClose}
         on:resize={(e) => persistPane("validationErrorsHeight", Math.max(0, e.detail.height))}
-        on:apply={(e) => session.applyXml(e.detail.xml)}
+        on:apply={(e) => onApply(e.detail.xml)}
         on:undo-apply={session.undoApply}
         on:xml-dirty={onXmlDirty}
         on:scroll-line={(e) => editor?.scrollToBlock(blockAtLine(blockLines, e.detail))}

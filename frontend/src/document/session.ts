@@ -6,6 +6,7 @@
  * therefore a snapshot, and `liveBody` is how the session asks for the current text.
  */
 import { get, writable } from "svelte/store";
+import { debugLog, xmlShape } from "../runtime/debug";
 import { backend } from "../runtime/backend";
 import { basename } from "../lib/path";
 import { SAMPLE_BOOK } from "../fb2/sample";
@@ -205,7 +206,9 @@ export function createDocumentSession(hooks: SessionHooks) {
       const [xml, errs] = await Promise.all([App.SerializeCurrent(), App.ValidateCurrent()]);
       xmlSource.set(xml ?? "");
       xmlErrors.set(errs ?? []);
+      debugLog("xml.refresh", xmlShape(xml ?? ""));
     } catch (e) {
+      debugLog("xml.refresh.failed");
       console.warn("[fbe] XML refresh failed:", e);
     }
   }
@@ -219,6 +222,7 @@ export function createDocumentSession(hooks: SessionHooks) {
       return;
     }
     try {
+      debugLog("apply.start", xmlShape(xml));
       const parsed = await App.ParseXMLString(xml);
       if (!parsed) throw new Error("parser returned null");
       const before = get(doc);
@@ -230,8 +234,10 @@ export function createDocumentSession(hooks: SessionHooks) {
       try { xmlSource.set(await App.SerializeCurrent()); } catch { /* keep the old text */ }
       try { xmlErrors.set((await App.ValidateCurrent()) ?? []); } catch { /* keep the old list */ }
       markClean();
+      debugLog("apply.done", xmlShape(get(xmlSource)));
       showStatus("XML applied — Undo Apply is available in the panel", 5000);
     } catch (e) {
+      debugLog("apply.failed");
       applyError.set((e as Error).message || String(e));
     }
   }
@@ -240,6 +246,7 @@ export function createDocumentSession(hooks: SessionHooks) {
   async function undoApply(): Promise<void> {
     if (!undoDoc) return;
     const restored = undoDoc;
+    debugLog("apply.undo");
     doc.set(restored);
     xmlSource.set(undoXml);
     forgetUndo();

@@ -6,6 +6,35 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 127 — 2026-11-01 — A debug log for reports that cannot be reproduced later → v3.32.0 [dev]
+
+The user confirmed both Clone flows on 3.31.0, but the one case of Apply leaving a copy on 3.30.0 stayed
+unexplained, and nothing recorded what had happened. The user asked for a debug log for next time.
+
+`internal/fb2/debuglog` appends timestamped lines to `debug.log` next to `config.json`, rolling over to
+`debug.log.1` at 1 MiB, so at most 2 MiB stays on disk. It is always on, since the point is the session
+nobody planned to debug. Events hold counts and states only, never book text. A failed write is dropped.
+
+Events: `app.start`, `apply.start`, `apply.done`, `apply.failed`, `apply.undo`, `xml.refresh`, `xml.dirty`,
+`xml.editMode`, `xml.textAhead`, `editor.mount`, `notice`. For the open question, compare `sections` in
+`apply.start` with `outline` in the next `editor.mount` (the outline also counts each body, so 42 sections
+in one body is `outline=43`): a missing mount means the text was not rebuilt.
+A click on a disabled Apply leaves no event, and its absence is the evidence.
+
+The log found a bug on its first run: Apply's own rebuild raised `xml.textAhead`, a brief false warning.
+`App.onApply` now holds that off while Apply runs.
+
+`task log` shows the tail. Verified in the real app with the real buttons; three Go tests.
+
+### Files Modified
+
+- `internal/fb2/debuglog/` (new), `app.go` — `DebugLog`, `app.start`.
+- `frontend/src/runtime/debug.ts` (new), `document/session.ts`, `editor/Editor.svelte`, `App.svelte`.
+- `Taskfile.yml` — `log`. `README.md`, `CLAUDE.md` — note.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.31.0 → 3.32.0.
+
+---
+
 ## Rev 126 — 2026-11-01 — The XML falls behind the text only with unapplied XML edits, and says so → v3.31.0 [dev]
 
 User report with an annotated screenshot, after Apply: outline and text with two CHAPTER 15, XML with one,

@@ -107,6 +107,13 @@ tasks:
         ignore_error: true
       - echo "installed {{.PREFIX}}/bin/fbe"
 
+  log:
+    desc: Show the end of the debug log (what the editor did, counts only)
+    cmds:
+      - |
+        f="$(if [ "$(uname)" = Darwin ]; then echo "$HOME/Library/Application Support"; else echo "${XDG_CONFIG_HOME:-$HOME/.config}"; fi)/fbe/debug.log"
+        if [ -f "$f" ]; then tail -n 60 "$f"; else echo "no log yet: $f"; fi
+
   clean:
     desc: Remove build output
     cmds:

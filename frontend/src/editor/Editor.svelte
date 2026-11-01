@@ -12,6 +12,7 @@
   import { cleanPastedHTML, cleanPastedText } from "./paste";
   import { searchPlugin } from "./search/plugin";
   import { noteLinksPlugin, noteLinksBack } from "./noteLinks";
+  import { debugLog } from "../runtime/debug";
   import { blockMarkPlugin, blockMarkTr, scrollContainer, scrollForcePlugin, scrollPosIntoView } from "./scroll";
   import { blockIndexAt, blockPos, positionAt, type BookPosition } from "../tree/position";
   import { buildOutline, findNodePos, type OutlineNode } from "../tree/outline";
@@ -256,7 +257,10 @@
       dispatchTransaction(this: EditorView, tr) {
         this.updateState(this.state.apply(tr));
         const notice = tr.getMeta(NOTICE);
-        if (notice) dispatch("notice", notice);
+        if (notice) {
+          debugLog("notice", { text: notice });
+          dispatch("notice", notice);
+        }
       },
       attributes: { spellcheck: "true", lang },
       transformPastedHTML: cleanPastedHTML,
@@ -267,6 +271,7 @@
     dispatch("caret", null);
     lastOutline = "";
     reportOutline(view.state.doc);
+    debugLog("editor.mount", { size: view.state.doc.content.size, outline: lastOutline.split('"kind"').length - 1 });
     dispatch("docchange", view.state.doc);
   }
 

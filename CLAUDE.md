@@ -80,6 +80,8 @@ speller/  Hunspell (CGo, future)
 
 **Frontend document:** `document/session.ts` owns the open document and every flow on it; `App.svelte` is layout and wiring. It has no DOM, so test new flows there against a fake `Backend` (`setBackend`). `doc` is a snapshot: the live body is in the editor, reached through `liveBody`.
 
+**Debug log:** `debugLog()` in `runtime/debug.ts` → `internal/fb2/debuglog`; counts and states only, never book text. On a report you cannot reproduce, ask for it first (`task log`).
+
 **Outline and XML pane:** both follow the live editor, never `doc`. The outline is rebuilt from the PM doc on every change; positions and outline paths must keep coming from the same doc, or highlights and clicks drift. The XML pane holds still only while it has unapplied edits; a text change then raises a warning, because Apply replaces the text.
 
 **Go gateway:** frontend code reaches Go only through `runtime/backend.ts` (`backend()`, null without the bridge); never import `wailsjs` elsewhere.
