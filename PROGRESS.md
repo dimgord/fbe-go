@@ -6,6 +6,22 @@ project must add an entry here and bump the version in `wails.json` and
 
 ---
 
+## Rev 123 — 2026-11-01 — One current line in the XML → v3.28.0 [dev]
+
+User report with a screenshot: lines 4781 and 4786 were highlighted at once. 4781 was the text caret;
+4786 was the XML pane's own caret, left from an earlier click. The two have the same colour, so Rev
+122's "only one mark at a time" was wrong: it held for the text and XML marks, not for CM6's active line,
+which never clears. The active line and its gutter now show only while the pane has focus.
+
+Verified in WebKit: click in XML, then text, then XML; exactly one line lit each time.
+
+### Files Modified
+
+- `frontend/src/validation/XmlEditor.svelte` — CSS.
+- `version.go`, `wails.json`, `frontend/package.json`, `frontend/package-lock.json` — 3.27.0 → 3.28.0.
+
+---
+
 ## Rev 122 — 2026-10-31 — The XML shows where the text caret is → v3.27.0 [dev]
 
 The reverse of Rev 121, at the user's request: a caret in the text marks the matching XML line and

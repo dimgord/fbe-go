@@ -279,4 +279,10 @@
     background: var(--highlight);
     color: var(--warn-fg, var(--fg));
   }
+  /* Its own caret is only news while the pane has focus; otherwise two lines would look current. */
+  .xml-editor :global(.cm-editor:not(.cm-focused) .cm-activeLine),
+  .xml-editor :global(.cm-editor:not(.cm-focused) .cm-activeLineGutter) {
+    background: transparent;
+    color: inherit;
+  }
 </style>
